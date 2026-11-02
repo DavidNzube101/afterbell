@@ -104,24 +104,18 @@ jobs:
     steps:
       - name: Deploy published image when a hook is configured
         env:
-          API_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-          INDEXER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_INDEXER_DEPLOY_HOOK_URL }}
+          DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
           IMAGE_NAME: ${{ needs.publish.outputs.image }}
           IMAGE_TAG: sha-${{ github.sha }}
         run: |
-          if [ -z "$API_DEPLOY_HOOK_URL" ] && [ -z "$INDEXER_DEPLOY_HOOK_URL" ]; then
-            echo "No Render deploy hook is configured; skipping Render deploy."
+          if [ -z "$DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set; skipping Render deploy."
             exit 0
           fi
 
           export IMAGE_URL="${IMAGE_NAME}:${IMAGE_TAG}"
           encoded_image_url="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["IMAGE_URL"], safe=""))')"
-          for deploy_hook_url in "$API_DEPLOY_HOOK_URL" "$INDEXER_DEPLOY_HOOK_URL"; do
-            if [ -z "$deploy_hook_url" ]; then
-              continue
-            fi
-            separator='?'
-            case "$deploy_hook_url" in *\?*) separator='&' ;; esac
-            curl --fail --silent --show-error --request POST \
-              "${deploy_hook_url}${separator}imgURL=${encoded_image_url}"
-          done
+          separator='?'
+          case "$DEPLOY_HOOK_URL" in *\?*) separator='&' ;; esac
+          curl --fail --silent --show-error --request POST \
+            "${DEPLOY_HOOK_URL}${separator}imgURL=${encoded_image_url}"

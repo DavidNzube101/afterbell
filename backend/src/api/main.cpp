@@ -1,15 +1,20 @@
 #include <drogon/drogon.h>
 
+#include "indexer/worker.hpp"
+
 #include <libpq-fe.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -17,6 +22,34 @@ std::optional<std::string> env(const char *name) {
     const auto *value = std::getenv(name);
     if (value == nullptr || *value == '\0') return std::nullopt;
     return std::string(value);
+}
+
+std::string requiredEnv(const char *name) {
+    const auto value = env(name);
+    if (!value) throw std::runtime_error(std::string(name) + " is required");
+    return *value;
+}
+
+std::optional<std::uint64_t> optionalUintEnv(const char *name) {
+    const auto value = env(name);
+    if (!value) return std::nullopt;
+    std::size_t consumed = 0;
+    const auto parsed = std::stoull(*value, &consumed);
+    if (consumed != value->size()) {
+        throw std::runtime_error(std::string(name) + " must be an unsigned integer");
+    }
+    return parsed;
+}
+
+std::uint64_t uintEnvOr(const char *name, std::uint64_t fallback) {
+    return optionalUintEnv(name).value_or(fallback);
+}
+
+bool indexerEnabled() {
+    const auto value = env("INDEXER_ENABLED").value_or("false");
+    if (value == "true" || value == "1" || value == "yes") return true;
+    if (value == "false" || value == "0" || value == "no") return false;
+    throw std::runtime_error("INDEXER_ENABLED must be true or false");
 }
 
 void loadEnvFile(const std::string &path) {
@@ -122,6 +155,25 @@ int main() {
         }
         const auto markets = loadMarkets(*registryPath);
 
+        std::unique_ptr<afterbell::indexer::Worker> indexerWorker;
+        if (indexerEnabled()) {
+            afterbell::indexer::IndexerConfig indexerConfig{
+                *network,
+                *contractId,
+                requiredEnv("NEAR_USDC_TOKEN_ID"),
+                optionalUintEnv("INDEXER_START_BLOCK"),
+            };
+            indexerConfig.finalityLagBlocks =
+                uintEnvOr("INDEXER_FINALITY_LAG_BLOCKS", 1000);
+            indexerConfig.rescanOverlapBlocks =
+                uintEnvOr("INDEXER_RESCAN_OVERLAP_BLOCKS", 10000);
+            indexerWorker = std::make_unique<afterbell::indexer::Worker>(
+                std::move(indexerConfig), requiredEnv("INDEXER_NEAR_RPC_URL"),
+                requiredEnv("INDEXER_TX_API_URL"), *databaseUrl,
+                uintEnvOr("INDEXER_POLL_INTERVAL_MS", 5000));
+            indexerWorker->start();
+        }
+
         drogon::app().setThreadNum(4);
         drogon::app().registerHandler(
             "/health/live",
@@ -164,8 +216,10 @@ int main() {
             {drogon::Get});
 
         const auto port = portFromEnv();
-        std::cerr << "afterbell-api listening on port " << port << " (" << *network << ")\n";
+        std::cerr << "afterbell-api listening on port " << port << " (" << *network
+                  << ", indexer " << (indexerWorker ? "enabled" : "disabled") << ")\n";
         drogon::app().addListener("0.0.0.0", port).run();
+        if (indexerWorker) indexerWorker->stop();
     } catch (const std::exception &error) {
         std::cerr << "afterbell-api: " << error.what() << "\n";
         return 1;

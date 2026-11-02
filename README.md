@@ -14,7 +14,7 @@ app/
 
 ## C++ API and workers
 
-The backend provides a read-only HTTP API and the NEAR deposit indexer as separate processes. The API currently exposes health checks and the Robinhood Chain market registry; markets are explicitly marked development-only and cannot be traded yet. The indexer stores finalized A1 deposit events. Both are C++ services.
+The backend provides a read-only HTTP API and a NEAR deposit indexer. The API currently exposes health checks and the Robinhood Chain market registry; markets are explicitly marked development-only and cannot be traded yet. Set `INDEXER_ENABLED=true` to run the indexer on a managed background thread inside the API process, allowing both to run in one Render service. The indexer also remains available as a standalone executable for local development and operations.
 
 On macOS, install the build dependencies with Homebrew:
 
@@ -32,7 +32,7 @@ make api
 make indexer
 ```
 
-`make api` and `make indexer` stay attached to their processes; stop either with Ctrl-C. The API listens on `PORT` (default `8080`) and needs `DATABASE_URL` for its readiness check. Its `GET /v1/markets` endpoint reads `backend/rh_stocks_addresses.json`. The indexer uses libpq parameterized queries and explicit transactions, which work through a PostgreSQL transaction pooler without named prepared statements.
+`make api` and `make indexer` stay attached to their processes; stop either with Ctrl-C. The API listens on `PORT` (default `8080`) and needs `DATABASE_URL` for its readiness check. Its `GET /v1/markets` endpoint reads `backend/rh_stocks_addresses.json`. Set `INDEXER_ENABLED=true` to run indexing in the API process. The indexer uses libpq parameterized queries and explicit transactions, which work through a PostgreSQL transaction pooler without named prepared statements.
 
 ## NEAR deposit indexer
 
@@ -52,13 +52,12 @@ The indexer creates `near_indexer_cursors` and `near_deposit_events` if they do 
 
 ## Container deployment
 
-GitHub Actions follows the landing-server pipeline: lint, unit tests, build both binaries, build the container, and publish `ghcr.io/davidnzube101/afterbell` on pushes to `main`. Pull requests build the image without publishing it. Set `RENDER_DEPLOY_HOOK_URL` and/or `RENDER_INDEXER_DEPLOY_HOOK_URL` as GitHub Actions secrets to trigger Render deploys for the API and indexer after a successful publish. Make the GHCR package public or configure Render with credentials to pull a private package.
+GitHub Actions follows the landing-server pipeline: lint, unit tests, build both binaries, build the container, and publish `ghcr.io/davidnzube101/afterbell` on pushes to `main`. Pull requests build the image without publishing it. Set the GitHub Actions secret `RENDER_DEPLOY_HOOK_URL` to trigger a Render deploy after a successful publish. Make the GHCR package public or configure Render with credentials to pull a private package.
 
-Create two Render **Docker** services from the same GHCR image so the API and indexer can restart and scale independently:
+Create one Render **Docker Web Service** from the GHCR image. The default command runs the API; set `INDEXER_ENABLED=true` so its C++ indexer runs in the background in that same service:
 
 | Service | Start command | Health check | Required environment |
 |---|---|---|---|
-| API | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json` |
-| Indexer | `./afterbell-indexer` | none (worker) | `DATABASE_URL`, `NEAR_NETWORK`, `A1_CONTRACT_ID`, `NEAR_USDC_TOKEN_ID`, `INDEXER_NEAR_RPC_URL`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
+| API and indexer | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json`, `INDEXER_ENABLED=true`, `NEAR_USDC_TOKEN_ID`, `INDEXER_NEAR_RPC_URL`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
 
-Render supplies `PORT` to the API. The indexer can use FastNear's testnet transaction API to discover A1 history without a full archival NEAR RPC scan. Configure `INDEXER_FINALITY_LAG_BLOCKS`, `INDEXER_RESCAN_OVERLAP_BLOCKS`, and `INDEXER_POLL_INTERVAL_MS` as needed. Do not set `INDEXER_START_BLOCK` earlier than the deployed A1 instance.
+Render supplies `PORT`. The indexer uses FastNear's testnet transaction API to discover A1 history without a full archival NEAR RPC scan. Configure `INDEXER_FINALITY_LAG_BLOCKS`, `INDEXER_RESCAN_OVERLAP_BLOCKS`, and `INDEXER_POLL_INTERVAL_MS` as needed. Do not set `INDEXER_START_BLOCK` earlier than the deployed A1 instance. The existing standalone `./afterbell-indexer` command is available if we later decide to run the worker as its own Render service.

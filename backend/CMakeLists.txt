@@ -22,6 +22,7 @@ add_library(afterbell-indexer-core
     src/indexer/near_rpc.cpp
     src/indexer/database.cpp
     src/indexer/indexer.cpp
+    src/indexer/worker.cpp
 )
 target_include_directories(afterbell-indexer-core PUBLIC src)
 target_link_libraries(afterbell-indexer-core
@@ -35,7 +36,7 @@ target_compile_options(afterbell-indexer PRIVATE -Wall -Wextra -Wpedantic)
 
 if(Drogon_FOUND)
     add_executable(afterbell-api src/api/main.cpp)
-    target_link_libraries(afterbell-api PRIVATE Drogon::Drogon PostgreSQL::PostgreSQL)
+    target_link_libraries(afterbell-api PRIVATE afterbell-indexer-core Drogon::Drogon)
     target_compile_options(afterbell-api PRIVATE -Wall -Wextra -Wpedantic)
 else()
     message(STATUS "Drogon not found; skipping afterbell-api (install Drogon to build the HTTP API)")
