@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: Afterbell Public API
+  version: 0.1.0
+  description: Public health and waitlist endpoints used by the Afterbell landing page.
+servers:
+  - url: http://localhost:3001
+    description: Local development
+tags:
+  - name: Health
+  - name: Waitlist
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Check whether the API process is running
+      responses:
+        '200':
+          description: API process is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: live }
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Check whether the API can reach PostgreSQL
+      responses:
+        '200':
+          description: API and database are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ready }
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/waitlist/username/check:
+    get:
+      tags: [Waitlist]
+      operationId: checkUsername
+      summary: Validate a username and report availability
+      parameters:
+        - name: username
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 20
+            pattern: '^[a-z0-9_]+$'
+      responses:
+        '200':
+          description: Username check result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, available]
+                properties:
+                  valid: { type: boolean }
+                  available: { type: boolean }
+                  reason:
+                    type: string
+                    enum: [invalid_format, reserved, already_claimed, already_joined]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/waitlist/username/claim:
+    post:
+      tags: [Waitlist]
+      operationId: claimUsername
+      summary: Reserve a username for an email for 15 minutes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimUsernameRequest'
+      responses:
+        '201':
+          description: Username reserved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [claimed, expiresAt]
+                properties:
+                  claimed: { type: boolean, const: true }
+                  expiresAt: { type: string, format: date-time }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/waitlist/email/check:
+    post:
+      tags: [Waitlist]
+      operationId: checkEmail
+      summary: Validate an email and check whether it has joined the waitlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckEmailRequest'
+      responses:
+        '200':
+          description: Email check result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, available]
+                properties:
+                  valid: { type: boolean }
+                  available: { type: boolean }
+                  reason:
+                    type: string
+                    enum: [invalid_format, already_joined]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/waitlist/join:
+    post:
+      tags: [Waitlist]
+      operationId: joinWaitlist
+      summary: Complete a username reservation and join the waitlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinWaitlistRequest'
+      responses:
+        '201':
+          description: Waitlist signup created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [joined, username]
+                properties:
+                  joined: { type: boolean, const: true }
+                  username: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  schemas:
+    ClaimUsernameRequest:
+      type: object
+      additionalProperties: false
+      required: [username, email]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 20
+          pattern: '^[a-z0-9_]+$'
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    CheckEmailRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    JoinWaitlistRequest:
+      allOf:
+        - $ref: '#/components/schemas/ClaimUsernameRequest'
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Username or email is unavailable, or its reservation expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: A required service is unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

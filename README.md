@@ -1,0 +1,64 @@
+# Afterbell
+
+Afterbell is the open source trading dapp monorepo. The public landing page remains in `../landing`; it calls the separate landing server documented in [`openapi.yaml`](./openapi.yaml). The trading frontend will live at this repository root, with C++ workers in `backend/` and NEAR contracts in `contracts/`.
+
+## Repository layout
+
+```text
+app/
+├── backend/       # C++ off-chain services, including the NEAR deposit indexer
+├── contracts/     # NEAR smart contracts
+├── openapi.yaml   # Public HTTP API contract
+└── README.md
+```
+
+## C++ API and workers
+
+The backend provides a read-only HTTP API and the NEAR deposit indexer as separate processes. The API currently exposes health checks and the Robinhood Chain market registry; markets are explicitly marked development-only and cannot be traded yet. The indexer stores finalized A1 deposit events. Both are C++ services.
+
+On macOS, install the build dependencies with Homebrew:
+
+```sh
+brew install cmake pkg-config postgresql@17 curl jsoncpp drogon
+```
+
+Keep `backend/.env` private. From the `app/` root, build and run the existing indexer tests, then start either service:
+
+```sh
+export CMAKE_PREFIX_PATH="$(brew --prefix postgresql@17):$(brew --prefix curl):$(brew --prefix jsoncpp)"
+make build
+ctest --test-dir backend/build --output-on-failure
+make api
+make indexer
+```
+
+`make api` and `make indexer` stay attached to their processes; stop either with Ctrl-C. The API listens on `PORT` (default `8080`) and needs `DATABASE_URL` for its readiness check. Its `GET /v1/markets` endpoint reads `backend/rh_stocks_addresses.json`. The indexer uses libpq parameterized queries and explicit transactions, which work through a PostgreSQL transaction pooler without named prepared statements.
+
+## NEAR deposit indexer
+
+`backend/` includes a C++ A1 deposit indexer. It asks FastNear's indexed account API for transactions associated with A1, fetches their receipt outcomes in batches, filters NEAR USDC `ft_transfer_call` transactions, and stores successful A1 `deposit_credited` logs. This avoids downloading every historical block from an archival RPC. Each event is keyed by `(network, receipt_id, log_index)`, so a repeated `deposit_id` in a later token transfer is recorded as a separate deposit. Event inserts and the scanned-height cursor commit in one PostgreSQL transaction; a restart resumes from the cursor with a configurable overlap to catch indexing delays. A1 remains the source of truth for balances; FastNear is only the off-chain event discovery source.
+
+Copy `backend/.env.example` to `backend/.env` or set these variables in the process environment. Keep the existing `.env` private. `NEAR_NETWORK`, `INDEXER_NEAR_RPC_URL`, `INDEXER_TX_API_URL`, `A1_CONTRACT_ID`, `NEAR_USDC_TOKEN_ID`, and `DATABASE_URL` are required. `INDEXER_START_BLOCK` defaults to A1's testnet deployment block (`274456124`) for the first run; subsequent runs use the database cursor. Change it for another deployment/network or to backfill from a later point. The worker checks RPC `chain_id` against `NEAR_NETWORK` before opening its database connection. `INDEXER_FINALITY_LAG_BLOCKS` controls how far behind the finalized head to query; `INDEXER_RESCAN_OVERLAP_BLOCKS` rechecks recent history to tolerate FastNear indexing delay. `INDEXER_POLL_INTERVAL_MS` controls polling frequency.
+
+Build and run from the `app/` directory:
+
+```sh
+make build
+ctest --test-dir backend/build --output-on-failure
+make indexer
+```
+
+The indexer creates `near_indexer_cursors` and `near_deposit_events` if they do not exist. It does not write user balances or replay-suppress deposits; A1 remains the source of truth for credited funds. FastNear is a third-party index source, so reconcile the event table against A1 state before using it for reporting or accounting.
+
+## Container deployment
+
+GitHub Actions follows the landing-server pipeline: lint, unit tests, build both binaries, build the container, and publish `ghcr.io/davidnzube101/afterbell` on pushes to `main`. Pull requests build the image without publishing it. Set `RENDER_DEPLOY_HOOK_URL` and/or `RENDER_INDEXER_DEPLOY_HOOK_URL` as GitHub Actions secrets to trigger Render deploys for the API and indexer after a successful publish. Make the GHCR package public or configure Render with credentials to pull a private package.
+
+Create two Render **Docker** services from the same GHCR image so the API and indexer can restart and scale independently:
+
+| Service | Start command | Health check | Required environment |
+|---|---|---|---|
+| API | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json` |
+| Indexer | `./afterbell-indexer` | none (worker) | `DATABASE_URL`, `NEAR_NETWORK`, `A1_CONTRACT_ID`, `NEAR_USDC_TOKEN_ID`, `INDEXER_NEAR_RPC_URL`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
+
+Render supplies `PORT` to the API. The indexer can use FastNear's testnet transaction API to discover A1 history without a full archival NEAR RPC scan. Configure `INDEXER_FINALITY_LAG_BLOCKS`, `INDEXER_RESCAN_OVERLAP_BLOCKS`, and `INDEXER_POLL_INTERVAL_MS` as needed. Do not set `INDEXER_START_BLOCK` earlier than the deployed A1 instance.

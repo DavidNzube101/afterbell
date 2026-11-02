@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+backend/build
+**/CMakeFiles
+**/CMakeCache.txt
+**/compile_commands.json
+**/target
+contracts
+landing-server
+node_modules
+dist
+*.log

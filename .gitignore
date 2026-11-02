@@ -1,0 +1,63 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.direnv/
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+
+# C++ build output
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.core
+*.log
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+.output/
+.tanstack/
+.vite/
+.turbo/
+coverage/
+
+# Contract build output
+target/
+out/
+cache/
+
+# Local deployer wallet and credentials: never commit private keys
+contracts/deployer/
+# Separately versioned landing API repository
+landing-server/
+# Local project goals and working notes
+/goal.md
+**/.near-credentials/
+**/near-cli/
+*.seed
+*.pem
+*.p12
+*.pfx
+
+# Editors and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
