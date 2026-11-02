@@ -37,15 +37,50 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status]
+                required: [status, database, indexer]
                 properties:
                   status: { type: string, const: ready }
+                  database: { type: string, const: ready }
+                  indexer:
+                    $ref: '#/components/schemas/IndexerStatus'
         '503':
           description: Database is unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                type: object
+                required: [status, database, indexer, error]
+                properties:
+                  status: { type: string, const: unavailable }
+                  database: { type: string, const: unavailable }
+                  indexer:
+                    $ref: '#/components/schemas/IndexerStatus'
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code: { type: string, const: database_unavailable }
+                      message: { type: string }
+  /health/status:
+    get:
+      tags: [Health]
+      operationId: getServiceStatus
+      summary: Report API, database, and background indexer status
+      description: Indexer errors are reported here while the HTTP API remains ready if PostgreSQL is available.
+      responses:
+        '200':
+          description: Current service component status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, api, database, indexer]
+                properties:
+                  status: { type: string, enum: [ready, degraded] }
+                  api: { type: string, const: running }
+                  database: { type: string, enum: [ready, unavailable] }
+                  indexer:
+                    $ref: '#/components/schemas/IndexerStatus'
   /v1/markets:
     get:
       tags: [Markets]
@@ -81,6 +116,14 @@ paths:
                         tradingEnabled: { type: boolean, const: false }
 components:
   schemas:
+    IndexerStatus:
+      type: object
+      required: [enabled, status, lastIndexedBlock]
+      properties:
+        enabled: { type: boolean }
+        status: { type: string, enum: [disabled, starting, running, retrying, stopped] }
+        lastIndexedBlock: { type: integer, format: uint64 }
+        lastSuccessfulPollAtMs: { type: integer, format: uint64 }
     ErrorResponse:
       type: object
       required: [error]

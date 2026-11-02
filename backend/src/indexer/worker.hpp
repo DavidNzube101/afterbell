@@ -11,6 +11,8 @@
 
 namespace afterbell::indexer {
 
+enum class WorkerState : std::uint8_t { stopped, starting, running, retrying };
+
 class Worker {
   public:
     Worker(IndexerConfig config, std::string rpcUrl, std::string transactionApiUrl,
@@ -22,6 +24,10 @@ class Worker {
 
     void start();
     void stop();
+    WorkerState state() const { return state_.load(); }
+    std::uint64_t lastIndexedBlock() const { return lastIndexedBlock_.load(); }
+    std::uint64_t lastSuccessfulPollAtMs() const { return lastSuccessfulPollAtMs_.load(); }
+    static const char *stateName(WorkerState state);
 
   private:
     void run();
@@ -33,6 +39,9 @@ class Worker {
     std::string databaseUrl_;
     std::uint64_t pollIntervalMs_;
     std::atomic<bool> stopping_{false};
+    std::atomic<WorkerState> state_{WorkerState::stopped};
+    std::atomic<std::uint64_t> lastIndexedBlock_{0};
+    std::atomic<std::uint64_t> lastSuccessfulPollAtMs_{0};
     std::mutex waitMutex_;
     std::condition_variable waitCondition_;
     std::thread thread_;

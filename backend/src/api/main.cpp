@@ -130,6 +130,22 @@ Json::Value errorBody(const std::string &code, const std::string &message) {
     return body;
 }
 
+Json::Value indexerStatus(
+    const std::shared_ptr<afterbell::indexer::Worker> &worker) {
+    Json::Value body;
+    body["enabled"] = static_cast<bool>(worker);
+    if (!worker) {
+        body["status"] = "disabled";
+        return body;
+    }
+    const auto state = worker->state();
+    body["status"] = afterbell::indexer::Worker::stateName(state);
+    body["lastIndexedBlock"] = Json::UInt64(worker->lastIndexedBlock());
+    const auto lastSuccess = worker->lastSuccessfulPollAtMs();
+    if (lastSuccess > 0) body["lastSuccessfulPollAtMs"] = Json::UInt64(lastSuccess);
+    return body;
+}
+
 } // namespace
 
 int main() {
@@ -155,7 +171,7 @@ int main() {
         }
         const auto markets = loadMarkets(*registryPath);
 
-        std::unique_ptr<afterbell::indexer::Worker> indexerWorker;
+        std::shared_ptr<afterbell::indexer::Worker> indexerWorker;
         if (indexerEnabled()) {
             afterbell::indexer::IndexerConfig indexerConfig{
                 *network,
@@ -167,7 +183,7 @@ int main() {
                 uintEnvOr("INDEXER_FINALITY_LAG_BLOCKS", 1000);
             indexerConfig.rescanOverlapBlocks =
                 uintEnvOr("INDEXER_RESCAN_OVERLAP_BLOCKS", 10000);
-            indexerWorker = std::make_unique<afterbell::indexer::Worker>(
+            indexerWorker = std::make_shared<afterbell::indexer::Worker>(
                 std::move(indexerConfig), requiredEnv("INDEXER_NEAR_RPC_URL"),
                 requiredEnv("INDEXER_TX_API_URL"), *databaseUrl,
                 uintEnvOr("INDEXER_POLL_INTERVAL_MS", 5000));
@@ -186,18 +202,37 @@ int main() {
             {drogon::Get});
         drogon::app().registerHandler(
             "/health/ready",
-            [databaseUrl = *databaseUrl](
+            [databaseUrl = *databaseUrl, indexerWorker](
                 const drogon::HttpRequestPtr &,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!databaseReady(databaseUrl)) {
-                    auto response = drogon::HttpResponse::newHttpJsonResponse(
-                        errorBody("database_unavailable", "Database is unavailable"));
+                    Json::Value body = errorBody("database_unavailable", "Database is unavailable");
+                    body["status"] = "unavailable";
+                    body["database"] = "unavailable";
+                    body["indexer"] = indexerStatus(indexerWorker);
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
                     response->setStatusCode(drogon::k503ServiceUnavailable);
                     callback(response);
                     return;
                 }
                 Json::Value body;
                 body["status"] = "ready";
+                body["database"] = "ready";
+                body["indexer"] = indexerStatus(indexerWorker);
+                callback(drogon::HttpResponse::newHttpJsonResponse(body));
+            },
+            {drogon::Get});
+        drogon::app().registerHandler(
+            "/health/status",
+            [databaseUrl = *databaseUrl, indexerWorker](
+                const drogon::HttpRequestPtr &,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                const bool databaseIsReady = databaseReady(databaseUrl);
+                Json::Value body;
+                body["status"] = databaseIsReady ? "ready" : "degraded";
+                body["api"] = "running";
+                body["database"] = databaseIsReady ? "ready" : "unavailable";
+                body["indexer"] = indexerStatus(indexerWorker);
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});

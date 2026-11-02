@@ -25,9 +25,20 @@ Worker::Worker(IndexerConfig config, std::string rpcUrl,
 
 Worker::~Worker() { stop(); }
 
+const char *Worker::stateName(WorkerState state) {
+    switch (state) {
+    case WorkerState::stopped: return "stopped";
+    case WorkerState::starting: return "starting";
+    case WorkerState::running: return "running";
+    case WorkerState::retrying: return "retrying";
+    }
+    return "unknown";
+}
+
 void Worker::start() {
     if (thread_.joinable()) throw std::logic_error("Indexer worker already started");
     stopping_.store(false);
+    state_.store(WorkerState::starting);
     thread_ = std::thread([this] { run(); });
 }
 
@@ -56,6 +67,7 @@ void Worker::run() {
             FastNearClient fastNear(transactionApiUrl_);
             Database database(databaseUrl_);
             Indexer indexer(config_, rpc, fastNear, database);
+            state_.store(WorkerState::running);
             std::cerr << "afterbell-indexer background worker started for "
                       << config_.network << "\n";
 
@@ -63,23 +75,37 @@ void Worker::run() {
                 try {
                     const auto previousCursor = indexer.cursor();
                     const auto indexedEvents = indexer.indexAvailableRange();
+                    state_.store(WorkerState::running);
+                    lastIndexedBlock_.store(indexer.cursor());
+                    const auto now = std::chrono::system_clock::now().time_since_epoch();
+                    lastSuccessfulPollAtMs_.store(static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(now).count()));
                     if (indexer.cursor() > previousCursor) {
                         std::cerr << "scanned A1 history through block "
                                   << indexer.cursor()
                                   << "; deposit events indexed: " << indexedEvents << "\n";
                     }
                 } catch (const std::exception &error) {
+                    state_.store(WorkerState::retrying);
                     std::cerr << "indexer pass failed; cursor retained for retry: "
                               << error.what() << "\n";
                     break;
                 }
-                if (waitOrStop(pollIntervalMs_)) return;
+                if (waitOrStop(pollIntervalMs_)) {
+                    state_.store(WorkerState::stopped);
+                    return;
+                }
             }
         } catch (const std::exception &error) {
+            state_.store(WorkerState::retrying);
             std::cerr << "indexer worker unavailable; retrying: " << error.what() << "\n";
         }
-        if (stopping_.load() || waitOrStop(5000)) return;
+        if (stopping_.load() || waitOrStop(5000)) {
+            state_.store(WorkerState::stopped);
+            return;
+        }
     }
+    state_.store(WorkerState::stopped);
 }
 
 } // namespace afterbell::indexer
