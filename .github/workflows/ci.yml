@@ -27,7 +27,7 @@ jobs:
       - name: Install C++ dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends clang-tidy cmake g++ libcurl4-openssl-dev libdrogon-dev libjsoncpp-dev libpq-dev pkg-config
+          sudo apt-get install --yes --no-install-recommends clang-tidy cmake g++ libbrotli-dev libcurl4-openssl-dev libdrogon-dev libhiredis-dev libjsoncpp-dev libmariadb-dev libmariadb-dev-compat libpq-dev libsqlite3-dev libyaml-cpp-dev pkg-config uuid-dev
 
       - name: Configure
         run: cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DAFTERBELL_REQUIRE_DROGON=ON

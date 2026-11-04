@@ -2,7 +2,7 @@ FROM ubuntu:24.04 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake g++ make pkg-config libcurl4-openssl-dev libdrogon-dev libjsoncpp-dev libpq-dev \
+    && apt-get install -y --no-install-recommends cmake g++ make pkg-config libbrotli-dev libcurl4-openssl-dev libdrogon-dev libhiredis-dev libjsoncpp-dev libmariadb-dev libmariadb-dev-compat libpq-dev libsqlite3-dev libyaml-cpp-dev uuid-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
