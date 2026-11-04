@@ -14,6 +14,7 @@ const MAX_AGENT_ACTION_TTL_MS: u64 = 60 * 1000;
 const MAX_AGENT_POSITIONS: u64 = 32;
 const MAX_AGENT_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 const MAX_MARKET_PRICE_AGE_MS: u64 = 60_000;
+const PERP_ORACLE_RECOVERY_DEVIATION_BPS: u128 = 50;
 const SHARED_VAULT_RECORD_ID: &str = "protocol:vault:usdc";
 const TESTNET_PRICE_SIGNER_PUBLIC_KEY: [u8; 32] = [
     139, 77, 195, 229, 231, 45, 144, 52, 17, 118, 68, 169, 124, 217, 68, 39, 243, 233, 180, 42,
@@ -57,6 +58,7 @@ const PERP_PENDING_ORACLE_KEYS_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_k
 const PERP_PENDING_ORACLE_KEYS_AT_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_keys_at";
 const PERP_BETA_CAP_KEY: &[u8] = b"afterbell:a1:perp:beta_cap";
 const PERP_ORACLE_HEALTH_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_health:";
+const PERP_ORACLE_PENDING_JUMP_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_pending_jump:";
 const PERP_DEFERRED_CLAIM_PREFIX: &[u8] = b"afterbell:a1:perp:deferred:";
 const PERP_DEFERRED_TOTAL_KEY: &[u8] = b"afterbell:a1:perp:deferred_total";
 const LP_SHARE_PREFIX: &[u8] = b"afterbell:a1:lp:shares:";
@@ -596,10 +598,36 @@ impl SharedLedger {
             / attestation.price.0;
         assert!(deviation <= 50, "spot and TWAP diverged beyond hard bound");
         let mut health = OracleHealth {
-            circuit_broken: deviation > 50,
+            circuit_broken: false,
             confidence_bps: attestation.confidence_bps,
             spot_twap_deviation_bps: deviation.min(u128::from(u16::MAX)) as u16,
         };
+        let next_price = MarketPrice {
+            market_id: attestation.market_id.clone(),
+            price: attestation.price,
+            observed_at_ms: attestation.observed_at_ms,
+            sequence: attestation.sequence,
+        };
+
+        // A >20% move is held for a second independent quorum observation.
+        // The confirming attestation must agree with the staged candidate,
+        // preventing a single anomalous observation from moving the mark,
+        // while still allowing a genuinely shifted market to recover.
+        let pending_jump_key = raw_key(PERP_ORACLE_PENDING_JUMP_PREFIX, &[&attestation.market_id]);
+        if let Some(pending) = read_json_storage::<MarketPrice>(&pending_jump_key) {
+            let confirmation_deviation = pending
+                .price
+                .0
+                .abs_diff(attestation.price.0)
+                .saturating_mul(10_000)
+                / pending.price.0;
+            if confirmation_deviation <= PERP_ORACLE_RECOVERY_DEVIATION_BPS {
+                write_market_price(&next_price);
+                write_oracle_health(&attestation.market_id, &health);
+                env::storage_remove(&pending_jump_key);
+                return;
+            }
+        }
         if let Some(previous) = old.as_ref() {
             let jump = attestation
                 .price
@@ -611,21 +639,16 @@ impl SharedLedger {
                 health.circuit_broken = true;
                 write_oracle_health(&attestation.market_id, &health);
                 write_market_price(&MarketPrice {
-                    market_id: attestation.market_id.clone(),
-                    price: previous.price,
-                    observed_at_ms: previous.observed_at_ms,
                     sequence: attestation.sequence,
+                    ..previous.clone()
                 });
+                write_json_storage(&pending_jump_key, &next_price);
                 return;
             }
         }
-        write_market_price(&MarketPrice {
-            market_id: attestation.market_id.clone(),
-            price: attestation.price,
-            observed_at_ms: attestation.observed_at_ms,
-            sequence: attestation.sequence,
-        });
+        write_market_price(&next_price);
         write_oracle_health(&attestation.market_id, &health);
+        env::storage_remove(&pending_jump_key);
     }
 
     pub fn perp_total_margin(&self) -> U128 {
@@ -4362,11 +4385,16 @@ fn marked_global_exposure(
         let mark = if market_id == target_market {
             target_price
         } else {
-            read_market_price(&market_id)
-                .filter(|price| price.price.0 > 0)
-                .map(|price| price.price.0)
-                .expect("active market mark unavailable")
+            require_fresh_market_price(&market_id).price.0
         };
+        let market = read_perp_market(&market_id).expect("active market config unavailable");
+        let health = read_oracle_health(&market_id);
+        assert!(
+            !health.circuit_broken
+                && health.confidence_bps <= market.max_oracle_confidence_bps
+                && health.spot_twap_deviation_bps <= market.max_execution_deviation_bps,
+            "active market oracle unsafe for global risk calculation"
+        );
         let long = revalue_exposure(
             exposure.long_notional_usdc.0,
             exposure.long_entry_value.0,
@@ -7023,6 +7051,108 @@ mod tests {
             U128(10_000_000_000)
         );
         assert!(!contract.oracle_health("NVDA".to_string()).circuit_broken);
+    }
+
+    #[test]
+    fn oracle_quorum_confirms_large_price_move_and_recovers_market() {
+        let mut contract = setup("a1.near");
+        configure_test_perp(&mut contract, &SigningKey::from_bytes(&[97; 32]));
+        let keys = [
+            SigningKey::from_bytes(&[101; 32]),
+            SigningKey::from_bytes(&[102; 32]),
+            SigningKey::from_bytes(&[103; 32]),
+        ];
+        contract.configure_oracle_quorum(
+            keys.iter()
+                .map(|key| key.verifying_key().to_bytes())
+                .collect(),
+        );
+
+        let publish = |contract: &mut SharedLedger, price: u128, sequence: u64, round: &str| {
+            let attestation = OracleAttestation {
+                market_id: "NVDA".to_string(),
+                price: U128(price),
+                spot_price: U128(price),
+                confidence_bps: 10,
+                observed_at_ms: NOW_MS,
+                sequence,
+                source_round: round.to_string(),
+                expires_at_ms: NOW_MS + 30_000,
+            };
+            let message = contract.oracle_attestation_message(attestation.clone());
+            let signatures = keys[..2]
+                .iter()
+                .map(|key| Base64VecU8::from(key.sign(message.as_bytes()).to_bytes().to_vec()))
+                .collect();
+            contract.publish_market_price_quorum(attestation, signatures);
+        };
+
+        publish(&mut contract, 10_000_000_000, 1, "stable-1");
+        publish(&mut contract, 13_000_000_000, 2, "jump-2");
+        assert!(contract.oracle_health("NVDA".to_string()).circuit_broken);
+        assert_eq!(
+            read_market_price("NVDA").unwrap().price,
+            U128(10_000_000_000)
+        );
+
+        publish(&mut contract, 13_000_000_000, 3, "confirm-3");
+        assert!(!contract.oracle_health("NVDA".to_string()).circuit_broken);
+        assert_eq!(
+            read_market_price("NVDA").unwrap().price,
+            U128(13_000_000_000)
+        );
+        assert!(read_json_storage::<MarketPrice>(&raw_key(
+            PERP_ORACLE_PENDING_JUMP_PREFIX,
+            &["NVDA"],
+        ))
+        .is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "market price is stale")]
+    fn global_risk_calculation_rejects_stale_marks_for_other_exposed_markets() {
+        let mut contract = setup("a1.near");
+        configure_test_perp(&mut contract, &SigningKey::from_bytes(&[97; 32]));
+        contract.configure_perp_market(PerpMarketConfig {
+            market_id: "MSFT".to_string(),
+            enabled: true,
+            close_only: false,
+            max_leverage_bps: 50_000,
+            maintenance_margin_bps: 500,
+            max_execution_deviation_bps: 1_000,
+            max_oracle_confidence_bps: 100,
+            max_position_usdc: U128(1_000_000),
+            max_market_oi_bps: 1_000,
+            max_market_skew_bps: 300,
+        });
+        write_market_price(&MarketPrice {
+            market_id: "NVDA".to_string(),
+            price: U128(10_000_000_000),
+            observed_at_ms: NOW_MS,
+            sequence: 1,
+        });
+        write_market_price(&MarketPrice {
+            market_id: "MSFT".to_string(),
+            price: U128(10_000_000_000),
+            observed_at_ms: NOW_MS + MAX_MARKET_PRICE_AGE_MS + 1,
+            sequence: 1,
+        });
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: U128(100_000),
+                long_entry_value: U128(1_000_000_000_000_000),
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id("a1.near".parse().unwrap())
+            .block_timestamp((NOW_MS + MAX_MARKET_PRICE_AGE_MS + 2) * 1_000_000);
+        testing_env!(context.build());
+
+        marked_global_exposure("MSFT", 10_000_000_000, true, 10_000);
     }
 
     #[test]
