@@ -1,14 +1,15 @@
 #include <drogon/drogon.h>
 
+#include "http/request_logger.hpp"
 #include "indexer/worker.hpp"
 
 #include <libpq-fe.h>
 
 #include <cstdint>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -146,6 +147,24 @@ Json::Value indexerStatus(
     return body;
 }
 
+void logStartup(unsigned short port, const std::string &network,
+                bool isIndexerEnabled, Json::ArrayIndex marketCount) {
+    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+    Json::Value event;
+    event["event"] = "service.starting";
+    event["timestamp_ms"] = static_cast<Json::Int64>(timestamp);
+    event["service"] = "afterbell-api";
+    event["port"] = port;
+    event["network"] = network;
+    event["indexer_enabled"] = isIndexerEnabled;
+    event["market_count"] = marketCount;
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    std::cerr << Json::writeString(writer, event) << '\n';
+}
+
 } // namespace
 
 int main() {
@@ -171,8 +190,9 @@ int main() {
         }
         const auto markets = loadMarkets(*registryPath);
 
+        const bool runIndexer = indexerEnabled();
         std::shared_ptr<afterbell::indexer::Worker> indexerWorker;
-        if (indexerEnabled()) {
+        if (runIndexer) {
             afterbell::indexer::IndexerConfig indexerConfig{
                 *network,
                 *contractId,
@@ -191,6 +211,7 @@ int main() {
         }
 
         drogon::app().setThreadNum(4);
+        afterbell::registerRequestLogger();
         drogon::app().registerHandler(
             "/health/live",
             [](const drogon::HttpRequestPtr &,
@@ -251,8 +272,9 @@ int main() {
             {drogon::Get});
 
         const auto port = portFromEnv();
+        logStartup(port, *network, runIndexer, markets.size());
         std::cerr << "afterbell-api listening on port " << port << " (" << *network
-                  << ", indexer " << (indexerWorker ? "enabled" : "disabled") << ")\n";
+                  << ", indexer " << (runIndexer ? "enabled" : "disabled") << ")\n";
         drogon::app().addListener("0.0.0.0", port).run();
         if (indexerWorker) indexerWorker->stop();
     } catch (const std::exception &error) {

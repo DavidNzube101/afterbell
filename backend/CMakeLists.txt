@@ -35,7 +35,10 @@ target_link_libraries(afterbell-indexer PRIVATE afterbell-indexer-core)
 target_compile_options(afterbell-indexer PRIVATE -Wall -Wextra -Wpedantic)
 
 if(Drogon_FOUND)
-    add_executable(afterbell-api src/api/main.cpp)
+    add_executable(afterbell-api
+        src/api/main.cpp
+        src/http/request_logger.cpp
+    )
     target_link_libraries(afterbell-api PRIVATE afterbell-indexer-core Drogon::Drogon)
     target_compile_options(afterbell-api PRIVATE -Wall -Wextra -Wpedantic)
 else()
