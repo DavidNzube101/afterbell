@@ -6,6 +6,8 @@ use near_sdk::{
 };
 use serde::{Deserialize, Serialize};
 
+mod engine_math;
+
 const NEP_413_MESSAGE_PREFIX: u32 = (1 << 31) + 413;
 const MAX_AUTHORIZATION_TTL_MS: u64 = 5 * 60 * 1000;
 const MAX_AGENT_ACTION_TTL_MS: u64 = 60 * 1000;
