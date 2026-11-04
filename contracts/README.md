@@ -1,6 +1,39 @@
 # Contracts
 
-NEAR contract workspace for Afterbell. The chosen product account model is one shared NEAR contract account with isolated logical records for users and agents; it does not deploy a smart-account contract per user or use an account factory. The A1 callback and withdrawal, smart-account, and factory directories contain prototypes and experiments. The trading and production vault contracts are not implemented yet. The shared-ledger spike includes the first agent-record and permission foundation described below.
+NEAR contract workspace for Afterbell. The product model is one shared NEAR
+contract account with isolated logical user and agent records. A1 does not
+create per-user contracts or use a factory.
+
+## Current A1 implementation status (4 Nov 2026)
+
+The current local `shared-ledger-spike/` source extends the earlier deposit and
+withdrawal prototype with the A1 trading and LP accounting foundation. It now
+contains configurable markets (up to 64), signed price/quote authorization,
+2-of-3 Ed25519 oracle attestations, freshness/deviation circuit breakers,
+owner and agent logical-record positions, isolated margin, partial/full closes,
+funding, liquidation, insurance and bad-debt accounting, deferred profit
+claims, LP shares with a 24-hour withdrawal queue, delayed risk increases,
+storage-credit metering, per-agent daily realized-loss limits, and
+NEAR/Solana/Ethereum owner-signature verification. Daily loss caps are included
+in the user-signed agent policy, reset at UTC midnight, and block new agent
+opens after the cap while leaving closes/reductions available. The current Rust
+suite has 75 unit tests. The latest optimized WASM is 644,260 bytes
+(SHA-256 `0c4050061b1f0f9c33845fa2a4ae41ef97cd134e2b13841a324518106d418bc8`).
+
+This describes local source, **not deployment status**. The testnet deployment
+history below describes older A1 versions. The current source requires
+`new(usdc_token, protocol_admin)` and initializes an explicit protocol admin;
+the existing testnet state does not have that admin record. A fresh test
+deployment with an appropriate NEAR multisig admin is required before testing
+the new admin-controlled configuration. No deployment or mainnet release is
+part of this work.
+
+The quote-signed path is a centrally authorized price-fill/accounting model,
+not exchange order-book or AMM matching. Production still needs security
+review, production oracle and quote signer governance, independent economic
+validation, C++ relayer/indexer integration, and cross-chain wallet-provider
+integration. Do not use production funds. The `smart-account-spike/` and
+`account-factory-spike/` directories are historical architecture experiments.
 
 ## Shared-ledger callback spike
 
@@ -16,10 +49,9 @@ Ethereum EIP-191 signatures directly before withdrawing. The signed action
 binds the contract, record, destination, amount, nonce, expiry, and fee cap.
 Nonce and balance are updated before the asynchronous USDC transfer; a failed
 transfer restores the balance while keeping the nonce consumed. Fees are
-currently unsupported and must be zero. `smart-account-spike/` is the earlier
-per-user-contract experiment and is not part of the product model. A1 still
-has no live market matching or production oracle, liquidation, fee, funding,
-and settlement system and is not production-ready.
+currently unsupported and must be zero. The current local A1 source adds the
+accounting and risk features listed above; older testnet deployments predate
+those features and are not production-ready.
 
 The intended message is JSON of the form:
 
@@ -77,25 +109,15 @@ accepted a signed $110 mark, and returned unrealized gross PnL of 50,000 raw
 USDC units (0.05 USDC). The test position was closed using the old margin-only
 path. This was not a market fill and did not realize PnL.
 
-### Funded-vault settlement prototype
+### Earlier testnet accounting experiments
 
-The deployed A1 source adds a logical `protocol:vault:usdc` balance. It
-can receive real NEP-141 deposits, but has no owner and cannot use the normal
-withdrawal path. Price-aware opens reserve vault payout capacity equal to
-position notional. Agent-signed and owner-signed market closes use a fresh
-signed mark and slippage bound, settle gross PnL, return remaining margin,
-release the vault reservation, and remove the position. For this prototype,
-loss is capped at isolated margin and profit at notional; there is no LP share
-accounting, trading fill, fee/funding, liquidation, insurance or bad-debt
-model. All 54 local unit tests pass. New adversarial cases reject altered
-owner allocations, replayed allocation signatures, unauthorized agent
-revocation, and agent-signed position-size changes; a vault-capacity edge case
-confirms a rejected second open leaves the first reservation and nonce intact.
-Further cases reject expired-agent opens, allocations to revoked agents,
-tampered owner-signed policies, and replacement of an active agent policy.
-The funded-settlement WASM was deployed to testnet at 376.9 KB. The latest storage-credit and owner-rotation WASM is deployed at 423.5 KB
-(checksum in the deployment table). The testnet contract received 2 NEAR from the
-faucet before the funded-settlement deployment to cover code storage.
+The testnet transactions below document earlier iterations of price-aware
+position settlement using synthetic prices. They do not exercise the current
+local LP, funding, liquidation, oracle-quorum, or admin code. Those features
+have local unit coverage only and require a fresh test deployment before
+end-to-end verification. The prior testnet WASM sizes and transaction links
+remain useful as deployment history, not as evidence that the current source is
+deployed.
 
 The funded settlement path completed an end-to-end test using temporary
 Solana-owner and agent keys and synthetic NVDA prices. A1 accepted a 1 USDC
@@ -106,7 +128,7 @@ profit), debited 0.05 USDC from the vault, released all reserved payout, and
 removed the position. The owner then revoked the agent and reclaimed its 1.05
 USDC. Verified final state: vault 0.95 USDC with zero reserved payout, user
 record 2.05 USDC, agent 0 USDC and disabled, no open position. This validates
-the prototype accounting path only; it is not a live market trade.
+the prototype accounting path only; it was not a live market trade.
 
 A second funded test checked the loss path: a new agent opened a 0.5 USDC
 notional 2x long at synthetic $100 and the owner signed a close at $90. A1
@@ -155,10 +177,13 @@ the view returned to 0.02774 NEAR and the nonce advanced to 3. These were
 disposable test records and keys. A later fix for storage releases on legacy
 records passed two additional unit cases and was deployed without reinitializing
 A1. After that deployment, the vault view remained at 1 USDC and the two funded
-record credits remained readable. The C++ indexer has not been created yet:
-`app/backend` currently contains only the market token-address list. Receipt
-deduplication should use the NEAR network, finalized receipt ID, and log index
-as the unique event key when that indexer is implemented.
+record credits remained readable. The C++ background indexer now runs beside
+the API and scans A1 account transactions using the FastNear transaction API
+plus NEAR RPC receipt lookups; it does not depend on an archival NEAR endpoint.
+PostgreSQL stores a durable block cursor and deduplicates events by network,
+receipt ID, and log index. It has been observed scanning the current testnet
+A1 history, but it indexes the deployed contract's existing event format; new
+local A1 trade events still need downstream schema/API integration.
 
 | Funded settlement testnet action | Transaction |
 |---|---|

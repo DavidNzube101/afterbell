@@ -30,6 +30,7 @@ const AGENT_POSITION_PREFIX: &[u8] = b"afterbell:a1:agent_position:";
 const AGENT_OPEN_NOTIONAL_PREFIX: &[u8] = b"afterbell:a1:agent_open_notional:";
 const AGENT_POSITION_COUNT_PREFIX: &[u8] = b"afterbell:a1:agent_position_count:";
 const AGENT_RESERVED_MARGIN_PREFIX: &[u8] = b"afterbell:a1:agent_reserved_margin:";
+const AGENT_DAILY_LOSS_PREFIX: &[u8] = b"afterbell:a1:agent_daily_loss:";
 const MARKET_PRICE_PREFIX: &[u8] = b"afterbell:a1:market_price:";
 const VAULT_RESERVED_PREFIX: &[u8] = b"afterbell:a1:vault_reserved_payout";
 const STORAGE_CREDIT_PREFIX: &[u8] = b"afterbell:a1:storage_credit:";
@@ -80,6 +81,7 @@ const PERP_MAX_MARKET_OI_BPS: u16 = 1_000;
 const PERP_MAX_MARKET_SKEW_BPS: u16 = 300;
 const PERP_MAX_TRADER_OI_BPS: u16 = 50;
 const PERP_DEFAULT_BETA_CAP_USDC: u128 = 100_000_000_000;
+const PROTOCOL_ADMIN_KEY: &[u8] = b"afterbell:a1:protocol_admin";
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
@@ -156,6 +158,9 @@ pub struct AgentConfig {
     /// Leverage in basis points (10,000 = 1x; 50,000 = 5x).
     pub max_leverage_bps: u32,
     pub max_allocation_usdc: U128,
+    /// Maximum realized trading loss allowed per UTC day; new agent opens stop at the cap.
+    #[serde(default)]
+    pub max_daily_loss_usdc: U128,
     pub expires_at_ms: u64,
     pub enabled: bool,
 }
@@ -215,6 +220,8 @@ pub struct PerpPosition {
     pub entry_price: U128,
     pub opened_at_ms: u64,
     pub funding_index: U128,
+    #[serde(default)]
+    pub funding_remainder: i128,
 }
 
 #[near(serializers = [json])]
@@ -227,6 +234,13 @@ pub struct PerpExposure {
     pub long_funding_index: U128,
     pub short_funding_index: U128,
     pub funding_updated_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentDailyLoss {
+    pub utc_day: u64,
+    pub realized_loss_usdc: U128,
 }
 
 #[near(serializers = [json])]
@@ -270,12 +284,17 @@ pub struct PositionPnl {
 #[near]
 impl SharedLedger {
     #[init]
-    pub fn new(usdc_token: AccountId) -> Self {
+    pub fn new(usdc_token: AccountId, protocol_admin: AccountId) -> Self {
+        write_json_storage(PROTOCOL_ADMIN_KEY, &protocol_admin);
         Self {
             usdc_token,
             balances: LookupMap::new(b"b"),
             processed_deposits: UnorderedSet::new(b"d"),
         }
+    }
+
+    pub fn protocol_admin_account(&self) -> AccountId {
+        read_json_storage(PROTOCOL_ADMIN_KEY).expect("protocol admin is not initialized")
     }
 
     pub fn balance_of(&self, account_id: String) -> U128 {
@@ -335,6 +354,10 @@ impl SharedLedger {
         read_agent_config(&agent_record_id)
     }
 
+    pub fn agent_daily_loss(&self, agent_record_id: String) -> U128 {
+        U128(read_agent_daily_loss(&agent_record_id).realized_loss_usdc.0)
+    }
+
     pub fn agent_admin_nonce(&self, user_record_id: String) -> u64 {
         read_agent_admin_nonce(&user_record_id)
     }
@@ -392,11 +415,7 @@ impl SharedLedger {
     }
 
     pub fn set_perp_quote_signer(&mut self, signer: OwnerKey) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         if read_perp_quote_signer().is_none() {
             write_perp_quote_signer(&signer);
         } else {
@@ -409,11 +428,7 @@ impl SharedLedger {
     }
 
     pub fn apply_perp_quote_signer(&mut self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         let ready_at = read_u64_storage(PERP_PENDING_QUOTE_SIGNER_AT_KEY);
         assert!(ready_at > 0, "no pending quote signer");
         assert!(
@@ -428,11 +443,7 @@ impl SharedLedger {
     }
 
     pub fn set_perp_beta_cap(&mut self, cap: U128) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         assert!(cap.0 > 0, "beta cap must be positive");
         assert!(
             cap.0
@@ -482,15 +493,11 @@ impl SharedLedger {
     }
 
     pub fn oracle_attestation_message(&self, attestation: OracleAttestation) -> String {
-        oracle_attestation_message(&attestation)
+        build_oracle_attestation_message(&attestation)
     }
 
     pub fn configure_oracle_quorum(&mut self, public_keys: Vec<[u8; 32]>) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         assert_eq!(public_keys.len(), 3, "oracle quorum requires three keys");
         assert!(
             public_keys[0] != public_keys[1]
@@ -510,11 +517,7 @@ impl SharedLedger {
     }
 
     pub fn apply_oracle_quorum(&mut self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         let ready_at = read_u64_storage(PERP_PENDING_ORACLE_KEYS_AT_KEY);
         assert!(ready_at > 0, "no pending oracle quorum");
         assert!(
@@ -568,7 +571,7 @@ impl SharedLedger {
         );
         let keys: Vec<[u8; 32]> =
             read_json_storage(PERP_ORACLE_KEYS_KEY).expect("oracle quorum is not configured");
-        let message = oracle_attestation_message(&attestation);
+        let message = build_oracle_attestation_message(&attestation);
         let mut valid_signers = [false; 3];
         for signature in signatures.iter().take(3) {
             let Ok(sig) = <&[u8; 64]>::try_from(signature.as_ref()) else {
@@ -637,14 +640,61 @@ impl SharedLedger {
         U128(read_u128_storage(PERP_INSURANCE_KEY))
     }
 
-    /// The account contract itself is the protocol authority for risk
-    /// configuration; the function cannot be called by a user or relayer.
-    pub fn configure_perp_market(&mut self, config: PerpMarketConfig) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
+    pub fn bad_debt_cover_message(
+        &self,
+        account_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        build_bad_debt_cover_message(&account_id, amount, nonce, expires_at_ms)
+    }
+
+    /// Owner-authorized recapitalization. Repayment cannot exceed recorded bad
+    /// debt, and any remaining debt continues to keep opens paused.
+    pub fn cover_perp_bad_debt(
+        &mut self,
+        account_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        signature: Base64VecU8,
+    ) -> U128 {
+        assert!(amount.0 > 0, "cover amount must be positive");
+        let debt = read_u128_storage(PERP_BAD_DEBT_KEY);
+        assert!(
+            debt > 0 && amount.0 <= debt,
+            "cover exceeds outstanding bad debt"
         );
+        let expected_nonce = read_user_perp_nonce(&account_id)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        assert_eq!(nonce, expected_nonce, "invalid trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = build_bad_debt_cover_message(&account_id, amount, nonce, expires_at_ms);
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert!(
+            verify_owner_signature(&owner, &message, signature.as_ref(), nonce),
+            "invalid debt cover signature"
+        );
+        let balance = self.balances.get(&account_id).unwrap_or_default();
+        assert!(balance >= amount.0, "insufficient free USDC");
+        let vault_id = SHARED_VAULT_RECORD_ID.to_string();
+        let vault = self.balances.get(&vault_id).unwrap_or_default();
+        self.balances.insert(&account_id, &(balance - amount.0));
+        self.balances.insert(
+            &vault_id,
+            &vault.checked_add(amount.0).expect("vault overflow"),
+        );
+        write_u128_storage(PERP_BAD_DEBT_KEY, debt - amount.0);
+        write_user_perp_nonce(&account_id, nonce);
+        U128(amount.0)
+    }
+
+    /// Only the NEAR account selected at A1 initialization can change risk
+    /// configuration. Increasing risk requires the configured timelock.
+    pub fn configure_perp_market(&mut self, config: PerpMarketConfig) {
+        assert_protocol_admin();
         assert_valid_market_id(&config.market_id);
         assert!(
             config.max_leverage_bps >= 10_000 && config.max_leverage_bps <= MAX_PERP_LEVERAGE_BPS,
@@ -704,14 +754,12 @@ impl SharedLedger {
             }
         }
         write_perp_market(&config);
+        env::storage_remove(&pending_key);
+        env::storage_remove(&perp_market_time_key(&config.market_id));
     }
 
     pub fn apply_perp_market_config(&mut self, market_id: String) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         let at = read_u64_storage(&perp_market_time_key(&market_id));
         assert!(at > 0, "no pending market config");
         assert!(
@@ -727,20 +775,12 @@ impl SharedLedger {
     }
 
     pub fn pause_perps(&mut self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         write_u64_storage(PERP_PAUSED_KEY, 1);
     }
 
     pub fn unpause_perps(&mut self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            env::current_account_id(),
-            "protocol authority required"
-        );
+        assert_protocol_admin();
         assert_eq!(
             read_u128_storage(PERP_BAD_DEBT_KEY),
             0,
@@ -789,7 +829,15 @@ impl SharedLedger {
             "vault beta cap exceeded"
         );
         let nav = vault_nav(&self.balances);
-        let total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
+        let mut total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
+        if total_shares == 0 && nav > 0 {
+            // Capital that entered outside LP minting (for example debt
+            // recapitalization before the first LP) is permanently locked to
+            // the protocol record so the first LP cannot claim it.
+            write_lp_shares(SHARED_VAULT_RECORD_ID, nav);
+            total_shares = nav;
+            write_u128_storage(LP_TOTAL_SHARES_KEY, total_shares);
+        }
         let shares = if total_shares == 0 || nav == 0 {
             amount.0
         } else {
@@ -827,6 +875,170 @@ impl SharedLedger {
 
     pub fn vault_nav_usdc(&self) -> U128 {
         U128(vault_nav(&self.balances))
+    }
+
+    pub fn perp_margin_message(
+        &self,
+        account_id: String,
+        position_id: String,
+        action: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        let position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        build_perp_margin_message(&position, &action, amount, nonce, expires_at_ms)
+    }
+
+    pub fn add_perp_margin(
+        &mut self,
+        account_id: String,
+        position_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+    ) -> U128 {
+        assert!(amount.0 > 0, "margin amount must be positive");
+        let mut position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        let owner_record = position_owner_record(&account_id);
+        let expected = read_user_perp_nonce(&owner_record)
+            .checked_add(1)
+            .expect("nonce overflow");
+        assert_eq!(nonce, expected, "invalid owner trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = build_perp_margin_message(&position, "add", amount, nonce, expires_at_ms);
+        let owner = read_owner(&owner_record).expect("owner is not registered");
+        assert!(
+            verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+            "invalid margin authorization"
+        );
+        let config = read_agent_config(&account_id);
+        let source = if config.as_ref().is_some_and(|agent| !agent.enabled) {
+            owner_record.clone()
+        } else {
+            account_id.clone()
+        };
+        let balance = self.balances.get(&source).unwrap_or_default();
+        assert!(balance >= amount.0, "insufficient free USDC");
+        position.margin_usdc = U128(
+            position
+                .margin_usdc
+                .0
+                .checked_add(amount.0)
+                .expect("margin overflow"),
+        );
+        if let Some(agent) = &config {
+            if agent.enabled {
+                assert!(
+                    read_agent_reserved_margin(&account_id)
+                        .checked_add(amount.0)
+                        .is_some_and(|v| v <= agent.max_allocation_usdc.0),
+                    "agent allocation limit exceeded"
+                );
+                write_agent_reserved_margin(
+                    &account_id,
+                    read_agent_reserved_margin(&account_id)
+                        .checked_add(amount.0)
+                        .expect("agent margin overflow"),
+                );
+            }
+        }
+        self.balances.insert(&source, &(balance - amount.0));
+        write_u128_storage(
+            PERP_TOTAL_MARGIN_KEY,
+            read_u128_storage(PERP_TOTAL_MARGIN_KEY)
+                .checked_add(amount.0)
+                .expect("total margin overflow"),
+        );
+        write_perp_position(&account_id, &position_id, &position);
+        write_user_perp_nonce(&owner_record, nonce);
+        U128(amount.0)
+    }
+
+    pub fn remove_perp_margin(
+        &mut self,
+        account_id: String,
+        position_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+    ) -> U128 {
+        assert!(amount.0 > 0, "margin amount must be positive");
+        let mut position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        assert!(
+            position.margin_usdc.0 >= amount.0,
+            "insufficient position margin"
+        );
+        let owner_record = position_owner_record(&account_id);
+        let expected = read_user_perp_nonce(&owner_record)
+            .checked_add(1)
+            .expect("nonce overflow");
+        assert_eq!(nonce, expected, "invalid owner trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = build_perp_margin_message(&position, "remove", amount, nonce, expires_at_ms);
+        let owner = read_owner(&owner_record).expect("owner is not registered");
+        assert!(
+            verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+            "invalid margin authorization"
+        );
+        settle_position_funding(&mut position, &mut self.balances);
+        let mark = require_fresh_market_price(&position.market_id);
+        let market = read_perp_market(&position.market_id).expect("market not listed");
+        let pnl = crate::engine_math::linear_pnl(
+            position.notional_usdc.0,
+            position.entry_price.0,
+            mark.price.0,
+            position.is_long,
+        )
+        .expect("PnL overflow");
+        let next_margin = position.margin_usdc.0 - amount.0;
+        let entry_value = position
+            .notional_usdc
+            .0
+            .checked_mul(position.entry_price.0)
+            .expect("entry value overflow");
+        let current_notional =
+            revalue_exposure(position.notional_usdc.0, entry_value, mark.price.0);
+        assert!(
+            !crate::engine_math::is_liquidatable(
+                next_margin,
+                pnl,
+                current_notional,
+                market.maintenance_margin_bps
+            )
+            .expect("maintenance overflow"),
+            "margin removal would breach maintenance"
+        );
+        let config = read_agent_config(&account_id);
+        let destination = if config.as_ref().is_some_and(|agent| !agent.enabled) {
+            owner_record.clone()
+        } else {
+            account_id.clone()
+        };
+        let balance = self.balances.get(&destination).unwrap_or_default();
+        self.balances.insert(
+            &destination,
+            &balance.checked_add(amount.0).expect("balance overflow"),
+        );
+        position.margin_usdc = U128(next_margin);
+        write_perp_position(&account_id, &position_id, &position);
+        write_u128_storage(
+            PERP_TOTAL_MARGIN_KEY,
+            read_u128_storage(PERP_TOTAL_MARGIN_KEY).saturating_sub(amount.0),
+        );
+        if config.as_ref().is_some_and(|agent| agent.enabled) {
+            write_agent_reserved_margin(
+                &account_id,
+                read_agent_reserved_margin(&account_id).saturating_sub(amount.0),
+            );
+        }
+        write_user_perp_nonce(&owner_record, nonce);
+        U128(amount.0)
     }
 
     pub fn request_vault_withdrawal(
@@ -935,6 +1147,313 @@ impl SharedLedger {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn reduce_perp_position_message(
+        &self,
+        account_id: String,
+        position_id: String,
+        reduce_notional: U128,
+        reference_price: U128,
+        max_slippage_bps: u16,
+        price_sequence: u64,
+        fee_bps: u16,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        let position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        perp_reduce_message(
+            &position,
+            reduce_notional,
+            reference_price,
+            max_slippage_bps,
+            price_sequence,
+            fee_bps,
+            nonce,
+            expires_at_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn reduce_perp_position(
+        &mut self,
+        account_id: String,
+        position_id: String,
+        reduce_notional: U128,
+        reference_price: U128,
+        max_slippage_bps: u16,
+        price_sequence: u64,
+        fee_bps: u16,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+        quote_signature: Base64VecU8,
+    ) -> U128 {
+        let mut position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        assert!(
+            reduce_notional.0 > 0 && reduce_notional.0 < position.notional_usdc.0,
+            "partial close amount out of range"
+        );
+        let market = read_perp_market(&position.market_id).expect("market not listed");
+        assert!(
+            fee_bps <= MAX_PERP_FEE_BPS && max_slippage_bps <= MAX_PERP_SLIPPAGE_BPS,
+            "fee or slippage exceeds hard bound"
+        );
+        let mark = require_fresh_market_price(&position.market_id);
+        assert_eq!(mark.sequence, price_sequence, "stale quote sequence");
+        assert!(reference_price.0 > 0, "reference price must be positive");
+        let deviation = mark
+            .price
+            .0
+            .abs_diff(reference_price.0)
+            .saturating_mul(10_000)
+            / reference_price.0;
+        assert!(
+            deviation <= u128::from(max_slippage_bps.min(market.max_execution_deviation_bps)),
+            "execution price exceeds signed slippage"
+        );
+        let agent_config = read_agent_config(&account_id);
+        let expected_nonce = if agent_config.is_some() {
+            read_agent_action_nonce(&account_id)
+        } else {
+            read_user_perp_nonce(&account_id)
+        }
+        .checked_add(1)
+        .expect("trading nonce overflow");
+        assert_eq!(nonce, expected_nonce, "invalid trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = perp_reduce_message(
+            &position,
+            reduce_notional,
+            reference_price,
+            max_slippage_bps,
+            price_sequence,
+            fee_bps,
+            nonce,
+            expires_at_ms,
+        );
+        if let Some(config) = &agent_config {
+            let now = env::block_timestamp() / 1_000_000;
+            let agent_signed = config.enabled
+                && now < config.expires_at_ms
+                && expires_at_ms <= config.expires_at_ms
+                && verify_owner_signature(
+                    &config.agent_key,
+                    &message,
+                    owner_signature.as_ref(),
+                    nonce,
+                );
+            let owner_signed = read_owner(&config.user_record_id).is_some_and(|owner| {
+                verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce)
+            });
+            assert!(agent_signed || owner_signed, "invalid reduce authorization");
+        } else {
+            let owner = read_owner(&account_id).expect("owner is not registered");
+            assert!(
+                verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+                "invalid owner signature"
+            );
+        }
+        let quote_signer = read_perp_quote_signer().expect("quote signer is not configured");
+        assert!(
+            verify_owner_signature(&quote_signer, &message, quote_signature.as_ref(), nonce),
+            "invalid quote signature"
+        );
+        // Capture before funding settlement or deferred-claim writes so every
+        // new byte created by this action is charged to the logical owner.
+        let storage_before = env::storage_usage();
+        settle_position_funding(&mut position, &mut self.balances);
+        let realized_pnl = crate::engine_math::linear_pnl(
+            reduce_notional.0,
+            position.entry_price.0,
+            mark.price.0,
+            position.is_long,
+        )
+        .expect("PnL overflow");
+        let margin_part = position
+            .margin_usdc
+            .0
+            .checked_mul(reduce_notional.0)
+            .expect("margin split overflow")
+            / position.notional_usdc.0;
+        let fee = crate::engine_math::fee_ceil(reduce_notional.0, fee_bps).expect("fee overflow");
+        let post_trade = i128::try_from(margin_part)
+            .expect("margin overflow")
+            .saturating_add(realized_pnl)
+            .saturating_sub(i128::try_from(fee).expect("fee overflow"));
+        let loss = if realized_pnl < 0 {
+            realized_pnl.unsigned_abs().min(margin_part)
+        } else {
+            0
+        };
+        if agent_config.is_some() && realized_pnl < 0 {
+            record_agent_realized_loss(&account_id, realized_pnl.unsigned_abs());
+        }
+        let vault_id = SHARED_VAULT_RECORD_ID.to_string();
+        let vault_cash = self.balances.get(&vault_id).unwrap_or_default();
+        let beneficiary_id = agent_config
+            .as_ref()
+            .filter(|config| !config.enabled)
+            .map(|config| config.user_record_id.clone())
+            .unwrap_or_else(|| account_id.clone());
+        let mut credit = post_trade.max(0) as u128;
+        if realized_pnl > 0 {
+            let free = vault_cash
+                .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
+                .saturating_sub(read_u128_storage(PERP_DEFERRED_TOTAL_KEY))
+                .saturating_sub(read_vault_reserved_payout().saturating_sub(reduce_notional.0));
+            let paid = (realized_pnl as u128).min(free);
+            credit = margin_part.saturating_sub(fee).saturating_add(paid);
+            let unpaid = (realized_pnl as u128).saturating_sub(paid);
+            if unpaid > 0 {
+                write_perp_deferred(
+                    &beneficiary_id,
+                    read_perp_deferred(&beneficiary_id)
+                        .checked_add(unpaid)
+                        .expect("claim overflow"),
+                );
+                write_u128_storage(
+                    PERP_DEFERRED_TOTAL_KEY,
+                    read_u128_storage(PERP_DEFERRED_TOTAL_KEY)
+                        .checked_add(unpaid)
+                        .expect("claim overflow"),
+                );
+            }
+            self.balances.insert(
+                &vault_id,
+                &vault_cash.saturating_add(fee).saturating_sub(paid),
+            );
+        } else {
+            self.balances.insert(
+                &vault_id,
+                &vault_cash
+                    .checked_add(loss)
+                    .and_then(|v| v.checked_add(fee))
+                    .expect("vault overflow"),
+            );
+        }
+        if post_trade < 0 {
+            let shortfall = post_trade.unsigned_abs();
+            let covered = shortfall.min(read_u128_storage(PERP_INSURANCE_KEY));
+            write_u128_storage(
+                PERP_INSURANCE_KEY,
+                read_u128_storage(PERP_INSURANCE_KEY) - covered,
+            );
+            let debt = read_u128_storage(PERP_BAD_DEBT_KEY)
+                .checked_add(shortfall - covered)
+                .expect("bad debt overflow");
+            write_u128_storage(PERP_BAD_DEBT_KEY, debt);
+            if debt > 0 {
+                write_u64_storage(PERP_PAUSED_KEY, 1);
+            }
+            credit = 0;
+        }
+        if fee > 0 {
+            write_u128_storage(
+                PERP_INSURANCE_KEY,
+                read_u128_storage(PERP_INSURANCE_KEY)
+                    .checked_add(fee / 4)
+                    .expect("insurance overflow"),
+            );
+        }
+        let exposure = read_perp_exposure(&position.market_id);
+        let entry_value = reduce_notional
+            .0
+            .checked_mul(position.entry_price.0)
+            .expect("entry value overflow");
+        position.funding_remainder = position.funding_remainder.saturating_mul(
+            i128::try_from(position.notional_usdc.0 - reduce_notional.0)
+                .expect("position size overflow"),
+        ) / i128::try_from(position.notional_usdc.0)
+            .expect("position size overflow");
+        if position.is_long {
+            position.notional_usdc = U128(position.notional_usdc.0 - reduce_notional.0);
+            position.margin_usdc = U128(position.margin_usdc.0 - margin_part);
+            let mut next = exposure;
+            next.long_notional_usdc = U128(
+                next.long_notional_usdc
+                    .0
+                    .checked_sub(reduce_notional.0)
+                    .expect("long exposure invariant"),
+            );
+            next.long_entry_value = U128(
+                next.long_entry_value
+                    .0
+                    .checked_sub(entry_value)
+                    .expect("long entry value invariant"),
+            );
+            write_perp_exposure(&next, &position.market_id);
+        } else {
+            position.notional_usdc = U128(position.notional_usdc.0 - reduce_notional.0);
+            position.margin_usdc = U128(position.margin_usdc.0 - margin_part);
+            let mut next = exposure;
+            next.short_notional_usdc = U128(
+                next.short_notional_usdc
+                    .0
+                    .checked_sub(reduce_notional.0)
+                    .expect("short exposure invariant"),
+            );
+            next.short_entry_value = U128(
+                next.short_entry_value
+                    .0
+                    .checked_sub(entry_value)
+                    .expect("short entry value invariant"),
+            );
+            write_perp_exposure(&next, &position.market_id);
+        }
+        if credit > 0 {
+            let balance = self.balances.get(&beneficiary_id).unwrap_or_default();
+            self.balances.insert(
+                &beneficiary_id,
+                &balance.checked_add(credit).expect("balance overflow"),
+            );
+        }
+        write_vault_reserved_payout(
+            read_vault_reserved_payout()
+                .checked_sub(reduce_notional.0)
+                .expect("vault reservation invariant"),
+        );
+        write_u128_storage(
+            PERP_TOTAL_MARGIN_KEY,
+            read_u128_storage(PERP_TOTAL_MARGIN_KEY).saturating_sub(margin_part),
+        );
+        write_u128_storage(
+            PERP_TOTAL_OI_KEY,
+            read_u128_storage(PERP_TOTAL_OI_KEY).saturating_sub(reduce_notional.0),
+        );
+        let net_delta = if position.is_long {
+            reduce_notional.0 as i128
+        } else {
+            -(reduce_notional.0 as i128)
+        };
+        write_i128_storage(
+            PERP_GLOBAL_NET_KEY,
+            read_i128_storage(PERP_GLOBAL_NET_KEY).saturating_sub(net_delta),
+        );
+        write_perp_open_notional(
+            &account_id,
+            read_perp_open_notional(&account_id).saturating_sub(reduce_notional.0),
+        );
+        if let Some(config) = &agent_config {
+            write_agent_action_nonce(&account_id, nonce);
+            write_agent_open_notional(
+                &account_id,
+                read_agent_open_notional(&account_id).saturating_sub(reduce_notional.0),
+            );
+            write_agent_reserved_margin(
+                &account_id,
+                read_agent_reserved_margin(&account_id).saturating_sub(margin_part),
+            );
+            settle_storage_credit(&config.user_record_id, storage_before);
+        } else {
+            write_user_perp_nonce(&account_id, nonce);
+            settle_storage_credit(&account_id, storage_before);
+        }
+        write_perp_position(&account_id, &position_id, &position);
+        U128(credit)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn close_perp_position(
         &mut self,
         account_id: String,
@@ -1016,6 +1535,9 @@ impl SharedLedger {
             verify_owner_signature(&signer, &message, quote_signature.as_ref(), nonce),
             "invalid quote signature"
         );
+        // Funding may create balance state, and an underfunded vault may
+        // create a deferred-profit claim below. Meter the whole operation.
+        let storage_before = env::storage_usage();
         settle_position_funding(&mut position, &mut self.balances);
         let pnl = crate::engine_math::linear_pnl(
             position.notional_usdc.0,
@@ -1035,6 +1557,9 @@ impl SharedLedger {
         } else {
             0
         };
+        if agent_config.is_some() && pnl < 0 {
+            record_agent_realized_loss(&account_id, pnl.unsigned_abs());
+        }
         let vault_id = SHARED_VAULT_RECORD_ID.to_string();
         let vault_balance = self.balances.get(&vault_id).unwrap_or_default();
         let beneficiary_id = agent_config
@@ -1113,7 +1638,6 @@ impl SharedLedger {
                     .expect("insurance overflow"),
             );
         }
-        let storage_before = env::storage_usage();
         if user_credit != 0 {
             let balance = self.balances.get(&beneficiary_id).unwrap_or_default();
             self.balances.insert(
@@ -1249,6 +1773,9 @@ impl SharedLedger {
         let mark = require_fresh_market_price(&position.market_id);
         let health = read_oracle_health(&position.market_id);
         assert!(!health.circuit_broken, "oracle circuit breaker active");
+        // The liquidation may create a deferred-profit record as well as
+        // update balances and exposure; include all of it in storage metering.
+        let storage_before = env::storage_usage();
         settle_position_funding(&mut position, &mut self.balances);
         let pnl = crate::engine_math::linear_pnl(
             position.notional_usdc.0,
@@ -1296,6 +1823,9 @@ impl SharedLedger {
         } else {
             (0, position.margin_usdc.0)
         };
+        if agent_config.is_some() && pnl < 0 {
+            record_agent_realized_loss(&account_id, pnl.unsigned_abs());
+        }
         let penalty = calculated_penalty.min(remaining_margin);
         let keeper_reward = if keeper_registered {
             penalty * u128::from(PERP_LIQUIDATOR_REWARD_BPS)
@@ -1377,7 +1907,6 @@ impl SharedLedger {
                     .expect("insurance overflow"),
             );
         }
-        let storage_before = env::storage_usage();
         if user_credit != 0 {
             let user_balance = self.balances.get(&beneficiary_id).unwrap_or_default();
             self.balances.insert(
@@ -1588,6 +2117,7 @@ impl SharedLedger {
                 config.allowed_markets.contains(&market_id),
                 "market is not allowed for this agent"
             );
+            assert_agent_daily_loss_allowed(&account_id, config);
             assert!(
                 notional.0 <= config.max_position_usdc.0,
                 "agent position limit exceeded"
@@ -1801,6 +2331,7 @@ impl SharedLedger {
                 } else {
                     exposure.short_funding_index.0
                 }),
+                funding_remainder: 0,
             },
         );
         write_perp_open_notional(&account_id, trader_oi);
@@ -2175,6 +2706,7 @@ impl SharedLedger {
         max_open_notional_usdc: U128,
         max_leverage_bps: u32,
         max_allocation_usdc: U128,
+        max_daily_loss_usdc: U128,
         expires_at_ms: u64,
     ) -> SigningPayload {
         assert_valid_agent_config(
@@ -2185,6 +2717,7 @@ impl SharedLedger {
             max_open_notional_usdc,
             max_leverage_bps,
             max_allocation_usdc,
+            max_daily_loss_usdc,
             expires_at_ms,
         );
         let nonce = read_agent_admin_nonce(&user_record_id)
@@ -2200,6 +2733,7 @@ impl SharedLedger {
                 max_open_notional_usdc,
                 max_leverage_bps,
                 max_allocation_usdc,
+                max_daily_loss_usdc,
                 nonce,
                 expires_at_ms,
             ),
@@ -2222,6 +2756,7 @@ impl SharedLedger {
         max_open_notional_usdc: U128,
         max_leverage_bps: u32,
         max_allocation_usdc: U128,
+        max_daily_loss_usdc: U128,
         expires_at_ms: u64,
         nonce: u64,
         signature: Base64VecU8,
@@ -2234,6 +2769,7 @@ impl SharedLedger {
             max_open_notional_usdc,
             max_leverage_bps,
             max_allocation_usdc,
+            max_daily_loss_usdc,
             expires_at_ms,
         );
         let user_owner = read_owner(&user_record_id).expect("user owner is not registered");
@@ -2264,6 +2800,7 @@ impl SharedLedger {
             max_open_notional_usdc,
             max_leverage_bps,
             max_allocation_usdc,
+            max_daily_loss_usdc,
             nonce,
             expires_at_ms,
         );
@@ -2284,6 +2821,7 @@ impl SharedLedger {
                 max_open_notional_usdc,
                 max_leverage_bps,
                 max_allocation_usdc,
+                max_daily_loss_usdc,
                 expires_at_ms,
                 enabled: true,
             },
@@ -2407,6 +2945,7 @@ impl SharedLedger {
             config.allowed_markets.contains(&market_id),
             "market is not allowed for this agent"
         );
+        assert_agent_daily_loss_allowed(&agent_record_id, &config);
         assert!(notional_usdc.0 > 0, "position notional must be positive");
         assert!(
             notional_usdc.0 <= config.max_position_usdc.0,
@@ -2754,12 +3293,12 @@ impl SharedLedger {
         validate_close_mark(&position, reference_price, price_sequence, max_slippage_bps);
         let storage_before = env::storage_usage();
         write_agent_action_nonce(&agent_record_id, nonce);
-        let payout = settle_market_position(
-            &mut self.balances,
-            &position,
-            &config,
-            require_fresh_market_price(&position.market_id).price,
-        );
+        let mark = require_fresh_market_price(&position.market_id).price;
+        let realized_pnl = agent_market_position_pnl(&position, mark);
+        if realized_pnl < 0 {
+            record_agent_realized_loss(&agent_record_id, realized_pnl.unsigned_abs());
+        }
+        let payout = settle_market_position(&mut self.balances, &position, &config, mark);
         settle_storage_credit(&config.user_record_id, storage_before);
         payout
     }
@@ -2845,12 +3384,12 @@ impl SharedLedger {
         let config = read_agent_config(&agent_record_id).expect("agent config is missing");
         let storage_before = env::storage_usage();
         write_agent_admin_nonce(&user_record_id, nonce);
-        let payout = settle_market_position(
-            &mut self.balances,
-            &position,
-            &config,
-            require_fresh_market_price(&position.market_id).price,
-        );
+        let mark = require_fresh_market_price(&position.market_id).price;
+        let realized_pnl = agent_market_position_pnl(&position, mark);
+        if realized_pnl < 0 {
+            record_agent_realized_loss(&agent_record_id, realized_pnl.unsigned_abs());
+        }
+        let payout = settle_market_position(&mut self.balances, &position, &config, mark);
         settle_storage_credit(&user_record_id, storage_before);
         payout
     }
@@ -3409,6 +3948,16 @@ fn raw_key(prefix: &[u8], parts: &[&str]) -> Vec<u8> {
     key
 }
 
+fn assert_protocol_admin() {
+    let admin: AccountId =
+        read_json_storage(PROTOCOL_ADMIN_KEY).expect("protocol admin is not initialized");
+    assert_eq!(
+        env::predecessor_account_id(),
+        admin,
+        "protocol admin required"
+    );
+}
+
 fn read_json_storage<T: for<'de> Deserialize<'de>>(key: &[u8]) -> Option<T> {
     env::storage_read(key)
         .map(|value| near_sdk::serde_json::from_slice(&value).expect("invalid stored JSON"))
@@ -3575,8 +4124,62 @@ fn perp_close_message(
     format!("afterbell:v1\ncontract:{}\naction:close_perp_position\naccount:{}\nposition:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nmargin_usdc:{}\nentry_price:{}\nreference_price:{}\nmax_slippage_bps:{}\nprice_sequence:{}\nfee_bps:{}\nnonce:{}\nexpires_at_ms:{}", env::current_account_id(), position.account_id, position.position_id, position.market_id, if position.is_long {"long"} else {"short"}, position.notional_usdc.0, position.margin_usdc.0, position.entry_price.0, reference_price.0, max_slippage_bps, sequence, fee_bps, nonce, expires_at_ms)
 }
 
-fn oracle_attestation_message(value: &OracleAttestation) -> String {
+fn build_oracle_attestation_message(value: &OracleAttestation) -> String {
     format!("afterbell:v1\ncontract:{}\naction:publish_market_price\nmarket:{}\nprice:{}\nspot_price:{}\nconfidence_bps:{}\nobserved_at_ms:{}\nsequence:{}\nsource_round:{}\nexpires_at_ms:{}", env::current_account_id(), value.market_id, value.price.0, value.spot_price.0, value.confidence_bps, value.observed_at_ms, value.sequence, value.source_round, value.expires_at_ms)
+}
+
+fn build_bad_debt_cover_message(
+    account_id: &str,
+    amount: U128,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!(
+        "afterbell:v1\ncontract:{}\naction:cover_perp_bad_debt\naccount:{}\namount_usdc:{}\nnonce:{}\nexpires_at_ms:{}",
+        env::current_account_id(), account_id, amount.0, nonce, expires_at_ms
+    )
+}
+
+fn build_perp_margin_message(
+    position: &PerpPosition,
+    action: &str,
+    amount: U128,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!(
+        "afterbell:v1\ncontract:{}\naction:{}_perp_margin\naccount:{}\nposition:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nmargin_usdc:{}\nentry_price:{}\namount_usdc:{}\nnonce:{}\nexpires_at_ms:{}",
+        env::current_account_id(), action, position.account_id, position.position_id,
+        position.market_id, if position.is_long { "long" } else { "short" },
+        position.notional_usdc.0, position.margin_usdc.0, position.entry_price.0,
+        amount.0, nonce, expires_at_ms
+    )
+}
+
+fn perp_reduce_message(
+    position: &PerpPosition,
+    reduce_notional: U128,
+    reference_price: U128,
+    max_slippage_bps: u16,
+    sequence: u64,
+    fee_bps: u16,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!(
+        "afterbell:v1\ncontract:{}\naction:reduce_perp_position\naccount:{}\nposition:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nreduce_notional_usdc:{}\nmargin_usdc:{}\nentry_price:{}\nreference_price:{}\nmax_slippage_bps:{}\nprice_sequence:{}\nfee_bps:{}\nnonce:{}\nexpires_at_ms:{}",
+        env::current_account_id(), position.account_id, position.position_id,
+        position.market_id, if position.is_long { "long" } else { "short" },
+        position.notional_usdc.0, reduce_notional.0, position.margin_usdc.0,
+        position.entry_price.0, reference_price.0, max_slippage_bps, sequence,
+        fee_bps, nonce, expires_at_ms
+    )
+}
+
+fn position_owner_record(account_id: &str) -> String {
+    read_agent_config(account_id)
+        .map(|config| config.user_record_id)
+        .unwrap_or_else(|| account_id.to_string())
 }
 
 fn accrue_market_funding(market_id: &str, balances: &LookupMap<String, u128>) {
@@ -3644,12 +4247,22 @@ fn settle_position_funding(position: &mut PerpPosition, balances: &mut LookupMap
     };
     let previous = position.funding_index.0 as i128;
     let delta = current.saturating_sub(previous);
-    let amount = position
+    let unsigned_numerator = position
         .notional_usdc
         .0
         .saturating_mul(delta.unsigned_abs())
-        / (10_000 * 60 * 60 * 1_000);
-    if delta > 0 {
+        .min(i128::MAX as u128);
+    let signed_numerator = if delta < 0 {
+        -(unsigned_numerator as i128)
+    } else {
+        unsigned_numerator as i128
+    }
+    .saturating_add(position.funding_remainder);
+    let divisor = 10_000_i128 * 60 * 60 * 1_000;
+    let amount_signed = signed_numerator / divisor;
+    position.funding_remainder = signed_numerator % divisor;
+    if amount_signed > 0 {
+        let amount = amount_signed as u128;
         let fee = amount.min(position.margin_usdc.0);
         position.margin_usdc = U128(position.margin_usdc.0 - fee);
         write_u128_storage(
@@ -3664,7 +4277,8 @@ fn settle_position_funding(position: &mut PerpPosition, balances: &mut LookupMap
             PERP_INSURANCE_KEY,
             read_u128_storage(PERP_INSURANCE_KEY).saturating_add(reserve),
         );
-    } else if delta < 0 {
+    } else if amount_signed < 0 {
+        let amount = amount_signed.unsigned_abs();
         // Rebate funding is limited to insurance, so funding recipients can
         // never make the shared vault insolvent.
         let rebate = amount.min(read_u128_storage(PERP_INSURANCE_KEY));
@@ -3739,6 +4353,12 @@ fn marked_global_exposure(
     let mut net = 0i128;
     for market_id in read_perp_market_ids() {
         let exposure = read_perp_exposure(&market_id);
+        if market_id != target_market
+            && exposure.long_notional_usdc.0 == 0
+            && exposure.short_notional_usdc.0 == 0
+        {
+            continue;
+        }
         let mark = if market_id == target_market {
             target_price
         } else {
@@ -3854,15 +4474,7 @@ fn validate_close_mark(
     );
 }
 
-/// Prototype settlement: isolated loss is capped at margin and profit at
-/// notional. Fees, funding, liquidation and insurance/bad-debt mechanics are
-/// deliberately outside this first funded-vault milestone.
-fn settle_market_position(
-    balances: &mut LookupMap<String, u128>,
-    position: &AgentPosition,
-    config: &AgentConfig,
-    mark_price: U128,
-) -> U128 {
+fn agent_market_position_pnl(position: &AgentPosition, mark_price: U128) -> i128 {
     let entry = position
         .entry_price
         .expect("price-aware position has no entry price");
@@ -3872,7 +4484,19 @@ fn settle_market_position(
             .expect("PnL exceeds signed range");
     let margin = i128::try_from(position.margin_usdc.0).expect("margin exceeds signed range");
     let notional = i128::try_from(position.notional_usdc.0).expect("notional exceeds signed range");
-    let pnl = raw_pnl.clamp(-margin, notional);
+    raw_pnl.clamp(-margin, notional)
+}
+
+/// Legacy price-aware settlement retained for testnet compatibility. The new
+/// A1 perp engine uses `PerpPosition` and the engine settlement helpers above.
+fn settle_market_position(
+    balances: &mut LookupMap<String, u128>,
+    position: &AgentPosition,
+    config: &AgentConfig,
+    mark_price: U128,
+) -> U128 {
+    let pnl = agent_market_position_pnl(position, mark_price);
+    let margin = i128::try_from(position.margin_usdc.0).expect("margin exceeds signed range");
     let payout = u128::try_from(margin + pnl).expect("settlement payout is negative");
 
     let vault_id = SHARED_VAULT_RECORD_ID.to_string();
@@ -3992,6 +4616,7 @@ fn assert_valid_agent_config(
     max_open_notional_usdc: U128,
     max_leverage_bps: u32,
     max_allocation_usdc: U128,
+    max_daily_loss_usdc: U128,
     expires_at_ms: u64,
 ) {
     assert_valid_record_id(user_record_id);
@@ -4033,6 +4658,10 @@ fn assert_valid_agent_config(
     assert!(
         max_allocation_usdc.0 > 0,
         "max allocation must be greater than zero"
+    );
+    assert!(
+        max_daily_loss_usdc.0 > 0,
+        "daily loss limit must be positive"
     );
     assert!(
         max_leverage_bps >= 10_000 && max_leverage_bps <= 50_000,
@@ -4283,6 +4912,45 @@ fn write_agent_reserved_margin(agent_record_id: &str, margin: u128) {
     write_u128_storage(&agent_reserved_margin_storage_key(agent_record_id), margin);
 }
 
+fn agent_daily_loss_key(agent_record_id: &str) -> Vec<u8> {
+    raw_key(AGENT_DAILY_LOSS_PREFIX, &[agent_record_id])
+}
+
+fn utc_day_index() -> u64 {
+    env::block_timestamp() / 1_000_000 / 86_400_000
+}
+
+fn read_agent_daily_loss(agent_record_id: &str) -> AgentDailyLoss {
+    read_json_storage::<AgentDailyLoss>(&agent_daily_loss_key(agent_record_id))
+        .filter(|entry| entry.utc_day == utc_day_index())
+        .unwrap_or(AgentDailyLoss {
+            utc_day: utc_day_index(),
+            realized_loss_usdc: U128(0),
+        })
+}
+
+fn record_agent_realized_loss(agent_record_id: &str, loss_usdc: u128) {
+    if loss_usdc == 0 {
+        return;
+    }
+    let mut daily = read_agent_daily_loss(agent_record_id);
+    daily.realized_loss_usdc = U128(
+        daily
+            .realized_loss_usdc
+            .0
+            .checked_add(loss_usdc)
+            .expect("agent daily loss overflow"),
+    );
+    write_json_storage(&agent_daily_loss_key(agent_record_id), &daily);
+}
+
+fn assert_agent_daily_loss_allowed(agent_record_id: &str, config: &AgentConfig) {
+    assert!(
+        read_agent_daily_loss(agent_record_id).realized_loss_usdc.0 < config.max_daily_loss_usdc.0,
+        "agent daily loss limit reached"
+    );
+}
+
 fn read_agent_position_count(agent_record_id: &str) -> u64 {
     read_u64_storage(&agent_position_count_storage_key(agent_record_id))
 }
@@ -4414,12 +5082,13 @@ fn agent_setup_message(
     max_open_notional_usdc: U128,
     max_leverage_bps: u32,
     max_allocation_usdc: U128,
+    max_daily_loss_usdc: U128,
     nonce: u64,
     expires_at_ms: u64,
 ) -> String {
     let markets = near_sdk::serde_json::to_string(allowed_markets).expect("serialize markets");
     format!(
-        "afterbell:v1\ncontract:{}\naction:create_agent_record\nuser_record:{}\nagent_record:{}\nagent_key:{}\nallowed_markets:{}\nmax_position_usdc:{}\nmax_open_notional_usdc:{}\nmax_leverage_bps:{}\nmax_allocation_usdc:{}\nnonce:{}\nexpires_at_ms:{}",
+        "afterbell:v1\ncontract:{}\naction:create_agent_record\nuser_record:{}\nagent_record:{}\nagent_key:{}\nallowed_markets:{}\nmax_position_usdc:{}\nmax_open_notional_usdc:{}\nmax_leverage_bps:{}\nmax_allocation_usdc:{}\nmax_daily_loss_usdc:{}\nnonce:{}\nexpires_at_ms:{}",
         env::current_account_id(),
         user_record_id,
         agent_record_id,
@@ -4429,6 +5098,7 @@ fn agent_setup_message(
         max_open_notional_usdc.0,
         max_leverage_bps,
         max_allocation_usdc.0,
+        max_daily_loss_usdc.0,
         nonce,
         expires_at_ms,
     )
@@ -4681,8 +5351,7 @@ impl FungibleTokenReceiver for SharedLedger {
             || deposit.deposit_id.is_empty()
             || deposit.deposit_id.len() > 128
             || amount.0 == 0
-            || (deposit.account_id != SHARED_VAULT_RECORD_ID
-                && read_owner(&deposit.account_id).is_none())
+            || read_owner(&deposit.account_id).is_none()
         {
             return PromiseOrValue::Value(amount);
         }
@@ -4779,7 +5448,7 @@ mod tests {
             .predecessor_account_id(predecessor.parse().unwrap())
             .block_timestamp(NOW_MS * 1_000_000);
         testing_env!(context.build());
-        SharedLedger::new(TOKEN.parse().unwrap())
+        SharedLedger::new(TOKEN.parse().unwrap(), "a1.near".parse().unwrap())
     }
 
     fn deposit_msg(id: &str, account_id: &str) -> String {
@@ -4800,6 +5469,19 @@ mod tests {
     }
 
     fn fund_record(contract: &mut SharedLedger, account_id: &str, amount: u128, deposit_id: &str) {
+        if account_id == SHARED_VAULT_RECORD_ID {
+            let current = contract
+                .balances
+                .get(&account_id.to_string())
+                .unwrap_or_default();
+            contract.balances.insert(
+                &account_id.to_string(),
+                &current
+                    .checked_add(amount)
+                    .expect("test vault balance overflow"),
+            );
+            return;
+        }
         fund_test_storage_credit(account_id);
         if account_id != SHARED_VAULT_RECORD_ID
             && contract.owner_of(account_id.to_string()).is_none()
@@ -5235,7 +5917,7 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build();
         testing_env!(context);
-        let mut contract = SharedLedger::new(TOKEN.parse().unwrap());
+        let mut contract = SharedLedger::new(TOKEN.parse().unwrap(), "a1.near".parse().unwrap());
         let available = contract.storage_deposit_for(USER.to_string());
         assert!(available.0 > 0);
         assert!(available.0 < NearToken::from_near(1).as_yoctonear());
@@ -5261,6 +5943,25 @@ mod tests {
         assert!(env::storage_remove(b"a1:test:storage-fee"));
         settle_storage_credit(USER, before_release);
         assert_eq!(read_storage_credit(USER), starting_credit);
+    }
+
+    #[test]
+    fn deferred_profit_claim_storage_is_charged_to_logical_record() {
+        let _contract = setup(TOKEN);
+        let starting_credit = 10_000_000_000_000_000_000_000_000u128;
+        write_storage_credit(USER, starting_credit);
+
+        let before_claim = env::storage_usage();
+        write_perp_deferred(USER, 123_456);
+        let claim_growth = env::storage_usage() - before_claim;
+        settle_storage_credit(USER, before_claim);
+
+        assert!(claim_growth > 0);
+        assert_eq!(
+            starting_credit - read_storage_credit(USER),
+            env::storage_byte_cost().as_yoctonear() * u128::from(claim_growth)
+        );
+        assert_eq!(read_perp_deferred(USER), 123_456);
     }
 
     #[test]
@@ -5577,6 +6278,7 @@ mod tests {
             U128(3_000_000),
             20_000,
             U128(2_500_000),
+            U128(1_000_000),
             1,
             expiry,
         );
@@ -5590,11 +6292,136 @@ mod tests {
             U128(3_000_000),
             20_000,
             U128(2_500_000),
+            U128(1_000_000),
             expiry,
             1,
             Base64VecU8::from(signature.to_bytes().to_vec()),
         );
         agent_id
+    }
+
+    #[test]
+    fn agent_daily_loss_resets_at_utc_day_boundary() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[121; 32]);
+        let agent_key = SigningKey::from_bytes(&[122; 32]);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        record_agent_realized_loss(&agent_id, 75_000);
+        assert_eq!(contract.agent_daily_loss(agent_id.clone()), U128(75_000));
+
+        let mut next_day = VMContextBuilder::new();
+        next_day
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp((NOW_MS + 86_400_000) * 1_000_000);
+        testing_env!(next_day.build());
+        assert_eq!(contract.agent_daily_loss(agent_id), U128(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "agent daily loss limit reached")]
+    fn agent_cannot_open_after_realized_daily_loss_cap() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[123; 32]);
+        let agent_key = SigningKey::from_bytes(&[124; 32]);
+        let quote_key = SigningKey::from_bytes(&[125; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        fund_test_storage_credit(&USER.to_string());
+        contract.balances.insert(&agent_id, &1_000_000);
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "daily-loss-vault",
+        );
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+        let open_expiry = NOW_MS + 30_000;
+        let open_message = contract.trade_quote_message(
+            agent_id.clone(),
+            "daily-loss-position".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            0,
+            1,
+            open_expiry,
+        );
+        contract.open_perp_position(
+            agent_id.clone(),
+            "daily-loss-position".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            0,
+            1,
+            open_expiry,
+            Base64VecU8::from(agent_key.sign(open_message.as_bytes()).to_bytes().to_vec()),
+            Base64VecU8::from(quote_key.sign(open_message.as_bytes()).to_bytes().to_vec()),
+        );
+        let mut config = read_agent_config(&agent_id).unwrap();
+        config.max_daily_loss_usdc = U128(40_000);
+        write_agent_config(&agent_id, &config);
+        write_market_price(&MarketPrice {
+            market_id: "NVDA".to_string(),
+            price: U128(9_000_000_000),
+            observed_at_ms: NOW_MS,
+            sequence: 2,
+        });
+        let close_expiry = NOW_MS + 30_000;
+        let close_message = contract.close_perp_position_message(
+            agent_id.clone(),
+            "daily-loss-position".to_string(),
+            U128(9_000_000_000),
+            1_000,
+            2,
+            0,
+            2,
+            close_expiry,
+        );
+        contract.close_perp_position(
+            agent_id.clone(),
+            "daily-loss-position".to_string(),
+            U128(9_000_000_000),
+            1_000,
+            2,
+            0,
+            2,
+            close_expiry,
+            Base64VecU8::from(agent_key.sign(close_message.as_bytes()).to_bytes().to_vec()),
+            Base64VecU8::from(quote_key.sign(close_message.as_bytes()).to_bytes().to_vec()),
+        );
+        assert_eq!(contract.agent_daily_loss(agent_id.clone()), U128(50_000));
+        contract.open_perp_position(
+            agent_id,
+            "blocked-by-daily-cap".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(9_000_000_000),
+            100,
+            2,
+            0,
+            3,
+            NOW_MS + 30_000,
+            Base64VecU8::from(vec![0; 64]),
+            Base64VecU8::from(vec![0; 64]),
+        );
     }
 
     fn fund_test_agent(
@@ -5647,6 +6474,13 @@ mod tests {
         contract.set_perp_quote_signer(OwnerKey::SolanaEd25519 {
             public_key: quote_key.verifying_key().to_bytes(),
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "protocol admin required")]
+    fn non_admin_cannot_change_global_perp_risk_cap() {
+        let mut contract = setup(TOKEN);
+        contract.set_perp_beta_cap(U128(200_000_000));
     }
 
     #[test]
@@ -5716,7 +6550,79 @@ mod tests {
         );
         assert_eq!(contract.vault_reserved_payout(), U128(500_000));
 
+        let add_expiry = NOW_MS + 30_000;
+        let add_message = contract.perp_margin_message(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            "add".to_string(),
+            U128(10_000),
+            2,
+            add_expiry,
+        );
+        let add_signature = owner_key.sign(add_message.as_bytes());
+        contract.add_perp_margin(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            U128(10_000),
+            2,
+            add_expiry,
+            Base64VecU8::from(add_signature.to_bytes().to_vec()),
+        );
+        let remove_expiry = NOW_MS + 30_000;
+        let remove_message = contract.perp_margin_message(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            "remove".to_string(),
+            U128(10_000),
+            3,
+            remove_expiry,
+        );
+        let remove_signature = owner_key.sign(remove_message.as_bytes());
+        contract.remove_perp_margin(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            U128(10_000),
+            3,
+            remove_expiry,
+            Base64VecU8::from(remove_signature.to_bytes().to_vec()),
+        );
+
         publish_test_price(&mut contract, U128(11_000_000_000), 2);
+        let reduce_expiry = NOW_MS + 30_000;
+        let reduce_message = contract.reduce_perp_position_message(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            U128(200_000),
+            U128(11_000_000_000),
+            100,
+            2,
+            6,
+            4,
+            reduce_expiry,
+        );
+        let reduce_owner_signature = owner_key.sign(reduce_message.as_bytes());
+        let reduce_quote_signature = quote_key.sign(reduce_message.as_bytes());
+        assert_eq!(
+            contract.reduce_perp_position(
+                USER.to_string(),
+                "nvda-1".to_string(),
+                U128(200_000),
+                U128(11_000_000_000),
+                100,
+                2,
+                6,
+                4,
+                reduce_expiry,
+                Base64VecU8::from(reduce_owner_signature.to_bytes().to_vec()),
+                Base64VecU8::from(reduce_quote_signature.to_bytes().to_vec()),
+            ),
+            U128(119_880)
+        );
+        let reduced_position = contract
+            .perp_position(USER.to_string(), "nvda-1".to_string())
+            .unwrap();
+        assert_eq!(reduced_position.notional_usdc, U128(300_000));
+        assert_eq!(reduced_position.margin_usdc, U128(150_000));
         let close_expiry = NOW_MS + 30_000;
         let close_message = contract.close_perp_position_message(
             USER.to_string(),
@@ -5725,7 +6631,7 @@ mod tests {
             100,
             2,
             6,
-            2,
+            5,
             close_expiry,
         );
         let owner_signature = owner_key.sign(close_message.as_bytes());
@@ -5737,12 +6643,12 @@ mod tests {
             100,
             2,
             6,
-            2,
+            5,
             close_expiry,
             Base64VecU8::from(owner_signature.to_bytes().to_vec()),
             Base64VecU8::from(quote_signature.to_bytes().to_vec()),
         );
-        assert_eq!(paid, U128(299_700));
+        assert_eq!(paid, U128(179_820));
         assert!(contract
             .perp_position(USER.to_string(), "nvda-1".to_string())
             .is_none());
@@ -5755,6 +6661,95 @@ mod tests {
             U128(0)
         );
         assert_eq!(contract.balance_of(USER.to_string()), U128(2_049_400));
+    }
+
+    #[test]
+    fn ethereum_eip191_owner_signature_opens_perp_position_end_to_end() {
+        let mut contract = setup("a1.near");
+        let secret = SecretKey::from_slice(&[131; 32]).unwrap();
+        let public_key = secp256k1::PublicKey::from_secret_key(&Secp256k1::new(), &secret);
+        let address_hash = env::keccak256_array(&public_key.serialize_uncompressed()[1..]);
+        let mut address = [0; 20];
+        address.copy_from_slice(&address_hash[12..]);
+        let owner = OwnerKey::Ethereum { address };
+        let quote_key = SigningKey::from_bytes(&[132; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        let registration = registration_message(USER, &owner, EXPIRY_MS);
+        let registration_signature = Secp256k1::new().sign_ecdsa_recoverable(
+            &Message::from_slice(&eip191_digest(&registration)).unwrap(),
+            &secret,
+        );
+        let (registration_recovery, registration_compact) =
+            registration_signature.serialize_compact();
+        let mut registration_bytes = registration_compact.to_vec();
+        registration_bytes.push(registration_recovery.to_i32() as u8);
+        fund_test_storage_credit(USER);
+        contract.register_owner(
+            USER.to_string(),
+            owner,
+            EXPIRY_MS,
+            Base64VecU8::from(registration_bytes),
+        );
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        fund_record(&mut contract, USER, 1_000_000, "ethereum-perp-user");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "ethereum-perp-vault",
+        );
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+        let expiry = NOW_MS + 30_000;
+        let message = contract.trade_quote_message(
+            USER.to_string(),
+            "eth-nvda".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            6,
+            1,
+            expiry,
+        );
+        let owner_signature = Secp256k1::new().sign_ecdsa_recoverable(
+            &Message::from_slice(&eip191_digest(&message)).unwrap(),
+            &secret,
+        );
+        let (recovery_id, compact) = owner_signature.serialize_compact();
+        let mut owner_bytes = compact.to_vec();
+        owner_bytes.push(recovery_id.to_i32() as u8);
+        let quote_signature = quote_key.sign(message.as_bytes());
+        contract.open_perp_position(
+            USER.to_string(),
+            "eth-nvda".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            6,
+            1,
+            expiry,
+            Base64VecU8::from(owner_bytes),
+            Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+        );
+        assert_eq!(
+            contract
+                .perp_position(USER.to_string(), "eth-nvda".to_string())
+                .unwrap()
+                .margin_usdc,
+            U128(250_000)
+        );
     }
 
     #[test]
@@ -5976,6 +6971,7 @@ mod tests {
             entry_price: U128(10_000_000_000),
             opened_at_ms: NOW_MS,
             funding_index: U128(0),
+            funding_remainder: 0,
         };
         write_perp_position(&USER.to_string(), &position.position_id, &position);
         write_u128_storage(PERP_TOTAL_MARGIN_KEY, 100_000);
@@ -6091,7 +7087,112 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "protocol authority required")]
+    fn owner_can_cover_bad_debt_before_admin_unpauses() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[121; 32]);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        fund_record(&mut contract, USER, 10_000, "debt-cover-user");
+        write_u128_storage(PERP_BAD_DEBT_KEY, 5_000);
+        write_u64_storage(PERP_PAUSED_KEY, 1);
+        let cover_expiry = NOW_MS + 30_000;
+        let message =
+            contract.bad_debt_cover_message(USER.to_string(), U128(5_000), 1, cover_expiry);
+        let signature = owner_key.sign(message.as_bytes());
+        contract.cover_perp_bad_debt(
+            USER.to_string(),
+            U128(5_000),
+            1,
+            cover_expiry,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
+        assert_eq!(contract.perp_bad_debt(), U128(0));
+        assert_eq!(contract.balance_of(USER.to_string()), U128(5_000));
+        assert_eq!(contract.vault_balance(), U128(5_000));
+
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id("a1.near".parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        contract.unpause_perps();
+        assert!(!contract.perp_paused());
+    }
+
+    #[test]
+    fn initial_lp_cannot_capture_unallocated_protocol_vault_equity() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[122; 32]);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        fund_record(&mut contract, USER, 1_000_000, "lp-user");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "lp-seed",
+        );
+        let deposit_expiry = EXPIRY_MS;
+        let deposit_message = format!(
+            "afterbell:v1\ncontract:a1.near\naction:deposit_vault\naccount:{}\namount:{}\nnonce:1\nexpires_at_ms:{}",
+            USER, 1_000_000, deposit_expiry
+        );
+        let deposit_signature = owner_key.sign(deposit_message.as_bytes());
+        assert_eq!(
+            contract.deposit_vault(
+                USER.to_string(),
+                U128(1_000_000),
+                1,
+                deposit_expiry,
+                Base64VecU8::from(deposit_signature.to_bytes().to_vec()),
+            ),
+            U128(1_000_000)
+        );
+        assert_eq!(
+            contract.lp_shares_of(SHARED_VAULT_RECORD_ID.to_string()),
+            U128(100_000_000)
+        );
+        assert_eq!(contract.vault_nav_usdc(), U128(101_000_000));
+
+        let request_message = format!(
+            "afterbell:v1\ncontract:a1.near\naction:request_vault_withdrawal\naccount:{}\namount:{}\nnonce:2\nexpires_at_ms:{}",
+            USER, 1_000_000, deposit_expiry
+        );
+        let request_signature = owner_key.sign(request_message.as_bytes());
+        contract.request_vault_withdrawal(
+            USER.to_string(),
+            U128(1_000_000),
+            2,
+            deposit_expiry,
+            Base64VecU8::from(request_signature.to_bytes().to_vec()),
+        );
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp((NOW_MS + LP_WITHDRAWAL_COOLDOWN_MS) * 1_000_000);
+        testing_env!(context.build());
+        assert_eq!(
+            contract.complete_vault_withdrawal(USER.to_string()),
+            U128(1_000_000)
+        );
+        assert_eq!(contract.balance_of(USER.to_string()), U128(1_000_000));
+    }
+
+    #[test]
+    fn external_token_transfer_cannot_credit_vault_without_lp_shares() {
+        let mut contract = setup(TOKEN);
+        let result = contract.ft_on_transfer(
+            SENDER.parse().unwrap(),
+            U128(1_000_000),
+            deposit_msg("direct-vault-deposit", SHARED_VAULT_RECORD_ID),
+        );
+        assert_unused(result, 1_000_000);
+        assert_eq!(contract.vault_balance(), U128(0));
+        assert_eq!(read_u128_storage(LP_TOTAL_SHARES_KEY), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "protocol admin required")]
     fn strangers_cannot_configure_perp_markets() {
         let mut contract = setup("attacker.near");
         configure_test_perp(&mut contract, &SigningKey::from_bytes(&[83; 32]));
@@ -6690,6 +7791,7 @@ mod tests {
             U128(3_000_000),
             20_000,
             U128(2_500_000),
+            U128(1_000_000),
             1,
             expiry,
         );
@@ -6704,6 +7806,7 @@ mod tests {
             U128(3_000_000),
             20_000,
             U128(2_500_000),
+            U128(1_000_000),
             expiry,
             1,
             Base64VecU8::from(signature.to_bytes().to_vec()),
@@ -6734,6 +7837,7 @@ mod tests {
             U128(3_000_000),
             20_000,
             U128(2_500_000),
+            U128(1_000_000),
             2,
             expiry,
         );
@@ -6748,6 +7852,7 @@ mod tests {
             U128(3_000_000),
             20_000,
             U128(2_500_000),
+            U128(1_000_000),
             expiry,
             2,
             Base64VecU8::from(signature.to_bytes().to_vec()),
