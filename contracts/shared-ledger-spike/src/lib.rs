@@ -65,7 +65,8 @@ const LP_SHARE_PREFIX: &[u8] = b"afterbell:a1:lp:shares:";
 const LP_TOTAL_SHARES_KEY: &[u8] = b"afterbell:a1:lp:total_shares";
 const LP_WITHDRAW_PREFIX: &[u8] = b"afterbell:a1:lp:withdraw:";
 const LP_WITHDRAWAL_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1000;
-const PERP_CONFIG_DELAY_MS: u64 = 48 * 60 * 60 * 1000;
+const PERP_QUOTE_SIGNER_DELAY_MS: u64 = 60 * 60 * 1000;
+const PERP_MARKET_RISK_DELAY_MS: u64 = 20 * 60 * 1000;
 const PERP_ORACLE_SIGNER_DELAY_MS: u64 = 20 * 60 * 1000;
 const MAX_PERP_MARKETS: usize = 64;
 const MAX_PERP_POSITIONS_PER_RECORD: u64 = 64;
@@ -425,7 +426,7 @@ impl SharedLedger {
             write_json_storage(PERP_PENDING_QUOTE_SIGNER_KEY, &signer);
             write_u64_storage(
                 PERP_PENDING_QUOTE_SIGNER_AT_KEY,
-                env::block_timestamp() / 1_000_000 + PERP_CONFIG_DELAY_MS,
+                env::block_timestamp() / 1_000_000 + PERP_QUOTE_SIGNER_DELAY_MS,
             );
         }
     }
@@ -759,7 +760,7 @@ impl SharedLedger {
                 write_json_storage(&pending_key, &config);
                 write_u64_storage(
                     &perp_market_time_key(&config.market_id),
-                    env::block_timestamp() / 1_000_000 + PERP_CONFIG_DELAY_MS,
+                    env::block_timestamp() / 1_000_000 + PERP_MARKET_RISK_DELAY_MS,
                 );
                 return;
             }
@@ -7069,12 +7070,15 @@ mod tests {
                 .maintenance_margin_bps,
             500
         );
-        assert!(read_u64_storage(&perp_market_time_key("NVDA")) > NOW_MS);
+        assert_eq!(
+            read_u64_storage(&perp_market_time_key("NVDA")),
+            NOW_MS + PERP_MARKET_RISK_DELAY_MS
+        );
         let mut context = VMContextBuilder::new();
         context
             .current_account_id("a1.near".parse().unwrap())
             .predecessor_account_id("a1.near".parse().unwrap())
-            .block_timestamp((NOW_MS + PERP_CONFIG_DELAY_MS) * 1_000_000);
+            .block_timestamp((NOW_MS + PERP_MARKET_RISK_DELAY_MS) * 1_000_000);
         testing_env!(context.build());
         contract.apply_perp_market_config("NVDA".to_string());
         assert_eq!(
@@ -7083,6 +7087,48 @@ mod tests {
                 .unwrap()
                 .maintenance_margin_bps,
             400
+        );
+    }
+
+    #[test]
+    fn quote_signer_rotation_waits_one_hour() {
+        let mut contract = setup(TOKEN);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id("a1.near".parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        let first = SigningKey::from_bytes(&[101; 32]);
+        let second = SigningKey::from_bytes(&[102; 32]);
+        contract.set_perp_quote_signer(OwnerKey::SolanaEd25519 {
+            public_key: first.verifying_key().to_bytes(),
+        });
+        contract.set_perp_quote_signer(OwnerKey::SolanaEd25519 {
+            public_key: second.verifying_key().to_bytes(),
+        });
+
+        assert_eq!(
+            contract.perp_quote_signer(),
+            Some(OwnerKey::SolanaEd25519 {
+                public_key: first.verifying_key().to_bytes(),
+            })
+        );
+        let ready_at = read_u64_storage(PERP_PENDING_QUOTE_SIGNER_AT_KEY);
+        assert_eq!(ready_at, NOW_MS + PERP_QUOTE_SIGNER_DELAY_MS);
+
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id("a1.near".parse().unwrap())
+            .block_timestamp(ready_at * 1_000_000);
+        testing_env!(context.build());
+        contract.apply_perp_quote_signer();
+        assert_eq!(
+            contract.perp_quote_signer(),
+            Some(OwnerKey::SolanaEd25519 {
+                public_key: second.verifying_key().to_bytes(),
+            })
         );
     }
 
