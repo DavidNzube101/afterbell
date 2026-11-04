@@ -66,6 +66,7 @@ const LP_TOTAL_SHARES_KEY: &[u8] = b"afterbell:a1:lp:total_shares";
 const LP_WITHDRAW_PREFIX: &[u8] = b"afterbell:a1:lp:withdraw:";
 const LP_WITHDRAWAL_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1000;
 const PERP_CONFIG_DELAY_MS: u64 = 48 * 60 * 60 * 1000;
+const PERP_ORACLE_SIGNER_DELAY_MS: u64 = 20 * 60 * 1000;
 const MAX_PERP_MARKETS: usize = 64;
 const MAX_PERP_POSITIONS_PER_RECORD: u64 = 64;
 const MAX_PERP_POSITION_USDC: u128 = 5_000_000_000_000;
@@ -513,7 +514,7 @@ impl SharedLedger {
             write_json_storage(PERP_PENDING_ORACLE_SIGNER_KEY, &signer);
             write_u64_storage(
                 PERP_PENDING_ORACLE_SIGNER_AT_KEY,
-                env::block_timestamp() / 1_000_000 + PERP_CONFIG_DELAY_MS,
+                env::block_timestamp() / 1_000_000 + PERP_ORACLE_SIGNER_DELAY_MS,
             );
         }
     }
@@ -6912,7 +6913,7 @@ mod tests {
 
         assert_eq!(contract.oracle_signer(), Some(first_address));
         let ready_at = read_u64_storage(PERP_PENDING_ORACLE_SIGNER_AT_KEY);
-        assert!(ready_at >= NOW_MS + PERP_CONFIG_DELAY_MS);
+        assert_eq!(ready_at, NOW_MS + PERP_ORACLE_SIGNER_DELAY_MS);
 
         let mut context = VMContextBuilder::new();
         context
