@@ -33,6 +33,46 @@ const AGENT_RESERVED_MARGIN_PREFIX: &[u8] = b"afterbell:a1:agent_reserved_margin
 const MARKET_PRICE_PREFIX: &[u8] = b"afterbell:a1:market_price:";
 const VAULT_RESERVED_PREFIX: &[u8] = b"afterbell:a1:vault_reserved_payout";
 const STORAGE_CREDIT_PREFIX: &[u8] = b"afterbell:a1:storage_credit:";
+const PERP_MARKET_PREFIX: &[u8] = b"afterbell:a1:perp:market:";
+const PERP_MARKET_IDS_KEY: &[u8] = b"afterbell:a1:perp:market_ids";
+const PERP_POSITION_PREFIX: &[u8] = b"afterbell:a1:perp:position:";
+const PERP_EXPOSURE_PREFIX: &[u8] = b"afterbell:a1:perp:exposure:";
+const PERP_QUOTE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:quote_signer";
+const PERP_QUOTE_NONCE_PREFIX: &[u8] = b"afterbell:a1:perp:quote_nonce:";
+const PERP_POSITION_COUNT_PREFIX: &[u8] = b"afterbell:a1:perp:position_count:";
+const PERP_OPEN_NOTIONAL_PREFIX: &[u8] = b"afterbell:a1:perp:open_notional:";
+const PERP_TOTAL_MARGIN_KEY: &[u8] = b"afterbell:a1:perp:total_margin";
+const PERP_TOTAL_OI_KEY: &[u8] = b"afterbell:a1:perp:total_oi";
+const PERP_GLOBAL_NET_KEY: &[u8] = b"afterbell:a1:perp:global_net";
+const PERP_BAD_DEBT_KEY: &[u8] = b"afterbell:a1:perp:bad_debt";
+const PERP_INSURANCE_KEY: &[u8] = b"afterbell:a1:perp:insurance";
+const PERP_PAUSED_KEY: &[u8] = b"afterbell:a1:perp:paused";
+const PERP_ORACLE_KEYS_KEY: &[u8] = b"afterbell:a1:perp:oracle_keys";
+const PERP_ORACLE_HEALTH_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_health:";
+const PERP_DEFERRED_CLAIM_PREFIX: &[u8] = b"afterbell:a1:perp:deferred:";
+const PERP_DEFERRED_TOTAL_KEY: &[u8] = b"afterbell:a1:perp:deferred_total";
+const LP_SHARE_PREFIX: &[u8] = b"afterbell:a1:lp:shares:";
+const LP_TOTAL_SHARES_KEY: &[u8] = b"afterbell:a1:lp:total_shares";
+const LP_WITHDRAW_PREFIX: &[u8] = b"afterbell:a1:lp:withdraw:";
+const LP_WITHDRAWAL_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1000;
+const MAX_PERP_MARKETS: usize = 64;
+const MAX_PERP_POSITIONS_PER_RECORD: u64 = 64;
+const MAX_PERP_POSITION_USDC: u128 = 5_000_000_000_000;
+const MAX_PERP_LEVERAGE_BPS: u32 = 50_000;
+const MAX_PERP_FEE_BPS: u16 = 100;
+const MAX_PERP_SLIPPAGE_BPS: u16 = 1_000;
+const PERP_PRICE_SCALE: u128 = 100_000_000;
+const PERP_BASE_FUNDING_BPS_HOURLY: u16 = 1;
+const PERP_MAX_FUNDING_BPS_HOURLY: u16 = 25;
+const PERP_MAX_POSITION_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+const PERP_LIQUIDATION_PENALTY_BPS: u16 = 500;
+const PERP_LIQUIDATOR_REWARD_BPS: u16 = 250;
+const PERP_MAX_GLOBAL_NET_BPS: u16 = 1_000;
+const PERP_MAX_TOTAL_OI_BPS: u16 = 5_000;
+const PERP_MAX_MARKET_OI_BPS: u16 = 1_000;
+const PERP_MAX_MARKET_SKEW_BPS: u16 = 300;
+const PERP_MAX_TRADER_OI_BPS: u16 = 50;
+const PERP_DEFAULT_BETA_CAP_USDC: u128 = 100_000_000_000;
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
@@ -137,6 +177,77 @@ pub struct MarketPrice {
     pub price: U128,
     pub observed_at_ms: u64,
     pub sequence: u64,
+}
+
+/// Risk controls for a listed perpetual market. Amount limits are raw USDC.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerpMarketConfig {
+    pub market_id: String,
+    pub enabled: bool,
+    pub close_only: bool,
+    pub max_leverage_bps: u32,
+    pub maintenance_margin_bps: u16,
+    pub max_execution_deviation_bps: u16,
+    pub max_oracle_confidence_bps: u16,
+    pub max_position_usdc: U128,
+    pub max_market_oi_bps: u16,
+    pub max_market_skew_bps: u16,
+}
+
+/// Isolated position held by one user or agent logical record.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerpPosition {
+    pub account_id: String,
+    pub position_id: String,
+    pub market_id: String,
+    pub is_long: bool,
+    pub notional_usdc: U128,
+    pub margin_usdc: U128,
+    pub entry_price: U128,
+    pub opened_at_ms: u64,
+    pub funding_index: U128,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PerpExposure {
+    pub long_notional_usdc: U128,
+    pub short_notional_usdc: U128,
+    pub long_entry_value: U128,
+    pub short_entry_value: U128,
+    pub long_funding_index: U128,
+    pub short_funding_index: U128,
+    pub funding_updated_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LpWithdrawalRequest {
+    pub shares: U128,
+    pub requested_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleAttestation {
+    pub market_id: String,
+    pub price: U128,
+    pub spot_price: U128,
+    pub confidence_bps: u16,
+    pub observed_at_ms: u64,
+    pub sequence: u64,
+    pub source_round: String,
+    pub expires_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct OracleHealth {
+    pub circuit_broken: bool,
+    pub confidence_bps: u16,
+    pub spot_twap_deviation_bps: u16,
 }
 
 #[near(serializers = [json])]
@@ -257,6 +368,953 @@ impl SharedLedger {
         SHARED_VAULT_RECORD_ID.to_string()
     }
 
+    pub fn perp_paused(&self) -> bool {
+        read_u64_storage(PERP_PAUSED_KEY) != 0
+    }
+
+    pub fn perp_market_ids(&self) -> Vec<String> {
+        read_perp_market_ids()
+    }
+
+    pub fn perp_market(&self, market_id: String) -> Option<PerpMarketConfig> {
+        read_perp_market(&market_id)
+    }
+
+    pub fn perp_quote_signer(&self) -> Option<OwnerKey> {
+        read_perp_quote_signer()
+    }
+
+    pub fn set_perp_quote_signer(&mut self, signer: OwnerKey) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "protocol authority required"
+        );
+        write_perp_quote_signer(&signer);
+    }
+
+    pub fn perp_position(&self, account_id: String, position_id: String) -> Option<PerpPosition> {
+        read_perp_position(&account_id, &position_id)
+    }
+
+    pub fn perp_exposure(&self, market_id: String) -> PerpExposure {
+        read_perp_exposure(&market_id)
+    }
+
+    pub fn oracle_health(&self, market_id: String) -> OracleHealth {
+        read_oracle_health(&market_id)
+    }
+
+    pub fn oracle_attestation_message(&self, attestation: OracleAttestation) -> String {
+        oracle_attestation_message(&attestation)
+    }
+
+    pub fn configure_oracle_quorum(&mut self, public_keys: Vec<[u8; 32]>) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "protocol authority required"
+        );
+        assert_eq!(public_keys.len(), 3, "oracle quorum requires three keys");
+        assert!(
+            public_keys[0] != public_keys[1]
+                && public_keys[0] != public_keys[2]
+                && public_keys[1] != public_keys[2],
+            "oracle keys must be unique"
+        );
+        write_json_storage(PERP_ORACLE_KEYS_KEY, &public_keys);
+    }
+
+    /// A production-shaped 2-of-3 Ed25519 attestation path. The legacy fixed
+    /// test publisher remains testnet-only for deployed-spike compatibility.
+    pub fn publish_market_price_quorum(
+        &mut self,
+        attestation: OracleAttestation,
+        signatures: Vec<Base64VecU8>,
+    ) {
+        assert_valid_market_id(&attestation.market_id);
+        let market = read_perp_market(&attestation.market_id).expect("oracle market is not listed");
+        assert!(
+            attestation.price.0 > 0 && attestation.spot_price.0 > 0,
+            "price must be positive"
+        );
+        assert!(
+            attestation.confidence_bps <= market.max_oracle_confidence_bps,
+            "oracle confidence too high"
+        );
+        assert!(
+            attestation.source_round.len() > 0 && attestation.source_round.len() <= 128,
+            "invalid source round"
+        );
+        let now = env::block_timestamp() / 1_000_000;
+        assert!(
+            attestation.observed_at_ms <= now
+                && now.saturating_sub(attestation.observed_at_ms) <= MAX_MARKET_PRICE_AGE_MS,
+            "price is stale or future dated"
+        );
+        assert!(
+            attestation.expires_at_ms >= now
+                && attestation.expires_at_ms <= now.saturating_add(MAX_AGENT_ACTION_TTL_MS),
+            "attestation expired or too long-lived"
+        );
+        let old = read_market_price(&attestation.market_id);
+        assert!(
+            old.as_ref()
+                .is_none_or(|v| attestation.sequence > v.sequence),
+            "oracle sequence must increase"
+        );
+        let keys: Vec<[u8; 32]> =
+            read_json_storage(PERP_ORACLE_KEYS_KEY).expect("oracle quorum is not configured");
+        let message = oracle_attestation_message(&attestation);
+        let mut valid_signers = [false; 3];
+        for signature in signatures.iter().take(3) {
+            let Ok(sig) = <&[u8; 64]>::try_from(signature.as_ref()) else {
+                continue;
+            };
+            for (index, key) in keys.iter().enumerate() {
+                if !valid_signers[index] && env::ed25519_verify(sig, message.as_bytes(), key) {
+                    valid_signers[index] = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            valid_signers.into_iter().filter(|valid| *valid).count() >= 2,
+            "oracle quorum signature invalid"
+        );
+        let deviation = attestation
+            .spot_price
+            .0
+            .abs_diff(attestation.price.0)
+            .saturating_mul(10_000)
+            / attestation.price.0;
+        assert!(deviation <= 50, "spot and TWAP diverged beyond hard bound");
+        let mut health = OracleHealth {
+            circuit_broken: deviation > 50,
+            confidence_bps: attestation.confidence_bps,
+            spot_twap_deviation_bps: deviation.min(u128::from(u16::MAX)) as u16,
+        };
+        if let Some(previous) = old.as_ref() {
+            let jump = attestation
+                .price
+                .0
+                .abs_diff(previous.price.0)
+                .saturating_mul(10_000)
+                / previous.price.0;
+            if jump > 2_000 {
+                health.circuit_broken = true;
+                write_oracle_health(&attestation.market_id, &health);
+                write_market_price(&MarketPrice {
+                    market_id: attestation.market_id.clone(),
+                    price: previous.price,
+                    observed_at_ms: previous.observed_at_ms,
+                    sequence: attestation.sequence,
+                });
+                return;
+            }
+        }
+        write_market_price(&MarketPrice {
+            market_id: attestation.market_id.clone(),
+            price: attestation.price,
+            observed_at_ms: attestation.observed_at_ms,
+            sequence: attestation.sequence,
+        });
+        write_oracle_health(&attestation.market_id, &health);
+    }
+
+    pub fn perp_total_margin(&self) -> U128 {
+        U128(read_u128_storage(PERP_TOTAL_MARGIN_KEY))
+    }
+
+    pub fn perp_bad_debt(&self) -> U128 {
+        U128(read_u128_storage(PERP_BAD_DEBT_KEY))
+    }
+
+    pub fn perp_insurance(&self) -> U128 {
+        U128(read_u128_storage(PERP_INSURANCE_KEY))
+    }
+
+    /// The account contract itself is the protocol authority for risk
+    /// configuration; the function cannot be called by a user or relayer.
+    pub fn configure_perp_market(&mut self, config: PerpMarketConfig) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "protocol authority required"
+        );
+        assert_valid_market_id(&config.market_id);
+        assert!(
+            config.max_leverage_bps >= 10_000 && config.max_leverage_bps <= MAX_PERP_LEVERAGE_BPS,
+            "invalid leverage"
+        );
+        assert!(
+            config.maintenance_margin_bps > 0 && config.maintenance_margin_bps < 10_000,
+            "invalid maintenance margin"
+        );
+        assert!(
+            config.max_execution_deviation_bps <= MAX_PERP_SLIPPAGE_BPS,
+            "execution deviation too high"
+        );
+        assert!(
+            config.max_oracle_confidence_bps <= 1_000,
+            "oracle confidence cap exceeds hard bound"
+        );
+        assert!(
+            config.max_position_usdc.0 > 0 && config.max_position_usdc.0 <= MAX_PERP_POSITION_USDC,
+            "invalid position cap"
+        );
+        assert!(
+            config.max_market_oi_bps > 0 && config.max_market_oi_bps <= PERP_MAX_MARKET_OI_BPS,
+            "market OI cap exceeds protocol bound"
+        );
+        assert!(
+            config.max_market_skew_bps > 0
+                && config.max_market_skew_bps <= PERP_MAX_MARKET_SKEW_BPS,
+            "market skew cap exceeds protocol bound"
+        );
+        if read_perp_market(&config.market_id).is_none() {
+            let mut ids = read_perp_market_ids();
+            assert!(ids.len() < MAX_PERP_MARKETS, "market capacity reached");
+            ids.push(config.market_id.clone());
+            write_perp_market_ids(&ids);
+        }
+        write_perp_market(&config);
+    }
+
+    pub fn pause_perps(&mut self) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "protocol authority required"
+        );
+        write_u64_storage(PERP_PAUSED_KEY, 1);
+    }
+
+    pub fn unpause_perps(&mut self) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "protocol authority required"
+        );
+        assert_eq!(
+            read_u128_storage(PERP_BAD_DEBT_KEY),
+            0,
+            "bad debt must be covered before unpausing"
+        );
+        write_u64_storage(PERP_PAUSED_KEY, 0);
+    }
+
+    /// LPs receive internal shares; funds remain in A1's shared contract.
+    /// This is the account-model equivalent of Jaguar's separate instant vault.
+    pub fn deposit_vault(
+        &mut self,
+        account_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        signature: Base64VecU8,
+    ) -> U128 {
+        assert!(amount.0 > 0, "deposit must be positive");
+        assert!(vault_prices_fresh(), "oracle prices stale");
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert_next_user_action(
+            &account_id,
+            nonce,
+            expires_at_ms,
+            "deposit_vault",
+            &amount.0.to_string(),
+            signature.as_ref(),
+            &owner,
+        );
+        let bal = self.balances.get(&account_id).unwrap_or_default();
+        assert!(bal >= amount.0, "insufficient free balance");
+        let nav = vault_nav(&self.balances);
+        let total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
+        let shares = if total_shares == 0 || nav == 0 {
+            amount.0
+        } else {
+            amount.0.saturating_mul(total_shares) / nav
+        };
+        assert!(shares > 0, "deposit mints zero shares");
+        let storage_before = env::storage_usage();
+        self.balances.insert(&account_id, &(bal - amount.0));
+        let vault = self
+            .balances
+            .get(&SHARED_VAULT_RECORD_ID.to_string())
+            .unwrap_or_default();
+        self.balances.insert(
+            &SHARED_VAULT_RECORD_ID.to_string(),
+            &vault.checked_add(amount.0).expect("vault overflow"),
+        );
+        write_lp_shares(
+            &account_id,
+            read_lp_shares(&account_id)
+                .checked_add(shares)
+                .expect("shares overflow"),
+        );
+        write_u128_storage(
+            LP_TOTAL_SHARES_KEY,
+            total_shares.checked_add(shares).expect("shares overflow"),
+        );
+        settle_storage_credit(&account_id, storage_before);
+        write_user_perp_nonce(&account_id, nonce);
+        U128(shares)
+    }
+
+    pub fn lp_shares_of(&self, account_id: String) -> U128 {
+        U128(read_lp_shares(&account_id))
+    }
+
+    pub fn vault_nav_usdc(&self) -> U128 {
+        U128(vault_nav(&self.balances))
+    }
+
+    pub fn request_vault_withdrawal(
+        &mut self,
+        account_id: String,
+        shares: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        signature: Base64VecU8,
+    ) {
+        assert!(shares.0 > 0, "shares must be positive");
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert_next_user_action(
+            &account_id,
+            nonce,
+            expires_at_ms,
+            "request_vault_withdrawal",
+            &shares.0.to_string(),
+            signature.as_ref(),
+            &owner,
+        );
+        assert!(
+            read_lp_shares(&account_id) >= shares.0,
+            "insufficient LP shares"
+        );
+        assert!(
+            read_lp_withdrawal(&account_id).is_none(),
+            "withdrawal request already exists"
+        );
+        let storage_before = env::storage_usage();
+        write_lp_withdrawal(
+            &account_id,
+            &LpWithdrawalRequest {
+                shares,
+                requested_at_ms: env::block_timestamp() / 1_000_000,
+            },
+        );
+        settle_storage_credit(&account_id, storage_before);
+        write_user_perp_nonce(&account_id, nonce);
+    }
+
+    /// Anyone may finalize a matured LP request, but proceeds return to the
+    /// LP's own logical balance and cannot be redirected by the caller.
+    pub fn complete_vault_withdrawal(&mut self, account_id: String) -> U128 {
+        let request = read_lp_withdrawal(&account_id).expect("no withdrawal request");
+        let now = env::block_timestamp() / 1_000_000;
+        assert!(
+            now >= request
+                .requested_at_ms
+                .saturating_add(LP_WITHDRAWAL_COOLDOWN_MS),
+            "withdrawal cooldown active"
+        );
+        assert!(vault_prices_fresh(), "oracle prices stale");
+        let total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
+        assert!(total_shares > 0, "no LP shares");
+        let amount = request.shares.0.saturating_mul(vault_nav(&self.balances)) / total_shares;
+        let cash = self
+            .balances
+            .get(&SHARED_VAULT_RECORD_ID.to_string())
+            .unwrap_or_default();
+        assert!(
+            amount <= cash && amount <= vault_risk_available(&self.balances),
+            "insufficient available vault liquidity"
+        );
+        assert!(
+            read_lp_shares(&account_id) >= request.shares.0,
+            "LP share invariant failed"
+        );
+        let lp_balance = self.balances.get(&account_id).unwrap_or_default();
+        let storage_before = env::storage_usage();
+        self.balances
+            .insert(&SHARED_VAULT_RECORD_ID.to_string(), &(cash - amount));
+        self.balances.insert(
+            &account_id,
+            &lp_balance.checked_add(amount).expect("LP balance overflow"),
+        );
+        write_lp_shares(&account_id, read_lp_shares(&account_id) - request.shares.0);
+        write_u128_storage(LP_TOTAL_SHARES_KEY, total_shares - request.shares.0);
+        delete_lp_withdrawal(&account_id);
+        settle_storage_credit(&account_id, storage_before);
+        U128(amount)
+    }
+
+    pub fn close_perp_position_message(
+        &self,
+        account_id: String,
+        position_id: String,
+        reference_price: U128,
+        max_slippage_bps: u16,
+        price_sequence: u64,
+        fee_bps: u16,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        let position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        perp_close_message(
+            &position,
+            reference_price,
+            max_slippage_bps,
+            price_sequence,
+            fee_bps,
+            nonce,
+            expires_at_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn close_perp_position(
+        &mut self,
+        account_id: String,
+        position_id: String,
+        reference_price: U128,
+        max_slippage_bps: u16,
+        price_sequence: u64,
+        fee_bps: u16,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+        quote_signature: Base64VecU8,
+    ) -> U128 {
+        let position =
+            read_perp_position(&account_id, &position_id).expect("position does not exist");
+        let market = read_perp_market(&position.market_id).expect("market not listed");
+        assert!(
+            fee_bps <= MAX_PERP_FEE_BPS && max_slippage_bps <= MAX_PERP_SLIPPAGE_BPS,
+            "fee or slippage exceeds hard bound"
+        );
+        let mark = require_fresh_market_price(&position.market_id);
+        assert_eq!(mark.sequence, price_sequence, "stale quote sequence");
+        let health = read_oracle_health(&position.market_id);
+        assert!(!health.circuit_broken, "oracle circuit breaker active");
+        assert!(reference_price.0 > 0, "reference price must be positive");
+        let deviation = mark
+            .price
+            .0
+            .abs_diff(reference_price.0)
+            .saturating_mul(10_000)
+            / reference_price.0;
+        assert!(
+            deviation <= u128::from(max_slippage_bps.min(market.max_execution_deviation_bps)),
+            "execution price exceeds signed slippage"
+        );
+        let nonce = nonce;
+        assert_eq!(
+            nonce,
+            read_user_perp_nonce(&account_id)
+                .checked_add(1)
+                .expect("nonce overflow"),
+            "invalid trading nonce"
+        );
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = perp_close_message(
+            &position,
+            reference_price,
+            max_slippage_bps,
+            price_sequence,
+            fee_bps,
+            nonce,
+            expires_at_ms,
+        );
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert!(
+            verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+            "invalid owner signature"
+        );
+        let signer = read_perp_quote_signer().expect("quote signer is not configured");
+        assert!(
+            verify_owner_signature(&signer, &message, quote_signature.as_ref(), nonce),
+            "invalid quote signature"
+        );
+        let pnl = crate::engine_math::linear_pnl(
+            position.notional_usdc.0,
+            position.entry_price.0,
+            mark.price.0,
+            position.is_long,
+        )
+        .expect("PnL overflow");
+        let close_fee =
+            crate::engine_math::fee_ceil(position.notional_usdc.0, fee_bps).expect("fee overflow");
+        let margin = i128::try_from(position.margin_usdc.0).expect("margin overflow");
+        let post_trade = margin
+            .saturating_add(pnl)
+            .saturating_sub(i128::try_from(close_fee).expect("fee overflow"));
+        let loss = if pnl < 0 {
+            pnl.unsigned_abs().min(position.margin_usdc.0)
+        } else {
+            0
+        };
+        let vault_id = SHARED_VAULT_RECORD_ID.to_string();
+        let vault_balance = self.balances.get(&vault_id).unwrap_or_default();
+        let mut user_credit = if post_trade > 0 {
+            post_trade as u128
+        } else {
+            0
+        };
+        if pnl > 0 {
+            let free = vault_balance
+                .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
+                .saturating_sub(
+                    read_vault_reserved_payout().saturating_sub(position.notional_usdc.0),
+                );
+            let paid = (pnl as u128).min(free);
+            user_credit = position
+                .margin_usdc
+                .0
+                .saturating_sub(close_fee)
+                .saturating_add(paid);
+            let unpaid = (pnl as u128).saturating_sub(paid);
+            if unpaid != 0 {
+                write_perp_deferred(
+                    &account_id,
+                    read_perp_deferred(&account_id)
+                        .checked_add(unpaid)
+                        .expect("claim overflow"),
+                );
+                write_u128_storage(
+                    PERP_DEFERRED_TOTAL_KEY,
+                    read_u128_storage(PERP_DEFERRED_TOTAL_KEY)
+                        .checked_add(unpaid)
+                        .expect("claim overflow"),
+                );
+            }
+            self.balances.insert(
+                &vault_id,
+                &vault_balance.saturating_add(close_fee).saturating_sub(paid),
+            );
+        } else {
+            self.balances.insert(
+                &vault_id,
+                &vault_balance
+                    .checked_add(loss)
+                    .and_then(|v| v.checked_add(close_fee))
+                    .expect("vault overflow"),
+            );
+        }
+        if post_trade < 0 {
+            let shortfall = post_trade.unsigned_abs();
+            let covered = shortfall.min(read_u128_storage(PERP_INSURANCE_KEY));
+            write_u128_storage(
+                PERP_INSURANCE_KEY,
+                read_u128_storage(PERP_INSURANCE_KEY) - covered,
+            );
+            let debt = read_u128_storage(PERP_BAD_DEBT_KEY)
+                .checked_add(shortfall - covered)
+                .expect("bad debt overflow");
+            write_u128_storage(PERP_BAD_DEBT_KEY, debt);
+            if debt != 0 {
+                write_u64_storage(PERP_PAUSED_KEY, 1);
+            }
+            user_credit = 0;
+        }
+        if close_fee != 0 {
+            let insurance_fee = close_fee / 4;
+            write_u128_storage(
+                PERP_INSURANCE_KEY,
+                read_u128_storage(PERP_INSURANCE_KEY)
+                    .checked_add(insurance_fee)
+                    .expect("insurance overflow"),
+            );
+        }
+        let storage_before = env::storage_usage();
+        if user_credit != 0 {
+            let balance = self.balances.get(&account_id).unwrap_or_default();
+            self.balances.insert(
+                &account_id,
+                &balance.checked_add(user_credit).expect("balance overflow"),
+            );
+        }
+        let exposure = read_perp_exposure(&position.market_id);
+        let entry_value = position
+            .notional_usdc
+            .0
+            .checked_mul(position.entry_price.0)
+            .expect("entry value overflow");
+        let mut next_exposure = exposure;
+        if position.is_long {
+            next_exposure.long_notional_usdc = U128(
+                next_exposure
+                    .long_notional_usdc
+                    .0
+                    .checked_sub(position.notional_usdc.0)
+                    .expect("long exposure invariant"),
+            );
+            next_exposure.long_entry_value =
+                U128(next_exposure.long_entry_value.0.saturating_sub(entry_value));
+        } else {
+            next_exposure.short_notional_usdc = U128(
+                next_exposure
+                    .short_notional_usdc
+                    .0
+                    .checked_sub(position.notional_usdc.0)
+                    .expect("short exposure invariant"),
+            );
+            next_exposure.short_entry_value = U128(
+                next_exposure
+                    .short_entry_value
+                    .0
+                    .saturating_sub(entry_value),
+            );
+        }
+        write_perp_exposure(&next_exposure, &position.market_id);
+        write_vault_reserved_payout(
+            read_vault_reserved_payout()
+                .checked_sub(position.notional_usdc.0)
+                .expect("vault reservation invariant"),
+        );
+        write_u128_storage(
+            PERP_TOTAL_MARGIN_KEY,
+            read_u128_storage(PERP_TOTAL_MARGIN_KEY).saturating_sub(position.margin_usdc.0),
+        );
+        write_u128_storage(
+            PERP_TOTAL_OI_KEY,
+            read_u128_storage(PERP_TOTAL_OI_KEY).saturating_sub(position.notional_usdc.0),
+        );
+        let net_delta = if position.is_long {
+            position.notional_usdc.0 as i128
+        } else {
+            -(position.notional_usdc.0 as i128)
+        };
+        write_i128_storage(
+            PERP_GLOBAL_NET_KEY,
+            read_i128_storage(PERP_GLOBAL_NET_KEY).saturating_sub(net_delta),
+        );
+        write_perp_open_notional(
+            &account_id,
+            read_perp_open_notional(&account_id).saturating_sub(position.notional_usdc.0),
+        );
+        write_perp_position_count(
+            &account_id,
+            read_perp_position_count(&account_id).saturating_sub(1),
+        );
+        delete_perp_position(&account_id, &position_id);
+        write_user_perp_nonce(&account_id, nonce);
+        settle_storage_credit(&account_id, storage_before);
+        U128(user_credit)
+    }
+
+    pub fn claim_perp_deferred_profit(&mut self, account_id: String) -> U128 {
+        let owed = read_perp_deferred(&account_id);
+        assert!(owed > 0, "nothing claimable");
+        let cash = self
+            .balances
+            .get(&SHARED_VAULT_RECORD_ID.to_string())
+            .unwrap_or_default();
+        let available = cash
+            .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
+            .saturating_sub(read_vault_reserved_payout());
+        let paid = owed.min(available);
+        assert!(paid > 0, "vault has no free liquidity");
+        let balance = self.balances.get(&account_id).unwrap_or_default();
+        self.balances
+            .insert(&SHARED_VAULT_RECORD_ID.to_string(), &(cash - paid));
+        self.balances.insert(
+            &account_id,
+            &balance.checked_add(paid).expect("balance overflow"),
+        );
+        write_perp_deferred(&account_id, owed - paid);
+        write_u128_storage(
+            PERP_DEFERRED_TOTAL_KEY,
+            read_u128_storage(PERP_DEFERRED_TOTAL_KEY).saturating_sub(paid),
+        );
+        U128(paid)
+    }
+
+    pub fn trade_quote_message(
+        &self,
+        account_id: String,
+        position_id: String,
+        market_id: String,
+        is_long: bool,
+        notional: U128,
+        leverage_bps: u32,
+        reference_price: U128,
+        max_slippage_bps: u16,
+        price_sequence: u64,
+        fee_bps: u16,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        perp_trade_message(
+            &account_id,
+            &position_id,
+            &market_id,
+            is_long,
+            notional,
+            leverage_bps,
+            reference_price,
+            max_slippage_bps,
+            price_sequence,
+            fee_bps,
+            nonce,
+            expires_at_ms,
+        )
+    }
+
+    /// Owner-signed market order against the latest fresh A1 mark. The quote
+    /// service signs the same exact payload; user authorization remains the
+    /// authority for movement of that user's margin.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_perp_position(
+        &mut self,
+        account_id: String,
+        position_id: String,
+        market_id: String,
+        is_long: bool,
+        notional: U128,
+        leverage_bps: u32,
+        reference_price: U128,
+        max_slippage_bps: u16,
+        price_sequence: u64,
+        fee_bps: u16,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+        quote_signature: Base64VecU8,
+    ) -> U128 {
+        assert_valid_record_id(&position_id);
+        assert!(!self.perp_paused(), "perps paused");
+        let market = read_perp_market(&market_id).expect("market not listed");
+        assert!(
+            market.enabled && !market.close_only,
+            "market is not accepting opens"
+        );
+        assert!(
+            notional.0 > 0 && notional.0 <= market.max_position_usdc.0,
+            "position cap exceeded"
+        );
+        assert!(
+            leverage_bps >= 10_000 && leverage_bps <= market.max_leverage_bps,
+            "leverage limit exceeded"
+        );
+        assert!(fee_bps <= MAX_PERP_FEE_BPS, "fee exceeds hard bound");
+        assert!(
+            max_slippage_bps <= MAX_PERP_SLIPPAGE_BPS,
+            "slippage exceeds hard bound"
+        );
+        assert!(
+            read_perp_position(&account_id, &position_id).is_none(),
+            "position id already exists"
+        );
+        assert!(
+            read_perp_position_count(&account_id) < MAX_PERP_POSITIONS_PER_RECORD,
+            "position count limit exceeded"
+        );
+        assert_eq!(
+            read_market_price(&market_id)
+                .expect("market price unavailable")
+                .sequence,
+            price_sequence,
+            "stale quote sequence"
+        );
+        let price = require_fresh_market_price(&market_id);
+        assert!(reference_price.0 > 0, "reference price must be positive");
+        let price_delta = price.price.0.abs_diff(reference_price.0);
+        let max_deviation = u128::from(max_slippage_bps.min(market.max_execution_deviation_bps));
+        assert!(
+            price_delta.saturating_mul(10_000) <= reference_price.0.saturating_mul(max_deviation),
+            "execution price exceeds signed slippage"
+        );
+        let health = read_oracle_health(&market_id);
+        assert!(
+            !health.circuit_broken && health.confidence_bps <= market.max_oracle_confidence_bps,
+            "oracle mark unsafe"
+        );
+        assert!(
+            health.spot_twap_deviation_bps <= market.max_execution_deviation_bps,
+            "oracle spot/TWAP deviation too high"
+        );
+        let nonce_expected = read_user_perp_nonce(&account_id)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        assert_eq!(nonce, nonce_expected, "invalid trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = perp_trade_message(
+            &account_id,
+            &position_id,
+            &market_id,
+            is_long,
+            notional,
+            leverage_bps,
+            reference_price,
+            max_slippage_bps,
+            price_sequence,
+            fee_bps,
+            nonce,
+            expires_at_ms,
+        );
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert!(
+            verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+            "invalid owner signature"
+        );
+        let quote_signer = read_perp_quote_signer().expect("quote signer is not configured");
+        assert!(
+            verify_owner_signature(&quote_signer, &message, quote_signature.as_ref(), nonce),
+            "invalid quote signature"
+        );
+        let margin =
+            crate::engine_math::required_margin(notional.0, leverage_bps).expect("margin overflow");
+        let fee = crate::engine_math::fee_ceil(notional.0, fee_bps).expect("fee overflow");
+        let required = margin.checked_add(fee).expect("required balance overflow");
+        let balance = self.balances.get(&account_id).unwrap_or_default();
+        assert!(balance >= required, "insufficient free USDC");
+        let mut exposure = read_perp_exposure(&market_id);
+        let nav = vault_nav(&self.balances);
+        let old_oi = exposure
+            .long_notional_usdc
+            .0
+            .checked_add(exposure.short_notional_usdc.0)
+            .expect("OI overflow");
+        let new_oi = old_oi.checked_add(notional.0).expect("OI overflow");
+        assert!(
+            new_oi <= nav.saturating_mul(u128::from(market.max_market_oi_bps)) / 10_000,
+            "market open interest cap exceeded"
+        );
+        let total_oi = read_u128_storage(PERP_TOTAL_OI_KEY)
+            .checked_add(notional.0)
+            .expect("global OI overflow");
+        assert!(
+            total_oi <= nav.saturating_mul(u128::from(PERP_MAX_TOTAL_OI_BPS)) / 10_000,
+            "global utilization cap exceeded"
+        );
+        let global_net = read_i128_storage(PERP_GLOBAL_NET_KEY)
+            .checked_add(if is_long {
+                notional.0 as i128
+            } else {
+                -(notional.0 as i128)
+            })
+            .expect("global net overflow");
+        assert!(
+            global_net.unsigned_abs()
+                <= nav.saturating_mul(u128::from(PERP_MAX_GLOBAL_NET_BPS)) / 10_000,
+            "global directional exposure cap exceeded"
+        );
+        let (new_long, new_short) = if is_long {
+            (
+                exposure.long_notional_usdc.0 + notional.0,
+                exposure.short_notional_usdc.0,
+            )
+        } else {
+            (
+                exposure.long_notional_usdc.0,
+                exposure.short_notional_usdc.0 + notional.0,
+            )
+        };
+        assert!(
+            new_long.abs_diff(new_short)
+                <= nav.saturating_mul(u128::from(market.max_market_skew_bps)) / 10_000,
+            "market skew cap exceeded"
+        );
+        let trader_oi = read_perp_open_notional(&account_id)
+            .checked_add(notional.0)
+            .expect("trader OI overflow");
+        assert!(
+            trader_oi <= nav.saturating_mul(u128::from(PERP_MAX_TRADER_OI_BPS)) / 10_000,
+            "trader open interest cap exceeded"
+        );
+        let payout_reserve = read_vault_reserved_payout()
+            .checked_add(notional.0)
+            .expect("vault reserve overflow");
+        assert!(
+            notional.0 <= vault_risk_available(&self.balances),
+            "insufficient vault payout reserve"
+        );
+        let storage_before = env::storage_usage();
+        self.balances.insert(&account_id, &(balance - required));
+        let vault_balance = self
+            .balances
+            .get(&SHARED_VAULT_RECORD_ID.to_string())
+            .unwrap_or_default();
+        self.balances.insert(
+            &SHARED_VAULT_RECORD_ID.to_string(),
+            &vault_balance
+                .checked_add(fee)
+                .expect("vault balance overflow"),
+        );
+        let opening_insurance = fee / 4;
+        write_u128_storage(
+            PERP_INSURANCE_KEY,
+            read_u128_storage(PERP_INSURANCE_KEY)
+                .checked_add(opening_insurance)
+                .expect("insurance overflow"),
+        );
+        write_u128_storage(PERP_TOTAL_OI_KEY, total_oi);
+        write_i128_storage(PERP_GLOBAL_NET_KEY, global_net);
+        let entry_value = notional
+            .0
+            .checked_mul(price.price.0)
+            .expect("entry value overflow");
+        if is_long {
+            exposure.long_notional_usdc = U128(new_long);
+            exposure.long_entry_value = U128(
+                exposure
+                    .long_entry_value
+                    .0
+                    .checked_add(entry_value)
+                    .expect("entry value overflow"),
+            );
+        } else {
+            exposure.short_notional_usdc = U128(new_short);
+            exposure.short_entry_value = U128(
+                exposure
+                    .short_entry_value
+                    .0
+                    .checked_add(entry_value)
+                    .expect("entry value overflow"),
+            );
+        }
+        write_perp_exposure(&exposure, &market_id);
+        write_vault_reserved_payout(payout_reserve);
+        write_perp_position(
+            &account_id,
+            &position_id,
+            &PerpPosition {
+                account_id: account_id.clone(),
+                position_id: position_id.clone(),
+                market_id: market_id.clone(),
+                is_long,
+                notional_usdc: notional,
+                margin_usdc: U128(margin),
+                entry_price: price.price,
+                opened_at_ms: env::block_timestamp() / 1_000_000,
+                funding_index: U128(if is_long {
+                    exposure.long_funding_index.0
+                } else {
+                    exposure.short_funding_index.0
+                }),
+            },
+        );
+        write_perp_open_notional(&account_id, trader_oi);
+        write_perp_position_count(
+            &account_id,
+            read_perp_position_count(&account_id)
+                .checked_add(1)
+                .expect("position count overflow"),
+        );
+        write_u128_storage(
+            PERP_TOTAL_MARGIN_KEY,
+            read_u128_storage(PERP_TOTAL_MARGIN_KEY)
+                .checked_add(margin)
+                .expect("total margin overflow"),
+        );
+        write_user_perp_nonce(&account_id, nonce);
+        settle_storage_credit(&account_id, storage_before);
+        U128(margin)
+    }
+
     pub fn agent_position(
         &self,
         agent_record_id: String,
@@ -289,6 +1347,10 @@ impl SharedLedger {
         sequence: u64,
         signature: Base64VecU8,
     ) {
+        assert!(
+            cfg!(test) || env::current_account_id().as_str().ends_with(".testnet"),
+            "legacy publisher is testnet-only"
+        );
         assert_valid_market_id(&market_id);
         assert!(price.0 > 0, "market price must be positive");
         let now_ms = env::block_timestamp() / 1_000_000;
@@ -1797,6 +2859,261 @@ fn write_vault_reserved_payout(value: u128) {
     write_u128_storage(VAULT_RESERVED_PREFIX, value);
 }
 
+fn raw_key(prefix: &[u8], parts: &[&str]) -> Vec<u8> {
+    let mut key = prefix.to_vec();
+    for part in parts {
+        key.extend_from_slice(&(part.len() as u32).to_le_bytes());
+        key.extend_from_slice(part.as_bytes());
+    }
+    key
+}
+
+fn read_json_storage<T: for<'de> Deserialize<'de>>(key: &[u8]) -> Option<T> {
+    env::storage_read(key)
+        .map(|value| near_sdk::serde_json::from_slice(&value).expect("invalid stored JSON"))
+}
+
+fn write_json_storage<T: Serialize>(key: &[u8], value: &T) {
+    env::storage_write(
+        key,
+        &near_sdk::serde_json::to_vec(value).expect("serialize storage value"),
+    );
+}
+
+fn read_perp_market_ids() -> Vec<String> {
+    read_json_storage(PERP_MARKET_IDS_KEY).unwrap_or_default()
+}
+fn write_perp_market_ids(ids: &[String]) {
+    write_json_storage(PERP_MARKET_IDS_KEY, &ids);
+}
+fn read_perp_market(market_id: &str) -> Option<PerpMarketConfig> {
+    read_json_storage(&raw_key(PERP_MARKET_PREFIX, &[market_id]))
+}
+fn write_perp_market(config: &PerpMarketConfig) {
+    write_json_storage(&raw_key(PERP_MARKET_PREFIX, &[&config.market_id]), config);
+}
+fn read_perp_exposure(market_id: &str) -> PerpExposure {
+    read_json_storage(&raw_key(PERP_EXPOSURE_PREFIX, &[market_id])).unwrap_or_default()
+}
+fn write_perp_exposure(exposure: &PerpExposure, market_id: &str) {
+    write_json_storage(&raw_key(PERP_EXPOSURE_PREFIX, &[market_id]), exposure);
+}
+fn read_perp_position(account_id: &str, position_id: &str) -> Option<PerpPosition> {
+    read_json_storage(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]))
+}
+fn write_perp_position(account_id: &str, position_id: &str, position: &PerpPosition) {
+    write_json_storage(
+        &raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]),
+        position,
+    );
+}
+fn delete_perp_position(account_id: &str, position_id: &str) {
+    env::storage_remove(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]));
+}
+fn read_user_perp_nonce(account_id: &str) -> u64 {
+    read_u64_storage(&raw_key(PERP_QUOTE_NONCE_PREFIX, &[account_id]))
+}
+fn write_user_perp_nonce(account_id: &str, nonce: u64) {
+    write_u64_storage(&raw_key(PERP_QUOTE_NONCE_PREFIX, &[account_id]), nonce);
+}
+fn read_perp_position_count(account_id: &str) -> u64 {
+    read_u64_storage(&raw_key(PERP_POSITION_COUNT_PREFIX, &[account_id]))
+}
+fn write_perp_position_count(account_id: &str, count: u64) {
+    write_u64_storage(&raw_key(PERP_POSITION_COUNT_PREFIX, &[account_id]), count);
+}
+fn read_perp_open_notional(account_id: &str) -> u128 {
+    read_u128_storage(&raw_key(PERP_OPEN_NOTIONAL_PREFIX, &[account_id]))
+}
+fn write_perp_open_notional(account_id: &str, amount: u128) {
+    write_u128_storage(&raw_key(PERP_OPEN_NOTIONAL_PREFIX, &[account_id]), amount);
+}
+fn read_perp_quote_signer() -> Option<OwnerKey> {
+    read_json_storage(PERP_QUOTE_SIGNER_KEY)
+}
+fn write_perp_quote_signer(key: &OwnerKey) {
+    write_json_storage(PERP_QUOTE_SIGNER_KEY, key);
+}
+fn read_oracle_health(market_id: &str) -> OracleHealth {
+    read_json_storage(&raw_key(PERP_ORACLE_HEALTH_PREFIX, &[market_id])).unwrap_or_default()
+}
+fn write_oracle_health(market_id: &str, health: &OracleHealth) {
+    write_json_storage(&raw_key(PERP_ORACLE_HEALTH_PREFIX, &[market_id]), health);
+}
+fn read_perp_deferred(account_id: &str) -> u128 {
+    read_u128_storage(&raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[account_id]))
+}
+fn write_perp_deferred(account_id: &str, amount: u128) {
+    write_u128_storage(&raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[account_id]), amount);
+}
+fn read_lp_shares(account_id: &str) -> u128 {
+    read_u128_storage(&raw_key(LP_SHARE_PREFIX, &[account_id]))
+}
+fn write_lp_shares(account_id: &str, shares: u128) {
+    write_u128_storage(&raw_key(LP_SHARE_PREFIX, &[account_id]), shares);
+}
+fn read_lp_withdrawal(account_id: &str) -> Option<LpWithdrawalRequest> {
+    read_json_storage(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]))
+}
+fn write_lp_withdrawal(account_id: &str, request: &LpWithdrawalRequest) {
+    write_json_storage(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]), request);
+}
+fn delete_lp_withdrawal(account_id: &str) {
+    env::storage_remove(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]));
+}
+
+fn assert_valid_short_trade_expiry(expires_at_ms: u64) {
+    let now = env::block_timestamp() / 1_000_000;
+    assert!(
+        expires_at_ms > now && expires_at_ms <= now.saturating_add(MAX_AGENT_ACTION_TTL_MS),
+        "trade quote expired or too long-lived"
+    );
+}
+
+fn assert_next_user_action(
+    account_id: &str,
+    nonce: u64,
+    expires_at_ms: u64,
+    action: &str,
+    amount: &str,
+    signature: &[u8],
+    owner: &OwnerKey,
+) {
+    let expected = read_user_perp_nonce(account_id)
+        .checked_add(1)
+        .expect("nonce overflow");
+    assert_eq!(nonce, expected, "invalid action nonce");
+    assert_valid_expiry(expires_at_ms);
+    let message = format!(
+        "afterbell:v1\ncontract:{}\naction:{}\naccount:{}\namount:{}\nnonce:{}\nexpires_at_ms:{}",
+        env::current_account_id(),
+        action,
+        account_id,
+        amount,
+        nonce,
+        expires_at_ms
+    );
+    assert!(
+        verify_owner_signature(owner, &message, signature, nonce),
+        "invalid owner signature"
+    );
+}
+
+fn perp_trade_message(
+    account_id: &str,
+    position_id: &str,
+    market_id: &str,
+    is_long: bool,
+    notional: U128,
+    leverage_bps: u32,
+    reference_price: U128,
+    max_slippage_bps: u16,
+    price_sequence: u64,
+    fee_bps: u16,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!("afterbell:v1\ncontract:{}\naction:open_perp_position\naccount:{}\nposition:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nleverage_bps:{}\nreference_price:{}\nmax_slippage_bps:{}\nprice_sequence:{}\nfee_bps:{}\nnonce:{}\nexpires_at_ms:{}", env::current_account_id(), account_id, position_id, market_id, if is_long {"long"} else {"short"}, notional.0, leverage_bps, reference_price.0, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms)
+}
+
+fn perp_close_message(
+    position: &PerpPosition,
+    reference_price: U128,
+    max_slippage_bps: u16,
+    sequence: u64,
+    fee_bps: u16,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!("afterbell:v1\ncontract:{}\naction:close_perp_position\naccount:{}\nposition:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nmargin_usdc:{}\nentry_price:{}\nreference_price:{}\nmax_slippage_bps:{}\nprice_sequence:{}\nfee_bps:{}\nnonce:{}\nexpires_at_ms:{}", env::current_account_id(), position.account_id, position.position_id, position.market_id, if position.is_long {"long"} else {"short"}, position.notional_usdc.0, position.margin_usdc.0, position.entry_price.0, reference_price.0, max_slippage_bps, sequence, fee_bps, nonce, expires_at_ms)
+}
+
+fn oracle_attestation_message(value: &OracleAttestation) -> String {
+    format!("afterbell:v1\ncontract:{}\naction:publish_market_price\nmarket:{}\nprice:{}\nspot_price:{}\nconfidence_bps:{}\nobserved_at_ms:{}\nsequence:{}\nsource_round:{}\nexpires_at_ms:{}", env::current_account_id(), value.market_id, value.price.0, value.spot_price.0, value.confidence_bps, value.observed_at_ms, value.sequence, value.source_round, value.expires_at_ms)
+}
+
+fn vault_prices_fresh() -> bool {
+    read_perp_market_ids().iter().all(|id| {
+        let exposure = read_perp_exposure(id);
+        if exposure.long_notional_usdc.0 == 0 && exposure.short_notional_usdc.0 == 0 {
+            return true;
+        }
+        let Some(price) = read_market_price(id) else {
+            return false;
+        };
+        let config = read_perp_market(id);
+        let health = read_oracle_health(id);
+        let now = env::block_timestamp() / 1_000_000;
+        price.price.0 > 0
+            && price.observed_at_ms <= now
+            && now.saturating_sub(price.observed_at_ms) <= MAX_MARKET_PRICE_AGE_MS
+            && config.is_some_and(|m| {
+                health.confidence_bps <= m.max_oracle_confidence_bps && !health.circuit_broken
+            })
+    })
+}
+
+fn vault_risk_available(balances: &LookupMap<String, u128>) -> u128 {
+    balances
+        .get(&SHARED_VAULT_RECORD_ID.to_string())
+        .unwrap_or_default()
+        .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
+        .saturating_sub(read_u128_storage(PERP_DEFERRED_TOTAL_KEY))
+        .saturating_sub(read_vault_reserved_payout())
+}
+
+fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
+    if !vault_prices_fresh() {
+        return 0;
+    }
+    let cash = balances
+        .get(&SHARED_VAULT_RECORD_ID.to_string())
+        .unwrap_or_default()
+        .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
+        .saturating_sub(read_u128_storage(PERP_DEFERRED_TOTAL_KEY));
+    let mut pnl: i128 = 0;
+    for id in read_perp_market_ids() {
+        let exposure = read_perp_exposure(&id);
+        let Some(price) = read_market_price(&id) else {
+            continue;
+        };
+        if price.price.0 == 0 {
+            continue;
+        }
+        for (notional, entry_value, is_long) in [
+            (
+                exposure.long_notional_usdc.0,
+                exposure.long_entry_value.0,
+                true,
+            ),
+            (
+                exposure.short_notional_usdc.0,
+                exposure.short_entry_value.0,
+                false,
+            ),
+        ] {
+            if notional == 0 || entry_value == 0 {
+                continue;
+            }
+            let avg_entry = entry_value / notional;
+            let Ok(side_pnl) =
+                crate::engine_math::linear_pnl(notional, avg_entry, price.price.0, is_long)
+            else {
+                continue;
+            };
+            pnl = pnl.saturating_add(side_pnl);
+        }
+    }
+    if pnl > 0 {
+        cash.saturating_sub(pnl as u128)
+    } else {
+        cash.saturating_add(
+            pnl.unsigned_abs()
+                .min(read_u128_storage(PERP_TOTAL_MARGIN_KEY)),
+        )
+    }
+}
+
 fn validate_close_mark(
     position: &AgentPosition,
     reference_price: U128,
@@ -2209,6 +3526,16 @@ fn read_u128_storage(key: &[u8]) -> u128 {
     env::storage_read(key)
         .map(|bytes| u128::from_le_bytes(bytes.as_slice().try_into().expect("invalid stored u128")))
         .unwrap_or_default()
+}
+
+fn read_i128_storage(key: &[u8]) -> i128 {
+    env::storage_read(key)
+        .map(|bytes| i128::from_le_bytes(bytes.as_slice().try_into().expect("invalid stored i128")))
+        .unwrap_or_default()
+}
+
+fn write_i128_storage(key: &[u8], value: i128) {
+    env::storage_write(key, &value.to_le_bytes());
 }
 
 fn write_u128_storage(key: &[u8], value: u128) {
@@ -3572,6 +4899,139 @@ mod tests {
             sequence,
             Base64VecU8::from(signature.to_vec()),
         );
+    }
+
+    fn configure_test_perp(contract: &mut SharedLedger, quote_key: &SigningKey) {
+        contract.configure_perp_market(PerpMarketConfig {
+            market_id: "NVDA".to_string(),
+            enabled: true,
+            close_only: false,
+            max_leverage_bps: 50_000,
+            maintenance_margin_bps: 500,
+            max_execution_deviation_bps: 1_000,
+            max_oracle_confidence_bps: 100,
+            max_position_usdc: U128(1_000_000),
+            max_market_oi_bps: 1_000,
+            max_market_skew_bps: 300,
+        });
+        contract.set_perp_quote_signer(OwnerKey::SolanaEd25519 {
+            public_key: quote_key.verifying_key().to_bytes(),
+        });
+    }
+
+    #[test]
+    fn owner_and_quote_signed_perp_open_and_close_settle_vault_and_exposure() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[81; 32]);
+        let quote_key = SigningKey::from_bytes(&[82; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        fund_record(&mut contract, USER, 2_000_000, "perp-user");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "perp-vault",
+        );
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+
+        let expiry = NOW_MS + 30_000;
+        let open_message = contract.trade_quote_message(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            6,
+            1,
+            expiry,
+        );
+        let owner_signature = owner_key.sign(open_message.as_bytes());
+        let quote_signature = quote_key.sign(open_message.as_bytes());
+        assert_eq!(
+            contract.open_perp_position(
+                USER.to_string(),
+                "nvda-1".to_string(),
+                "NVDA".to_string(),
+                true,
+                U128(500_000),
+                20_000,
+                U128(10_000_000_000),
+                100,
+                1,
+                6,
+                1,
+                expiry,
+                Base64VecU8::from(owner_signature.to_bytes().to_vec()),
+                Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+            ),
+            U128(250_000)
+        );
+        assert_eq!(
+            contract
+                .perp_position(USER.to_string(), "nvda-1".to_string())
+                .unwrap()
+                .margin_usdc,
+            U128(250_000)
+        );
+        assert_eq!(contract.vault_reserved_payout(), U128(500_000));
+
+        publish_test_price(&mut contract, U128(11_000_000_000), 2);
+        let close_expiry = NOW_MS + 30_000;
+        let close_message = contract.close_perp_position_message(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            U128(11_000_000_000),
+            100,
+            2,
+            6,
+            2,
+            close_expiry,
+        );
+        let owner_signature = owner_key.sign(close_message.as_bytes());
+        let quote_signature = quote_key.sign(close_message.as_bytes());
+        let paid = contract.close_perp_position(
+            USER.to_string(),
+            "nvda-1".to_string(),
+            U128(11_000_000_000),
+            100,
+            2,
+            6,
+            2,
+            close_expiry,
+            Base64VecU8::from(owner_signature.to_bytes().to_vec()),
+            Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+        );
+        assert_eq!(paid, U128(299_700));
+        assert!(contract
+            .perp_position(USER.to_string(), "nvda-1".to_string())
+            .is_none());
+        assert_eq!(contract.vault_reserved_payout(), U128(0));
+        assert_eq!(contract.perp_total_margin(), U128(0));
+        assert_eq!(
+            contract
+                .perp_exposure("NVDA".to_string())
+                .long_notional_usdc,
+            U128(0)
+        );
+        assert_eq!(contract.balance_of(USER.to_string()), U128(2_049_400));
+    }
+
+    #[test]
+    #[should_panic(expected = "protocol authority required")]
+    fn strangers_cannot_configure_perp_markets() {
+        let mut contract = setup("attacker.near");
+        configure_test_perp(&mut contract, &SigningKey::from_bytes(&[83; 32]));
     }
 
     #[test]
