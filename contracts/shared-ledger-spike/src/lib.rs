@@ -53,9 +53,9 @@ const PERP_GLOBAL_NET_KEY: &[u8] = b"afterbell:a1:perp:global_net";
 const PERP_BAD_DEBT_KEY: &[u8] = b"afterbell:a1:perp:bad_debt";
 const PERP_INSURANCE_KEY: &[u8] = b"afterbell:a1:perp:insurance";
 const PERP_PAUSED_KEY: &[u8] = b"afterbell:a1:perp:paused";
-const PERP_ORACLE_KEYS_KEY: &[u8] = b"afterbell:a1:perp:oracle_keys";
-const PERP_PENDING_ORACLE_KEYS_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_keys";
-const PERP_PENDING_ORACLE_KEYS_AT_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_keys_at";
+const PERP_ORACLE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:oracle_signer";
+const PERP_PENDING_ORACLE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_signer";
+const PERP_PENDING_ORACLE_SIGNER_AT_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_signer_at";
 const PERP_BETA_CAP_KEY: &[u8] = b"afterbell:a1:perp:beta_cap";
 const PERP_ORACLE_HEALTH_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_health:";
 const PERP_ORACLE_PENDING_JUMP_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_pending_jump:";
@@ -498,47 +498,47 @@ impl SharedLedger {
         build_oracle_attestation_message(&attestation)
     }
 
-    pub fn configure_oracle_quorum(&mut self, public_keys: Vec<[u8; 32]>) {
+    pub fn oracle_signer(&self) -> Option<[u8; 20]> {
+        read_json_storage(PERP_ORACLE_SIGNER_KEY)
+    }
+
+    /// Configure the single EOA that signs oracle attestations. Initial setup
+    /// is immediate; rotations wait for the protocol configuration delay.
+    pub fn configure_oracle_signer(&mut self, signer: [u8; 20]) {
         assert_protocol_admin();
-        assert_eq!(public_keys.len(), 3, "oracle quorum requires three keys");
-        assert!(
-            public_keys[0] != public_keys[1]
-                && public_keys[0] != public_keys[2]
-                && public_keys[1] != public_keys[2],
-            "oracle keys must be unique"
-        );
-        if read_json_storage::<Vec<[u8; 32]>>(PERP_ORACLE_KEYS_KEY).is_none() {
-            write_json_storage(PERP_ORACLE_KEYS_KEY, &public_keys);
+        assert!(signer != [0; 20], "oracle signer cannot be zero address");
+        if read_json_storage::<[u8; 20]>(PERP_ORACLE_SIGNER_KEY).is_none() {
+            write_json_storage(PERP_ORACLE_SIGNER_KEY, &signer);
         } else {
-            write_json_storage(PERP_PENDING_ORACLE_KEYS_KEY, &public_keys);
+            write_json_storage(PERP_PENDING_ORACLE_SIGNER_KEY, &signer);
             write_u64_storage(
-                PERP_PENDING_ORACLE_KEYS_AT_KEY,
+                PERP_PENDING_ORACLE_SIGNER_AT_KEY,
                 env::block_timestamp() / 1_000_000 + PERP_CONFIG_DELAY_MS,
             );
         }
     }
 
-    pub fn apply_oracle_quorum(&mut self) {
+    pub fn apply_oracle_signer(&mut self) {
         assert_protocol_admin();
-        let ready_at = read_u64_storage(PERP_PENDING_ORACLE_KEYS_AT_KEY);
-        assert!(ready_at > 0, "no pending oracle quorum");
+        let ready_at = read_u64_storage(PERP_PENDING_ORACLE_SIGNER_AT_KEY);
+        assert!(ready_at > 0, "no pending oracle signer");
         assert!(
             env::block_timestamp() / 1_000_000 >= ready_at,
             "config delay active"
         );
-        let keys: Vec<[u8; 32]> =
-            read_json_storage(PERP_PENDING_ORACLE_KEYS_KEY).expect("pending oracle keys missing");
-        write_json_storage(PERP_ORACLE_KEYS_KEY, &keys);
-        env::storage_remove(PERP_PENDING_ORACLE_KEYS_KEY);
-        env::storage_remove(PERP_PENDING_ORACLE_KEYS_AT_KEY);
+        let signer: [u8; 20] = read_json_storage(PERP_PENDING_ORACLE_SIGNER_KEY)
+            .expect("pending oracle signer missing");
+        write_json_storage(PERP_ORACLE_SIGNER_KEY, &signer);
+        env::storage_remove(PERP_PENDING_ORACLE_SIGNER_KEY);
+        env::storage_remove(PERP_PENDING_ORACLE_SIGNER_AT_KEY);
     }
 
-    /// A production-shaped 2-of-3 Ed25519 attestation path. The legacy fixed
-    /// test publisher remains testnet-only for deployed-spike compatibility.
-    pub fn publish_market_price_quorum(
+    /// Accept an oracle attestation signed by the configured Ethereum EOA.
+    /// The legacy fixed test publisher remains testnet-only for compatibility.
+    pub fn publish_market_price_attestation(
         &mut self,
         attestation: OracleAttestation,
-        signatures: Vec<Base64VecU8>,
+        signature: Base64VecU8,
     ) {
         assert_valid_market_id(&attestation.market_id);
         let market = read_perp_market(&attestation.market_id).expect("oracle market is not listed");
@@ -571,24 +571,12 @@ impl SharedLedger {
                 .is_none_or(|v| attestation.sequence > v.sequence),
             "oracle sequence must increase"
         );
-        let keys: Vec<[u8; 32]> =
-            read_json_storage(PERP_ORACLE_KEYS_KEY).expect("oracle quorum is not configured");
+        let signer: [u8; 20] =
+            read_json_storage(PERP_ORACLE_SIGNER_KEY).expect("oracle signer is not configured");
         let message = build_oracle_attestation_message(&attestation);
-        let mut valid_signers = [false; 3];
-        for signature in signatures.iter().take(3) {
-            let Ok(sig) = <&[u8; 64]>::try_from(signature.as_ref()) else {
-                continue;
-            };
-            for (index, key) in keys.iter().enumerate() {
-                if !valid_signers[index] && env::ed25519_verify(sig, message.as_bytes(), key) {
-                    valid_signers[index] = true;
-                    break;
-                }
-            }
-        }
         assert!(
-            valid_signers.into_iter().filter(|valid| *valid).count() >= 2,
-            "oracle quorum signature invalid"
+            verify_eip191_signature(&message, signature.as_ref(), &signer),
+            "oracle EOA signature invalid"
         );
         let deviation = attestation
             .spot_price
@@ -609,10 +597,9 @@ impl SharedLedger {
             sequence: attestation.sequence,
         };
 
-        // A >20% move is held for a second independent quorum observation.
-        // The confirming attestation must agree with the staged candidate,
-        // preventing a single anomalous observation from moving the mark,
-        // while still allowing a genuinely shifted market to recover.
+        // A >20% move is held for a second signed observation. The confirming
+        // attestation must agree with the staged candidate before the mark
+        // moves, while still allowing a genuinely shifted market to recover.
         let pending_jump_key = raw_key(PERP_ORACLE_PENDING_JUMP_PREFIX, &[&attestation.market_id]);
         if let Some(pending) = read_json_storage::<MarketPrice>(&pending_jump_key) {
             let confirmation_deviation = pending
@@ -853,6 +840,10 @@ impl SharedLedger {
         );
         let nav = vault_nav(&self.balances);
         let mut total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
+        assert!(
+            total_shares == 0 || nav > 0,
+            "vault NAV is zero while LP shares remain outstanding"
+        );
         if total_shares == 0 && nav > 0 {
             // Capital that entered outside LP minting (for example debt
             // recapitalization before the first LP) is permanently locked to
@@ -1010,7 +1001,7 @@ impl SharedLedger {
             "invalid margin authorization"
         );
         settle_position_funding(&mut position, &mut self.balances);
-        let mark = require_fresh_market_price(&position.market_id);
+        let mark = require_healthy_market_price(&position.market_id);
         let market = read_perp_market(&position.market_id).expect("market not listed");
         let pnl = crate::engine_math::linear_pnl(
             position.notional_usdc.0,
@@ -1222,7 +1213,7 @@ impl SharedLedger {
             fee_bps <= MAX_PERP_FEE_BPS && max_slippage_bps <= MAX_PERP_SLIPPAGE_BPS,
             "fee or slippage exceeds hard bound"
         );
-        let mark = require_fresh_market_price(&position.market_id);
+        let mark = require_healthy_market_price(&position.market_id);
         assert_eq!(mark.sequence, price_sequence, "stale quote sequence");
         assert!(reference_price.0 > 0, "reference price must be positive");
         let deviation = mark
@@ -1497,10 +1488,9 @@ impl SharedLedger {
             fee_bps <= MAX_PERP_FEE_BPS && max_slippage_bps <= MAX_PERP_SLIPPAGE_BPS,
             "fee or slippage exceeds hard bound"
         );
-        let mark = require_fresh_market_price(&position.market_id);
+        let mark = require_healthy_market_price(&position.market_id);
         assert_eq!(mark.sequence, price_sequence, "stale quote sequence");
-        // An owner may always reduce risk using a fresh, signed mark even if
-        // the breaker prevents new exposure. Liquidations remain frozen.
+        // PnL settlement is blocked while the oracle mark is unsafe.
         assert!(reference_price.0 > 0, "reference price must be positive");
         let deviation = mark
             .price
@@ -1793,7 +1783,7 @@ impl SharedLedger {
         let mut position =
             read_perp_position(&account_id, &position_id).expect("position does not exist");
         let market = read_perp_market(&position.market_id).expect("market not listed");
-        let mark = require_fresh_market_price(&position.market_id);
+        let mark = require_healthy_market_price(&position.market_id);
         let health = read_oracle_health(&position.market_id);
         assert!(!health.circuit_broken, "oracle circuit breaker active");
         // The liquidation may create a deferred-profit record as well as
@@ -2570,38 +2560,19 @@ impl SharedLedger {
         max_slippage_bps: u16,
         expires_at_ms: u64,
     ) -> SigningPayload {
-        let price = require_fresh_market_price(&market_id);
-        assert_eq!(
-            price.sequence, price_sequence,
-            "market price sequence changed"
+        let _ = (
+            agent_record_id,
+            position_id,
+            market_id,
+            is_long,
+            notional_usdc,
+            leverage_bps,
+            reference_price,
+            price_sequence,
+            max_slippage_bps,
+            expires_at_ms,
         );
-        assert_eq!(price.price, reference_price, "reference price mismatch");
-        assert!(
-            max_slippage_bps <= 1_000,
-            "slippage limit exceeds 10 percent"
-        );
-        assert_valid_record_id(&position_id);
-        assert_valid_agent_action_expiry(expires_at_ms);
-        let nonce = read_agent_action_nonce(&agent_record_id)
-            .checked_add(1)
-            .expect("agent action nonce overflow");
-        SigningPayload {
-            message: agent_market_open_message(
-                &agent_record_id,
-                &position_id,
-                &market_id,
-                is_long,
-                notional_usdc,
-                leverage_bps,
-                reference_price,
-                price_sequence,
-                max_slippage_bps,
-                nonce,
-                expires_at_ms,
-            ),
-            nonce: Base64VecU8::from(nep413_nonce(nonce).to_vec()),
-            recipient: env::current_account_id(),
-        }
+        panic!("legacy agent market trading is disabled; use the perp trading flow")
     }
 
     pub fn agent_close_position_signing_payload(
@@ -3063,8 +3034,8 @@ impl SharedLedger {
         U128(margin)
     }
 
-    /// Open a price-aware agent position using the latest signed market
-    /// price, bounded by a slippage limit included in the agent signature.
+    /// Disabled legacy entry point. New agent risk must use the shared perp
+    /// engine, which applies the global pause, market, oracle and exposure rules.
     #[allow(clippy::too_many_arguments)]
     pub fn open_agent_market_position(
         &mut self,
@@ -3081,68 +3052,10 @@ impl SharedLedger {
         expires_at_ms: u64,
         signature: Base64VecU8,
     ) -> U128 {
-        assert_valid_record_id(&position_id);
-        assert_valid_market_id(&market_id);
-        assert!(
-            max_slippage_bps <= 1_000,
-            "slippage limit exceeds 10 percent"
-        );
-        let config = read_agent_config(&agent_record_id).expect("agent config is missing");
-        assert!(config.enabled, "agent is disabled");
-        let now_ms = env::block_timestamp() / 1_000_000;
-        assert!(now_ms < config.expires_at_ms, "agent authorization expired");
-        assert_valid_agent_action_expiry(expires_at_ms);
-        assert!(
-            expires_at_ms <= config.expires_at_ms,
-            "agent authorization expired"
-        );
-        assert!(
-            config.allowed_markets.contains(&market_id),
-            "market is not allowed for this agent"
-        );
-        assert!(notional_usdc.0 > 0, "position notional must be positive");
-        assert!(
-            notional_usdc.0 <= config.max_position_usdc.0,
-            "max position limit exceeded"
-        );
-        assert!(
-            leverage_bps >= 10_000 && leverage_bps <= config.max_leverage_bps,
-            "agent leverage limit exceeded"
-        );
-        assert!(
-            read_agent_position(&agent_record_id, &position_id).is_none(),
-            "position id already exists"
-        );
-        assert!(
-            read_perp_position(&agent_record_id, &position_id).is_none(),
-            "position id already exists in perp engine"
-        );
-
-        let price = require_fresh_market_price(&market_id);
-        assert!(
-            price.sequence >= price_sequence,
-            "market price sequence regressed"
-        );
-        assert!(reference_price.0 > 0, "reference price must be positive");
-        let price_delta = price.price.0.abs_diff(reference_price.0);
-        assert!(
-            price_delta.checked_mul(10_000).is_some_and(|delta| {
-                delta
-                    <= reference_price
-                        .0
-                        .saturating_mul(u128::from(max_slippage_bps))
-            }),
-            "market price exceeded signed slippage"
-        );
-
-        let expected_nonce = read_agent_action_nonce(&agent_record_id)
-            .checked_add(1)
-            .expect("agent action nonce overflow");
-        assert_eq!(nonce, expected_nonce, "invalid agent action nonce");
-        let message = agent_market_open_message(
-            &agent_record_id,
-            &position_id,
-            &market_id,
+        let _ = (
+            agent_record_id,
+            position_id,
+            market_id,
             is_long,
             notional_usdc,
             leverage_bps,
@@ -3151,81 +3064,9 @@ impl SharedLedger {
             max_slippage_bps,
             nonce,
             expires_at_ms,
+            signature,
         );
-        assert!(
-            verify_owner_signature(&config.agent_key, &message, signature.as_ref(), nonce),
-            "invalid agent action signature"
-        );
-
-        let new_open_notional = read_agent_open_notional(&agent_record_id)
-            .checked_add(notional_usdc.0)
-            .expect("agent open notional overflow");
-        assert!(
-            new_open_notional <= config.max_open_notional_usdc.0,
-            "max open notional limit exceeded"
-        );
-        let margin = notional_usdc
-            .0
-            .checked_mul(10_000)
-            .and_then(|value| value.checked_add(u128::from(leverage_bps) - 1))
-            .expect("required margin overflow")
-            / u128::from(leverage_bps);
-        let agent_balance = self.balances.get(&agent_record_id).unwrap_or_default();
-        assert!(agent_balance >= margin, "insufficient agent free balance");
-        let vault_balance = self
-            .balances
-            .get(&SHARED_VAULT_RECORD_ID.to_string())
-            .unwrap_or_default();
-        let vault_reserved = read_vault_reserved_payout();
-        assert!(
-            vault_balance.saturating_sub(vault_reserved) >= notional_usdc.0,
-            "insufficient unreserved vault liquidity"
-        );
-        let reserved_margin = read_agent_reserved_margin(&agent_record_id)
-            .checked_add(margin)
-            .expect("reserved margin overflow");
-        assert!(
-            reserved_margin
-                .checked_add(agent_balance - margin)
-                .is_some_and(|total| total <= config.max_allocation_usdc.0),
-            "agent allocation limit exceeded"
-        );
-
-        let storage_before = env::storage_usage();
-        self.balances
-            .insert(&agent_record_id, &(agent_balance - margin));
-        write_vault_reserved_payout(
-            vault_reserved
-                .checked_add(notional_usdc.0)
-                .expect("vault reserve overflow"),
-        );
-        write_agent_reserved_margin(&agent_record_id, reserved_margin);
-        write_agent_open_notional(&agent_record_id, new_open_notional);
-        write_agent_position(
-            &agent_record_id,
-            &position_id,
-            &AgentPosition {
-                position_id: position_id.clone(),
-                agent_record_id: agent_record_id.clone(),
-                market_id,
-                is_long,
-                notional_usdc,
-                margin_usdc: U128(margin),
-                leverage_bps,
-                entry_price: Some(price.price),
-            },
-        );
-        let position_count = read_agent_position_count(&agent_record_id)
-            .checked_add(1)
-            .expect("agent position count overflow");
-        assert!(
-            position_count <= MAX_AGENT_POSITIONS,
-            "agent position limit exceeded"
-        );
-        write_agent_position_count(&agent_record_id, position_count);
-        write_agent_action_nonce(&agent_record_id, nonce);
-        settle_storage_credit(&config.user_record_id, storage_before);
-        U128(margin)
+        panic!("legacy agent market trading is disabled; use open_perp_position")
     }
 
     /// Close one fully reserved agent position with the agent's signature.
@@ -4490,7 +4331,7 @@ fn validate_close_mark(
         "slippage limit exceeds 10 percent"
     );
     assert!(reference_price.0 > 0, "reference price must be positive");
-    let mark = require_fresh_market_price(&position.market_id);
+    let mark = require_healthy_market_price(&position.market_id);
     assert!(mark.sequence >= sequence, "market price sequence regressed");
     let delta = mark.price.0.abs_diff(reference_price.0);
     assert!(
@@ -5014,6 +4855,19 @@ fn require_fresh_market_price(market_id: &str) -> MarketPrice {
     price
 }
 
+fn require_healthy_market_price(market_id: &str) -> MarketPrice {
+    let price = require_fresh_market_price(market_id);
+    let market = read_perp_market(market_id).expect("market not listed");
+    let health = read_oracle_health(market_id);
+    assert!(
+        !health.circuit_broken
+            && health.confidence_bps <= market.max_oracle_confidence_bps
+            && health.spot_twap_deviation_bps <= market.max_execution_deviation_bps,
+        "oracle mark unsafe"
+    );
+    price
+}
+
 fn write_agent_position(agent_record_id: &str, position_id: &str, position: &AgentPosition) {
     let value = near_sdk::serde_json::to_vec(position).expect("serialize agent position");
     env::storage_write(
@@ -5181,6 +5035,7 @@ fn market_close_message(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn agent_market_open_message(
     agent_record_id: &str,
     position_id: &str,
@@ -7017,19 +6872,12 @@ mod tests {
     }
 
     #[test]
-    fn oracle_quorum_requires_two_distinct_signers() {
+    fn single_eoa_signer_can_publish_oracle_attestation() {
         let mut contract = setup("a1.near");
         configure_test_perp(&mut contract, &SigningKey::from_bytes(&[97; 32]));
-        let keys = [
-            SigningKey::from_bytes(&[101; 32]),
-            SigningKey::from_bytes(&[102; 32]),
-            SigningKey::from_bytes(&[103; 32]),
-        ];
-        contract.configure_oracle_quorum(
-            keys.iter()
-                .map(|key| key.verifying_key().to_bytes())
-                .collect(),
-        );
+        let oracle_secret = SecretKey::from_slice(&[141; 32]).unwrap();
+        let signer = test_eoa_address(&oracle_secret);
+        contract.configure_oracle_signer(signer);
         let attestation = OracleAttestation {
             market_id: "NVDA".to_string(),
             price: U128(10_000_000_000),
@@ -7041,11 +6889,10 @@ mod tests {
             expires_at_ms: NOW_MS + 30_000,
         };
         let message = contract.oracle_attestation_message(attestation.clone());
-        let signatures = keys[..2]
-            .iter()
-            .map(|key| Base64VecU8::from(key.sign(message.as_bytes()).to_bytes().to_vec()))
-            .collect();
-        contract.publish_market_price_quorum(attestation, signatures);
+        contract.publish_market_price_attestation(
+            attestation,
+            test_eoa_signature(&oracle_secret, &message),
+        );
         assert_eq!(
             read_market_price("NVDA").unwrap().price,
             U128(10_000_000_000)
@@ -7054,19 +6901,35 @@ mod tests {
     }
 
     #[test]
-    fn oracle_quorum_confirms_large_price_move_and_recovers_market() {
+    fn oracle_signer_rotation_waits_for_configuration_delay() {
+        let mut contract = setup("a1.near");
+        let first = SecretKey::from_slice(&[146; 32]).unwrap();
+        let second = SecretKey::from_slice(&[147; 32]).unwrap();
+        let first_address = test_eoa_address(&first);
+        let second_address = test_eoa_address(&second);
+        contract.configure_oracle_signer(first_address);
+        contract.configure_oracle_signer(second_address);
+
+        assert_eq!(contract.oracle_signer(), Some(first_address));
+        let ready_at = read_u64_storage(PERP_PENDING_ORACLE_SIGNER_AT_KEY);
+        assert!(ready_at >= NOW_MS + PERP_CONFIG_DELAY_MS);
+
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id("a1.near".parse().unwrap())
+            .block_timestamp(ready_at * 1_000_000);
+        testing_env!(context.build());
+        contract.apply_oracle_signer();
+        assert_eq!(contract.oracle_signer(), Some(second_address));
+    }
+
+    #[test]
+    fn single_eoa_oracle_confirms_large_price_move_and_recovers_market() {
         let mut contract = setup("a1.near");
         configure_test_perp(&mut contract, &SigningKey::from_bytes(&[97; 32]));
-        let keys = [
-            SigningKey::from_bytes(&[101; 32]),
-            SigningKey::from_bytes(&[102; 32]),
-            SigningKey::from_bytes(&[103; 32]),
-        ];
-        contract.configure_oracle_quorum(
-            keys.iter()
-                .map(|key| key.verifying_key().to_bytes())
-                .collect(),
-        );
+        let oracle_secret = SecretKey::from_slice(&[142; 32]).unwrap();
+        contract.configure_oracle_signer(test_eoa_address(&oracle_secret));
 
         let publish = |contract: &mut SharedLedger, price: u128, sequence: u64, round: &str| {
             let attestation = OracleAttestation {
@@ -7080,11 +6943,10 @@ mod tests {
                 expires_at_ms: NOW_MS + 30_000,
             };
             let message = contract.oracle_attestation_message(attestation.clone());
-            let signatures = keys[..2]
-                .iter()
-                .map(|key| Base64VecU8::from(key.sign(message.as_bytes()).to_bytes().to_vec()))
-                .collect();
-            contract.publish_market_price_quorum(attestation, signatures);
+            contract.publish_market_price_attestation(
+                attestation,
+                test_eoa_signature(&oracle_secret, &message),
+            );
         };
 
         publish(&mut contract, 10_000_000_000, 1, "stable-1");
@@ -7101,75 +6963,16 @@ mod tests {
             read_market_price("NVDA").unwrap().price,
             U128(13_000_000_000)
         );
-        assert!(read_json_storage::<MarketPrice>(&raw_key(
-            PERP_ORACLE_PENDING_JUMP_PREFIX,
-            &["NVDA"],
-        ))
-        .is_none());
     }
 
     #[test]
-    #[should_panic(expected = "market price is stale")]
-    fn global_risk_calculation_rejects_stale_marks_for_other_exposed_markets() {
+    #[should_panic(expected = "oracle EOA signature invalid")]
+    fn oracle_attestation_rejects_signature_from_other_eoa() {
         let mut contract = setup("a1.near");
         configure_test_perp(&mut contract, &SigningKey::from_bytes(&[97; 32]));
-        contract.configure_perp_market(PerpMarketConfig {
-            market_id: "MSFT".to_string(),
-            enabled: true,
-            close_only: false,
-            max_leverage_bps: 50_000,
-            maintenance_margin_bps: 500,
-            max_execution_deviation_bps: 1_000,
-            max_oracle_confidence_bps: 100,
-            max_position_usdc: U128(1_000_000),
-            max_market_oi_bps: 1_000,
-            max_market_skew_bps: 300,
-        });
-        write_market_price(&MarketPrice {
-            market_id: "NVDA".to_string(),
-            price: U128(10_000_000_000),
-            observed_at_ms: NOW_MS,
-            sequence: 1,
-        });
-        write_market_price(&MarketPrice {
-            market_id: "MSFT".to_string(),
-            price: U128(10_000_000_000),
-            observed_at_ms: NOW_MS + MAX_MARKET_PRICE_AGE_MS + 1,
-            sequence: 1,
-        });
-        write_perp_exposure(
-            &PerpExposure {
-                long_notional_usdc: U128(100_000),
-                long_entry_value: U128(1_000_000_000_000_000),
-                ..PerpExposure::default()
-            },
-            "NVDA",
-        );
-        let mut context = VMContextBuilder::new();
-        context
-            .current_account_id("a1.near".parse().unwrap())
-            .predecessor_account_id("a1.near".parse().unwrap())
-            .block_timestamp((NOW_MS + MAX_MARKET_PRICE_AGE_MS + 2) * 1_000_000);
-        testing_env!(context.build());
-
-        marked_global_exposure("MSFT", 10_000_000_000, true, 10_000);
-    }
-
-    #[test]
-    #[should_panic(expected = "oracle quorum signature invalid")]
-    fn oracle_quorum_rejects_repeating_one_signers_signature() {
-        let mut contract = setup("a1.near");
-        configure_test_perp(&mut contract, &SigningKey::from_bytes(&[98; 32]));
-        let keys = [
-            SigningKey::from_bytes(&[111; 32]),
-            SigningKey::from_bytes(&[112; 32]),
-            SigningKey::from_bytes(&[113; 32]),
-        ];
-        contract.configure_oracle_quorum(
-            keys.iter()
-                .map(|key| key.verifying_key().to_bytes())
-                .collect(),
-        );
+        let configured_secret = SecretKey::from_slice(&[143; 32]).unwrap();
+        let attacker_secret = SecretKey::from_slice(&[144; 32]).unwrap();
+        contract.configure_oracle_signer(test_eoa_address(&configured_secret));
         let attestation = OracleAttestation {
             market_id: "NVDA".to_string(),
             price: U128(10_000_000_000),
@@ -7181,8 +6984,74 @@ mod tests {
             expires_at_ms: NOW_MS + 30_000,
         };
         let message = contract.oracle_attestation_message(attestation.clone());
-        let signature = Base64VecU8::from(keys[0].sign(message.as_bytes()).to_bytes().to_vec());
-        contract.publish_market_price_quorum(attestation, vec![signature.clone(), signature]);
+        contract.publish_market_price_attestation(
+            attestation,
+            test_eoa_signature(&attacker_secret, &message),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "oracle mark unsafe")]
+    fn unsafe_oracle_mark_cannot_be_used_for_margin_or_pnl_settlement() {
+        let mut contract = setup("a1.near");
+        configure_test_perp(&mut contract, &SigningKey::from_bytes(&[97; 32]));
+        write_market_price(&MarketPrice {
+            market_id: "NVDA".to_string(),
+            price: U128(10_000_000_000),
+            observed_at_ms: NOW_MS,
+            sequence: 1,
+        });
+        write_oracle_health(
+            "NVDA",
+            &OracleHealth {
+                circuit_broken: true,
+                ..OracleHealth::default()
+            },
+        );
+        require_healthy_market_price("NVDA");
+    }
+
+    #[test]
+    #[should_panic(expected = "vault NAV is zero while LP shares remain outstanding")]
+    fn lp_cannot_mint_shares_against_zero_nav_with_old_shares_outstanding() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[145; 32]);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        fund_record(&mut contract, USER, 10_000, "zero-nav-lp-user");
+        write_lp_shares(USER, 100);
+        write_u128_storage(LP_TOTAL_SHARES_KEY, 100);
+        let expiry = EXPIRY_MS;
+        let message = format!(
+            "afterbell:v1\ncontract:a1.near\naction:deposit_vault\naccount:{}\namount:{}\nnonce:1\nexpires_at_ms:{}",
+            USER, 10_000, expiry
+        );
+        contract.deposit_vault(
+            USER.to_string(),
+            U128(10_000),
+            1,
+            expiry,
+            Base64VecU8::from(owner_key.sign(message.as_bytes()).to_bytes().to_vec()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_agent_market_open_cannot_bypass_perp_risk_controls() {
+        let mut contract = setup("a1.near");
+        contract.open_agent_market_position(
+            "agent:near:test-user:bot".to_string(),
+            "legacy-position".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(100_000),
+            20_000,
+            U128(10_000_000_000),
+            1,
+            100,
+            1,
+            EXPIRY_MS,
+            Base64VecU8::from(vec![0; 64]),
+        );
     }
 
     #[test]
@@ -7329,7 +7198,8 @@ mod tests {
     }
 
     #[test]
-    fn signed_price_updates_are_monotonic_and_feed_position_pnl() {
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_signed_price_updates_route_is_disabled() {
         let mut contract = setup(TOKEN);
         let user_key = SigningKey::from_bytes(&[41; 32]);
         let agent_key = SigningKey::from_bytes(&[42; 32]);
@@ -7511,8 +7381,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "market price exceeded signed slippage")]
-    fn rejects_agent_open_when_mark_exceeds_signed_slippage() {
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_slippage_open_route_is_disabled() {
         let mut contract = setup(TOKEN);
         let user_key = SigningKey::from_bytes(&[43; 32]);
         let agent_key = SigningKey::from_bytes(&[44; 32]);
@@ -7539,8 +7409,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "insufficient unreserved vault liquidity")]
-    fn price_aware_open_requires_funded_vault_capacity() {
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_market_open_route_is_disabled_without_new_engine_controls() {
         let mut contract = setup(TOKEN);
         let user_key = SigningKey::from_bytes(&[51; 32]);
         let agent_key = SigningKey::from_bytes(&[52; 32]);
@@ -7594,8 +7464,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid agent action signature")]
-    fn rejects_price_aware_open_signed_by_another_agent() {
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_market_open_route_cannot_be_used_by_another_agent() {
         let mut contract = setup(TOKEN);
         let user_key = SigningKey::from_bytes(&[45; 32]);
         let agent_key = SigningKey::from_bytes(&[46; 32]);
@@ -7722,8 +7592,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid agent action signature")]
-    fn agent_cannot_increase_position_size_after_signing() {
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_market_open_route_does_not_accept_amended_position_size() {
         let mut contract = setup(TOKEN);
         let user_key = SigningKey::from_bytes(&[68; 32]);
         let agent_key = SigningKey::from_bytes(&[69; 32]);
@@ -7770,7 +7640,8 @@ mod tests {
     }
 
     #[test]
-    fn failed_second_open_does_not_consume_reserved_vault_capacity_or_nonce() {
+    #[should_panic(expected = "legacy agent market trading is disabled")]
+    fn legacy_second_open_route_is_disabled() {
         use std::panic::{catch_unwind, AssertUnwindSafe};
 
         let mut contract = setup(TOKEN);
@@ -8256,6 +8127,25 @@ mod tests {
             expiry,
             Base64VecU8::from(signature.to_bytes().to_vec()),
         );
+    }
+
+    fn test_eoa_address(secret: &SecretKey) -> [u8; 20] {
+        let public_key = secp256k1::PublicKey::from_secret_key(&Secp256k1::new(), secret);
+        let address_hash = env::keccak256_array(&public_key.serialize_uncompressed()[1..]);
+        let mut address = [0; 20];
+        address.copy_from_slice(&address_hash[12..]);
+        address
+    }
+
+    fn test_eoa_signature(secret: &SecretKey, message: &str) -> Base64VecU8 {
+        let signature = Secp256k1::new().sign_ecdsa_recoverable(
+            &Message::from_slice(&eip191_digest(message)).unwrap(),
+            secret,
+        );
+        let (recovery_id, compact) = signature.serialize_compact();
+        let mut bytes = compact.to_vec();
+        bytes.push(recovery_id.to_i32() as u8 + 27);
+        Base64VecU8::from(bytes)
     }
 
     fn eip191_digest(message: &str) -> [u8; 32] {
