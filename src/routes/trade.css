@@ -272,7 +272,7 @@
 .share-card-profit { display: flex; align-items: baseline; gap: 8px; color: #4cdaa0; }
 .share-card-profit strong { font-size: clamp(21px, 5vw, 30px); font-weight: 620; letter-spacing: -.045em; }
 .share-card-profit span { font-size: 11px; }
-.share-card-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ffffff24; }
+.share-card-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin-top: 12px; padding-top: 12px; }
 .share-card-details div { display: grid; gap: 5px; }
 .share-card-details span { color: #83909e; font-size: 9px; }
 .share-card-details b { color: #dce4ec; font-size: 11px; font-weight: 700; }
