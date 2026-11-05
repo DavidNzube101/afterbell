@@ -1307,7 +1307,6 @@ impl SharedLedger {
         let vault_cash = self.balances.get(&vault_id).unwrap_or_default();
         let beneficiary_id = agent_config
             .as_ref()
-            .filter(|config| !config.enabled)
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
         let mut credit = margin_credit;
@@ -1567,7 +1566,6 @@ impl SharedLedger {
         let vault_balance = self.balances.get(&vault_id).unwrap_or_default();
         let beneficiary_id = agent_config
             .as_ref()
-            .filter(|config| !config.enabled)
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
         let mut user_credit = margin_credit;
@@ -1724,6 +1722,7 @@ impl SharedLedger {
     }
 
     pub fn claim_perp_deferred_profit(&mut self, account_id: String) -> U128 {
+        let storage_before = env::storage_usage();
         let owed = read_perp_deferred(&account_id);
         assert!(owed > 0, "nothing claimable");
         let cash = self
@@ -1735,11 +1734,14 @@ impl SharedLedger {
             .saturating_sub(read_vault_reserved_payout());
         let paid = owed.min(available);
         assert!(paid > 0, "vault has no free liquidity");
-        let balance = self.balances.get(&account_id).unwrap_or_default();
+        let beneficiary_id = read_agent_config(&account_id)
+            .map(|config| config.user_record_id)
+            .unwrap_or_else(|| account_id.clone());
+        let balance = self.balances.get(&beneficiary_id).unwrap_or_default();
         self.balances
             .insert(&SHARED_VAULT_RECORD_ID.to_string(), &(cash - paid));
         self.balances.insert(
-            &account_id,
+            &beneficiary_id,
             &balance.checked_add(paid).expect("balance overflow"),
         );
         write_perp_deferred(&account_id, owed - paid);
@@ -1747,6 +1749,7 @@ impl SharedLedger {
             PERP_DEFERRED_TOTAL_KEY,
             read_u128_storage(PERP_DEFERRED_TOTAL_KEY).saturating_sub(paid),
         );
+        settle_storage_credit(&beneficiary_id, storage_before);
         U128(paid)
     }
 
@@ -1802,7 +1805,6 @@ impl SharedLedger {
         let agent_config = read_agent_config(&account_id);
         let beneficiary_id = agent_config
             .as_ref()
-            .filter(|config| !config.enabled)
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
         let calculated_penalty =
@@ -5883,6 +5885,45 @@ mod tests {
             env::storage_byte_cost().as_yoctonear() * u128::from(claim_growth)
         );
         assert_eq!(read_perp_deferred(USER), 123_456);
+    }
+
+    #[test]
+    fn deferred_agent_profit_claim_is_credited_to_owning_user_record() {
+        let mut contract = setup(TOKEN);
+        let old_agent = "agent:near:test-user:old";
+        write_agent_config(
+            old_agent,
+            &AgentConfig {
+                user_record_id: USER.to_string(),
+                agent_record_id: old_agent.to_string(),
+                agent_key: OwnerKey::NearEd25519 {
+                    public_key: [7; 32],
+                },
+                allowed_markets: vec!["NVDA".to_string()],
+                max_position_usdc: U128(1_000),
+                max_open_notional_usdc: U128(1_000),
+                max_leverage_bps: 10_000,
+                max_allocation_usdc: U128(1_000),
+                max_daily_loss_usdc: U128(1_000),
+                expires_at_ms: EXPIRY_MS,
+                enabled: false,
+            },
+        );
+        write_agent_record(USER, "agent:near:test-user:new");
+        write_perp_deferred(old_agent, 500);
+        write_u128_storage(PERP_DEFERRED_TOTAL_KEY, 500);
+        contract
+            .balances
+            .insert(&SHARED_VAULT_RECORD_ID.to_string(), &1_000);
+        write_storage_credit(USER, 10_000_000_000_000_000_000_000_000);
+
+        assert_eq!(
+            contract.claim_perp_deferred_profit(old_agent.to_string()),
+            U128(500)
+        );
+        assert_eq!(contract.balance_of(USER.to_string()), U128(500));
+        assert_eq!(contract.balance_of(old_agent.to_string()), U128(0));
+        assert_eq!(read_perp_deferred(old_agent), 0);
     }
 
     #[test]
