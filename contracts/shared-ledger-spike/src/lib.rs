@@ -1868,15 +1868,6 @@ impl SharedLedger {
                     .expect("vault overflow"),
             );
         }
-        if keeper_reward != 0 {
-            let keeper_balance = self.balances.get(&keeper_record_id).unwrap_or_default();
-            self.balances.insert(
-                &keeper_record_id,
-                &keeper_balance
-                    .checked_add(keeper_reward)
-                    .expect("keeper reward overflow"),
-            );
-        }
         if pnl < 0 && pnl.unsigned_abs() > position.margin_usdc.0 {
             let shortfall = pnl.unsigned_abs() - position.margin_usdc.0;
             let covered = shortfall.min(read_u128_storage(PERP_INSURANCE_KEY));
@@ -1976,13 +1967,24 @@ impl SharedLedger {
                 read_agent_position_count(&account_id).saturating_sub(1),
             );
         }
-        settle_storage_credit(
+        settle_storage_credit_allow_subsidy(
             agent_config
                 .as_ref()
                 .map(|c| c.user_record_id.as_str())
                 .unwrap_or(&account_id),
             storage_before,
         );
+        if keeper_reward != 0 {
+            let keeper_storage_before = env::storage_usage();
+            let keeper_balance = self.balances.get(&keeper_record_id).unwrap_or_default();
+            self.balances.insert(
+                &keeper_record_id,
+                &keeper_balance
+                    .checked_add(keeper_reward)
+                    .expect("keeper reward overflow"),
+            );
+            settle_storage_credit_allow_subsidy(&keeper_record_id, keeper_storage_before);
+        }
         env::log_str(&format!("EVENT_JSON:{{\"standard\":\"afterbell\",\"version\":\"1.0.0\",\"event\":\"perp_liquidated\",\"data\":[{{\"account_id\":\"{}\",\"position_id\":\"{}\",\"keeper_record_id\":\"{}\",\"pnl_usdc\":\"{}\"}}]}}", account_id, position_id, keeper_record_id, pnl));
         U128(keeper_reward)
     }
@@ -3758,6 +3760,29 @@ fn settle_storage_credit(account_id: &str, storage_before: u64) {
             env::storage_remove(&credit_key);
         }
     }
+}
+
+/// Liquidation is permissionless and must not be blocked by a position
+/// owner's depleted storage credit. Charge available credit, with any small
+/// mandatory bookkeeping shortfall sponsored by the contract. Callers should
+/// meter unrelated records separately before invoking this helper.
+fn settle_storage_credit_allow_subsidy(account_id: &str, storage_before: u64) {
+    let storage_after = env::storage_usage();
+    if storage_after <= storage_before {
+        settle_storage_credit(account_id, storage_before);
+        return;
+    }
+    let Some(current) = env::storage_read(&storage_credit_storage_key(account_id))
+        .map(|_| read_storage_credit(account_id))
+    else {
+        return;
+    };
+    let bytes = storage_after - storage_before;
+    let cost = env::storage_byte_cost()
+        .as_yoctonear()
+        .checked_mul(u128::from(bytes))
+        .expect("storage cost overflow");
+    write_storage_credit(account_id, current.saturating_sub(cost));
 }
 
 fn read_vault_reserved_payout() -> u128 {
@@ -5866,6 +5891,18 @@ mod tests {
         assert!(env::storage_remove(b"a1:test:storage-fee"));
         settle_storage_credit(USER, before_release);
         assert_eq!(read_storage_credit(USER), starting_credit);
+    }
+
+    #[test]
+    fn liquidation_bookkeeping_does_not_require_depleted_user_storage_credit() {
+        let _contract = setup(TOKEN);
+        let storage_before = env::storage_usage();
+        env::storage_write(b"a1:test:liquidation-growth", &[1; 256]);
+
+        settle_storage_credit_allow_subsidy(USER, storage_before);
+
+        assert!(env::storage_read(b"a1:test:liquidation-growth").is_some());
+        assert_eq!(read_storage_credit(USER), 0);
     }
 
     #[test]
