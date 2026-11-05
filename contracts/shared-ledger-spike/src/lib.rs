@@ -740,31 +740,32 @@ impl SharedLedger {
         let pending_key = perp_market_key(PERP_PENDING_MARKET_PREFIX, &config.market_id);
         let current_config = read_perp_market(&config.market_id)
             .or_else(|| read_json_storage::<PerpMarketConfig>(&pending_key));
-        if !read_perp_market_ids().contains(&config.market_id) {
-            let mut ids = read_perp_market_ids();
-            assert!(ids.len() < MAX_PERP_MARKETS, "market capacity reached");
-            ids.push(config.market_id.clone());
-            write_perp_market_ids(&ids);
-        }
-        if let Some(current) = current_config {
-            let increases_risk = (config.enabled && !current.enabled)
-                || (config.max_leverage_bps > current.max_leverage_bps)
-                || (config.maintenance_margin_bps < current.maintenance_margin_bps)
-                || (config.max_execution_deviation_bps > current.max_execution_deviation_bps)
-                || (config.max_oracle_confidence_bps > current.max_oracle_confidence_bps)
-                || (config.max_position_usdc.0 > current.max_position_usdc.0)
-                || (config.max_market_oi_bps > current.max_market_oi_bps)
-                || (config.max_market_skew_bps > current.max_market_skew_bps)
-                || (current.close_only && !config.close_only);
-            if increases_risk {
-                write_json_storage(&pending_key, &config);
-                write_u64_storage(
-                    &perp_market_time_key(&config.market_id),
-                    env::block_timestamp() / 1_000_000 + PERP_MARKET_RISK_DELAY_MS,
-                );
-                return;
+        let increases_risk = match current_config {
+            Some(current) => {
+                (config.enabled && !current.enabled)
+                    || (config.max_leverage_bps > current.max_leverage_bps)
+                    || (config.maintenance_margin_bps < current.maintenance_margin_bps)
+                    || (config.max_execution_deviation_bps > current.max_execution_deviation_bps)
+                    || (config.max_oracle_confidence_bps > current.max_oracle_confidence_bps)
+                    || (config.max_position_usdc.0 > current.max_position_usdc.0)
+                    || (config.max_market_oi_bps > current.max_market_oi_bps)
+                    || (config.max_market_skew_bps > current.max_market_skew_bps)
+                    || (current.close_only && !config.close_only)
             }
+            // A market that does not exist yet has no safer active config to
+            // compare against. Stage its first enabled config just like an
+            // explicit disabled -> enabled transition.
+            None => config.enabled,
+        };
+        if increases_risk {
+            write_json_storage(&pending_key, &config);
+            write_u64_storage(
+                &perp_market_time_key(&config.market_id),
+                env::block_timestamp() / 1_000_000 + PERP_MARKET_RISK_DELAY_MS,
+            );
+            return;
         }
+        add_perp_market_id(&config.market_id);
         write_perp_market(&config);
         env::storage_remove(&pending_key);
         env::storage_remove(&perp_market_time_key(&config.market_id));
@@ -781,6 +782,7 @@ impl SharedLedger {
         let config: PerpMarketConfig =
             read_json_storage(&perp_market_key(PERP_PENDING_MARKET_PREFIX, &market_id))
                 .expect("pending config missing");
+        add_perp_market_id(&market_id);
         write_perp_market(&config);
         env::storage_remove(&perp_market_key(PERP_PENDING_MARKET_PREFIX, &market_id));
         env::storage_remove(&perp_market_time_key(&market_id));
@@ -3848,6 +3850,14 @@ fn read_perp_market(market_id: &str) -> Option<PerpMarketConfig> {
 fn write_perp_market(config: &PerpMarketConfig) {
     write_json_storage(&raw_key(PERP_MARKET_PREFIX, &[&config.market_id]), config);
 }
+fn add_perp_market_id(market_id: &str) {
+    let mut ids = read_perp_market_ids();
+    if !ids.iter().any(|id| id == market_id) {
+        assert!(ids.len() < MAX_PERP_MARKETS, "market capacity reached");
+        ids.push(market_id.to_string());
+        write_perp_market_ids(&ids);
+    }
+}
 fn perp_market_key(prefix: &[u8], market_id: &str) -> Vec<u8> {
     raw_key(prefix, &[market_id])
 }
@@ -6344,7 +6354,7 @@ mod tests {
     }
 
     fn configure_test_perp(contract: &mut SharedLedger, quote_key: &SigningKey) {
-        contract.configure_perp_market(PerpMarketConfig {
+        let config = PerpMarketConfig {
             market_id: "NVDA".to_string(),
             enabled: true,
             close_only: false,
@@ -6355,7 +6365,9 @@ mod tests {
             max_position_usdc: U128(1_000_000),
             max_market_oi_bps: 1_000,
             max_market_skew_bps: 300,
-        });
+        };
+        add_perp_market_id(&config.market_id);
+        write_perp_market(&config);
         contract.set_perp_quote_signer(OwnerKey::SolanaEd25519 {
             public_key: quote_key.verifying_key().to_bytes(),
         });
@@ -7088,6 +7100,38 @@ mod tests {
                 .maintenance_margin_bps,
             400
         );
+    }
+
+    #[test]
+    fn enabling_a_new_market_waits_for_delay() {
+        let mut contract = setup("a1.near");
+        contract.configure_perp_market(PerpMarketConfig {
+            market_id: "NVDA".to_string(),
+            enabled: true,
+            close_only: false,
+            max_leverage_bps: 50_000,
+            maintenance_margin_bps: 500,
+            max_execution_deviation_bps: 1_000,
+            max_oracle_confidence_bps: 100,
+            max_position_usdc: U128(1_000_000),
+            max_market_oi_bps: 1_000,
+            max_market_skew_bps: 300,
+        });
+
+        assert!(contract.perp_market("NVDA".to_string()).is_none());
+        assert!(!contract.perp_market_ids().contains(&"NVDA".to_string()));
+        let ready_at = read_u64_storage(&perp_market_time_key("NVDA"));
+        assert_eq!(ready_at, NOW_MS + PERP_MARKET_RISK_DELAY_MS);
+
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id("a1.near".parse().unwrap())
+            .block_timestamp(ready_at * 1_000_000);
+        testing_env!(context.build());
+        contract.apply_perp_market_config("NVDA".to_string());
+        assert!(contract.perp_market_ids().contains(&"NVDA".to_string()));
+        assert!(contract.perp_market("NVDA".to_string()).unwrap().enabled);
     }
 
     #[test]
