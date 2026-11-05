@@ -63,6 +63,7 @@ const PERP_BETA_CAP_KEY: &[u8] = b"afterbell:a1:perp:beta_cap";
 const PERP_ORACLE_HEALTH_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_health:";
 const PERP_ORACLE_PENDING_JUMP_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_pending_jump:";
 const PERP_DEFERRED_CLAIM_PREFIX: &[u8] = b"afterbell:a1:perp:deferred:";
+const PERP_UNPAID_FUNDING_REBATE_PREFIX: &[u8] = b"afterbell:a1:perp:unpaid_funding:";
 const PERP_DEFERRED_TOTAL_KEY: &[u8] = b"afterbell:a1:perp:deferred_total";
 const LP_SHARE_PREFIX: &[u8] = b"afterbell:a1:lp:shares:";
 const LP_TOTAL_SHARES_KEY: &[u8] = b"afterbell:a1:lp:total_shares";
@@ -1530,6 +1531,7 @@ impl SharedLedger {
             .as_ref()
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
+        defer_unpaid_funding_rebate(&account_id, &position_id, &deferred_beneficiary_id);
         let credit_record_id = agent_config
             .as_ref()
             .filter(|config| config.enabled)
@@ -2037,6 +2039,7 @@ impl SharedLedger {
             .as_ref()
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
+        defer_unpaid_funding_rebate(&account_id, &position_id, &beneficiary_id);
         let calculated_penalty =
             crate::engine_math::fee_ceil(current_notional, PERP_LIQUIDATION_PENALTY_BPS)
                 .expect("penalty overflow")
@@ -4188,6 +4191,10 @@ fn delete_perp_position(account_id: &str, position_id: &str) {
             );
         }
     }
+    env::storage_remove(&raw_key(
+        PERP_UNPAID_FUNDING_REBATE_PREFIX,
+        &[account_id, position_id],
+    ));
     env::storage_remove(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]));
 }
 fn perp_position_index_entry(account_id: &str, position_id: &str) -> String {
@@ -4235,6 +4242,39 @@ fn read_perp_deferred(account_id: &str) -> u128 {
 }
 fn write_perp_deferred(account_id: &str, amount: u128) {
     write_u128_storage(&raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[account_id]), amount);
+}
+fn read_unpaid_funding_rebate(account_id: &str, position_id: &str) -> u128 {
+    read_u128_storage(&raw_key(
+        PERP_UNPAID_FUNDING_REBATE_PREFIX,
+        &[account_id, position_id],
+    ))
+}
+fn write_unpaid_funding_rebate(account_id: &str, position_id: &str, amount: u128) {
+    let key = raw_key(PERP_UNPAID_FUNDING_REBATE_PREFIX, &[account_id, position_id]);
+    if amount == 0 {
+        env::storage_remove(&key);
+    } else {
+        write_u128_storage(&key, amount);
+    }
+}
+fn defer_unpaid_funding_rebate(account_id: &str, position_id: &str, beneficiary_id: &str) {
+    let unpaid = read_unpaid_funding_rebate(account_id, position_id);
+    if unpaid == 0 {
+        return;
+    }
+    write_perp_deferred(
+        beneficiary_id,
+        read_perp_deferred(beneficiary_id)
+            .checked_add(unpaid)
+            .expect("deferred funding rebate overflow"),
+    );
+    write_u128_storage(
+        PERP_DEFERRED_TOTAL_KEY,
+        read_u128_storage(PERP_DEFERRED_TOTAL_KEY)
+            .checked_add(unpaid)
+            .expect("deferred funding rebate overflow"),
+    );
+    write_unpaid_funding_rebate(account_id, position_id, 0);
 }
 fn read_lp_shares(account_id: &str) -> u128 {
     read_u128_storage(&raw_key(LP_SHARE_PREFIX, &[account_id]))
@@ -4492,11 +4532,24 @@ fn settle_position_funding(position: &mut PerpPosition, balances: &mut LookupMap
             PERP_INSURANCE_KEY,
             read_u128_storage(PERP_INSURANCE_KEY).saturating_add(reserve),
         );
-    } else if amount_signed < 0 {
-        let amount = amount_signed.unsigned_abs();
-        // Rebate funding is limited to insurance, so funding recipients can
-        // never make the shared vault insolvent.
-        let rebate = amount.min(read_u128_storage(PERP_INSURANCE_KEY));
+    }
+    let accrued_rebate = if amount_signed < 0 {
+        amount_signed.unsigned_abs()
+    } else {
+        0
+    };
+    let rebate_due = read_unpaid_funding_rebate(&position.account_id, &position.position_id)
+        .checked_add(accrued_rebate)
+        .expect("funding rebate overflow");
+    if rebate_due > 0 {
+        // Pay only what insurance can fund and retain the remainder against
+        // this position. Settlement order must not erase earned rebates.
+        let rebate = rebate_due.min(read_u128_storage(PERP_INSURANCE_KEY));
+        write_unpaid_funding_rebate(
+            &position.account_id,
+            &position.position_id,
+            rebate_due - rebate,
+        );
         position.margin_usdc = U128(position.margin_usdc.0.saturating_add(rebate));
         if read_agent_config(&position.account_id).is_some() {
             write_agent_reserved_margin(
@@ -7826,6 +7879,46 @@ mod tests {
         assert_eq!(position.margin_usdc, U128(99_900));
         assert_eq!(contract.vault_balance().0, vault_before + 100);
         assert_eq!(contract.perp_total_margin(), U128(99_900));
+    }
+
+    #[test]
+    fn funding_rebate_shortfall_is_carried_until_insurance_can_pay_it() {
+        let mut contract = setup(TOKEN);
+        fund_record(&mut contract, SHARED_VAULT_RECORD_ID, 1_000, "funding-arrears-vault");
+        write_u128_storage(PERP_INSURANCE_KEY, 10);
+        write_u128_storage(PERP_TOTAL_MARGIN_KEY, 100);
+        write_perp_exposure(
+            &PerpExposure {
+                short_funding_index: U128((-36_000_000_000_i128) as u128),
+                funding_updated_at_ms: NOW_MS,
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        let mut position = PerpPosition {
+            account_id: USER.to_string(),
+            position_id: "funding-arrears-position".to_string(),
+            market_id: "NVDA".to_string(),
+            is_long: false,
+            notional_usdc: U128(100),
+            margin_usdc: U128(100),
+            entry_price: U128(1),
+            opened_at_ms: NOW_MS,
+            funding_index: U128(0),
+            funding_remainder: 0,
+        };
+        write_perp_position(&USER.to_string(), &position.position_id, &position);
+
+        settle_position_funding(&mut position, &mut contract.balances);
+        assert_eq!(position.margin_usdc, U128(110));
+        assert_eq!(read_unpaid_funding_rebate(USER, &position.position_id), 90);
+        assert_eq!(read_u128_storage(PERP_INSURANCE_KEY), 0);
+
+        write_u128_storage(PERP_INSURANCE_KEY, 100);
+        settle_position_funding(&mut position, &mut contract.balances);
+        assert_eq!(position.margin_usdc, U128(200));
+        assert_eq!(read_unpaid_funding_rebate(USER, &position.position_id), 0);
+        assert_eq!(read_u128_storage(PERP_INSURANCE_KEY), 10);
     }
 
     #[test]
