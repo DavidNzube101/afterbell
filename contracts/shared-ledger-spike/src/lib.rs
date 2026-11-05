@@ -7783,14 +7783,39 @@ mod tests {
 
         let request_message = format!(
             "afterbell:v1\ncontract:a1.near\naction:request_vault_withdrawal\naccount:{}\namount:{}:{}\nnonce:2\nexpires_at_ms:{}",
-            USER, 1_000_000, 0, deposit_expiry
+            USER, 1_000_000, 1_000_000, deposit_expiry
         );
         let request_signature = owner_key.sign(request_message.as_bytes());
         contract.request_vault_withdrawal(
             USER.to_string(),
             U128(1_000_000),
-            U128(0),
+            U128(1_000_000),
             2,
+            deposit_expiry,
+            Base64VecU8::from(request_signature.to_bytes().to_vec()),
+        );
+        let cancel_message = format!(
+            "afterbell:v1\ncontract:a1.near\naction:cancel_vault_withdrawal\naccount:{}\namount:\nnonce:3\nexpires_at_ms:{}",
+            USER, deposit_expiry
+        );
+        let cancel_signature = owner_key.sign(cancel_message.as_bytes());
+        contract.cancel_vault_withdrawal(
+            USER.to_string(),
+            3,
+            deposit_expiry,
+            Base64VecU8::from(cancel_signature.to_bytes().to_vec()),
+        );
+        assert!(read_lp_withdrawal(USER).is_none());
+        let request_message = format!(
+            "afterbell:v1\ncontract:a1.near\naction:request_vault_withdrawal\naccount:{}\namount:{}:{}\nnonce:4\nexpires_at_ms:{}",
+            USER, 1_000_000, 1_000_000, deposit_expiry
+        );
+        let request_signature = owner_key.sign(request_message.as_bytes());
+        contract.request_vault_withdrawal(
+            USER.to_string(),
+            U128(1_000_000),
+            U128(1_000_000),
+            4,
             deposit_expiry,
             Base64VecU8::from(request_signature.to_bytes().to_vec()),
         );
