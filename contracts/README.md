@@ -4,7 +4,7 @@ NEAR contract workspace for Afterbell. The product model is one shared NEAR
 contract account with isolated logical user and agent records. A1 does not
 create per-user contracts or use a factory.
 
-## Current A1 implementation status (4 Nov 2026)
+## Current A1 implementation status (5 Nov 2026)
 
 The current local `shared-ledger-spike/` source extends the earlier deposit and
 withdrawal prototype with the A1 trading and LP accounting foundation. It now
@@ -13,12 +13,13 @@ single EOA-signed oracle attestations, freshness/deviation circuit breakers,
 owner and agent logical-record positions, isolated margin, partial/full closes,
 funding, liquidation, insurance and bad-debt accounting, deferred profit
 claims, LP shares with a 24-hour withdrawal queue, delayed risk increases,
-storage-credit metering, per-agent daily realized-loss limits, and
-NEAR/Solana/Ethereum owner-signature verification. Daily loss caps are included
-in the user-signed agent policy, reset at UTC midnight, and block new agent
-opens after the cap while leaving closes/reductions available. The current Rust
-suite has 75 unit tests. The latest optimized WASM is 644,260 bytes
-(SHA-256 `0c4050061b1f0f9c33845fa2a4ae41ef97cd134e2b13841a324518106d418bc8`).
+storage-credit metering, per-agent daily loss limits, and
+NEAR/Solana/Ethereum owner-signature verification. Agent daily loss accounting
+includes paid trading and funding costs and reserves open margin against the
+remaining daily loss budget. Limits reset at UTC midnight and block new agent
+opens after the cap while leaving closes/reductions available. The current A1
+Rust suite has 92 unit tests. The standalone smart-account and account-factory
+crates are historical experiments outside the shared-account product design.
 
 Large oracle price jumps are staged and require a second observation from a
 different source round after a five-minute confirmation delay. This describes
