@@ -187,6 +187,13 @@ const riskDisclosureSections = [
   { title: 'No guarantees; access restrictions', body: 'Trading involves substantial risk and may not be suitable for you. Do not trade with funds you cannot afford to lose. Past performance does not predict future results, and no strategy, agent or protocol feature guarantees profit or prevents loss. Use of Afterbell is subject to applicable laws and geographic restrictions; do not access the service where it is prohibited.' },
 ]
 
+type SharedPosition = { ticker: string; side: 'Long' | 'Short'; size: string; margin: string; leverage: string; entry: string; mark: string; pnl: string; change: string }
+
+const mockPositions: SharedPosition[] = [
+  { ticker: 'NVDA', side: 'Long', size: '$1,240.00', margin: '$413.33', leverage: '3.0×', entry: '$139.42', mark: '$142.87', pnl: '+$30.69', change: '+7.43%' },
+  { ticker: 'META', side: 'Short', size: '$760.00', margin: '$380.00', leverage: '2.0×', entry: '$719.10', mark: '$712.66', pnl: '+$6.81', change: '+1.79%' },
+]
+
 function TradingPage() {
   const { market: selectedTicker, side: initialSide } = Route.useSearch()
   const [marketIndex, setMarketIndex] = useState(() => Math.max(0, markets.findIndex(item => item.ticker === selectedTicker)))
@@ -201,6 +208,8 @@ function TradingPage() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notifications, setNotifications] = useState(initialNotifications)
   const [riskOpen, setRiskOpen] = useState(false)
+  const [sharePosition, setSharePosition] = useState<SharedPosition | null>(null)
+  const [shareNotice, setShareNotice] = useState('')
   const [notice, setNotice] = useState('')
   const [orderWidth, setOrderWidth] = useState(342)
   const [chartHeight, setChartHeight] = useState(485)
@@ -210,13 +219,37 @@ function TradingPage() {
   const positionValue = Number(payment || 0) * leverage
 
   useEffect(() => {
-    if (!notificationsOpen && !riskOpen) return
+    if (!notificationsOpen && !riskOpen && !sharePosition) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setNotificationsOpen(false); setRiskOpen(false) }
+      if (event.key === 'Escape') { setNotificationsOpen(false); setRiskOpen(false); setSharePosition(null); setShareNotice('') }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [notificationsOpen, riskOpen])
+  }, [notificationsOpen, riskOpen, sharePosition])
+
+  function tradeShareText(position: SharedPosition) {
+    return `${position.ticker} ${position.side} · ${position.pnl} (${position.change}) · ${position.leverage} leverage · Entry ${position.entry} · Mark ${position.mark}`
+  }
+
+  async function copyTradeDetails() {
+    if (!sharePosition) return
+    try {
+      await navigator.clipboard.writeText(`${tradeShareText(sharePosition)}\n${window.location.origin}`)
+      setShareNotice('Trade details copied')
+    } catch {
+      setShareNotice('Could not copy trade details')
+    }
+  }
+
+  async function shareTrade() {
+    if (!sharePosition) return
+    if (!navigator.share) { await copyTradeDetails(); return }
+    try {
+      await navigator.share({ title: `${sharePosition.ticker} ${sharePosition.side} trade`, text: tradeShareText(sharePosition), url: window.location.origin })
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') setShareNotice('Could not open sharing options')
+    }
+  }
 
   function startResize(axis: 'x' | 'y', event: ReactPointerEvent<HTMLButtonElement>, initial: number) {
     event.preventDefault()
@@ -264,8 +297,7 @@ function TradingPage() {
           <div className="positions-panel">
             <div className="positions-heading"><div className="position-tabs">{['Positions', 'Open orders', 'History'].map(tab => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}{tab === 'Positions' && <span className="tab-count">2</span>}</button>)}</div></div>
             <div className="position-table-wrap"><table className="position-table"><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>Margin</th><th>Leverage</th><th>Entry price</th><th>Mark price</th><th>Unrealized PnL</th><th/></tr></thead><tbody>
-              <tr><td><span className="table-market"><span className="stock-avatar tiny"><TickerIcon ticker="NVDA" size={13}/></span><b>NVDA</b><small>US equity</small></span></td><td><span className="long-side">↗ Long</span></td><td>$1,240.00</td><td>$413.33</td><td>3.0×</td><td>$139.42</td><td>$142.87</td><td><span className="green-pnl">+$30.69 <small>(+7.43%)</small></span></td><td><button className="close-position" onClick={() => setNotice('Position closing will be available when trading is connected.')}>Close</button></td></tr>
-              <tr><td><span className="table-market"><span className="stock-avatar tiny"><TickerIcon ticker="META" size={13}/></span><b>META</b><small>US equity</small></span></td><td><span className="short-side">↘ Short</span></td><td>$760.00</td><td>$380.00</td><td>2.0×</td><td>$719.10</td><td>$712.66</td><td><span className="green-pnl">+$6.81 <small>(+1.79%)</small></span></td><td><button className="close-position" onClick={() => setNotice('Position closing will be available when trading is connected.')}>Close</button></td></tr>
+              {mockPositions.map(position => <tr key={position.ticker}><td><span className="table-market"><span className="stock-avatar tiny"><TickerIcon ticker={position.ticker} size={13}/></span><b>{position.ticker}</b><small>US equity</small></span></td><td><span className={position.side === 'Long' ? 'long-side' : 'short-side'}>{position.side === 'Long' ? '↗' : '↘'} {position.side}</span></td><td>{position.size}</td><td>{position.margin}</td><td>{position.leverage}</td><td>{position.entry}</td><td>{position.mark}</td><td><span className="green-pnl">{position.pnl} <small>({position.change})</small></span></td><td><div className="position-actions"><button className="share-position" aria-label={`Share ${position.ticker} trade`} onClick={() => { setSharePosition(position); setShareNotice('') }}>Share</button><button className="close-position" onClick={() => setNotice('Position closing will be available when trading is connected.')}>Close</button></div></td></tr>)}
             </tbody></table></div>
             {notice && <div className="trade-notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
           </div>
@@ -291,5 +323,6 @@ function TradingPage() {
     {notificationsOpen && <><button className="drawer-backdrop" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}/><aside className="notification-drawer" aria-label="Notifications"><div className="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button className="drawer-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div><div className="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={notifications.length === 0} onClick={() => setNotifications([])}>Clear all</button></div><div className="notification-list">{notifications.map(item => <article className="notification-item" key={item.id}><div className="notification-body"><div className="notification-title-row"><h3>{item.title}</h3><time>{item.time}</time></div><p>{item.message}</p></div><button className="notification-delete" aria-label="Delete notification" title="Delete notification" onClick={() => setNotifications(current => current.filter(notification => notification.id !== item.id))}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></button></article>)}{notifications.length === 0 && <div className="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>}</div></aside></>}
 
     {riskOpen && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRiskOpen(false) }}><section className="risk-modal" role="dialog" aria-modal="true" aria-labelledby="risk-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">PLEASE READ BEFORE TRADING</span><h2 id="risk-title">Risk disclosure</h2><p>Understand the product and its risks before you trade.</p></div><button className="drawer-close" aria-label="Close risk disclosure" onClick={() => setRiskOpen(false)}>×</button></header><div className="risk-modal-content">{riskDisclosureSections.map(section => <section key={section.title}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div><footer className="risk-modal-footer"><span>Questions? Visit our documentation.</span><button onClick={() => setRiskOpen(false)}>I understand</button></footer></section></div>}
+    {sharePosition && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) { setSharePosition(null); setShareNotice('') } }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">TRADE CARD</span><h2 id="share-title">Share your trade</h2><p>A snapshot of this position, ready to share.</p></div><button className="drawer-close" aria-label="Close share trade dialog" onClick={() => { setSharePosition(null); setShareNotice('') }}>×</button></header><div className="share-modal-content"><article className="share-trade-card"><div className="share-card-brand"><img src={logo} alt=""/><span>Afterbell</span><span className={`share-card-side ${sharePosition.side.toLowerCase()}`}>{sharePosition.side}</span></div><div className="share-card-market"><span className="stock-avatar"><TickerIcon ticker={sharePosition.ticker} size={20}/></span><div><b>{sharePosition.ticker}</b><small>US equity</small></div></div><div className="share-card-profit"><strong>{sharePosition.pnl}</strong><span>{sharePosition.change}</span></div><div className="share-card-details"><div><span>Position size</span><b>{sharePosition.size}</b></div><div><span>Leverage</span><b>{sharePosition.leverage}</b></div><div><span>Entry price</span><b>{sharePosition.entry}</b></div><div><span>Mark price</span><b>{sharePosition.mark}</b></div></div><div className="share-card-footer">afterbellfx.xyz <span>Perpetual equity exposure</span></div></article>{shareNotice && <p className="share-notice" role="status">{shareNotice}</p>}</div><footer className="share-modal-footer"><button className="share-copy-button" onClick={() => void copyTradeDetails()}>Copy details</button><button className="share-action-button" onClick={() => void shareTrade()}>Share trade</button></footer></section></div>}
   </main>
 }

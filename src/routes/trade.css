@@ -128,8 +128,11 @@
 .short-side { color: #fa8790; }
 .green-pnl { display: inline-grid; gap: 3px; color: var(--trade-green); font-weight: 550; }
 .green-pnl small { color: #7c9d90; font-size: 9px; font-weight: 400; }
-.close-position { padding: 5px 8px; border: 1px solid #31404f; border-radius: 6px; background: transparent; color: #aeb9c5 !important; font-size: 9px; }
-.close-position:hover { border-color: #d66f78; color: #ff9299 !important; }
+.position-actions { display: inline-flex; align-items: center; gap: 6px; }
+.share-position { padding: 5px 8px; border: 1px solid #141f2b; border-radius: 6px; background: #141f2b; color: #a9cfff !important; font-size: 9px; }
+.share-position:hover { border-color: #203653; background: #203653; color: #d7eaff !important; }
+.close-position { padding: 5px 8px; border: 1px solid #2a171d; border-radius: 6px; background: #2a171d; color: #ff9ba5 !important; font-size: 9px; }
+.close-position:hover { border-color: #3a2028; background: #3a2028; color: #ffb1b8 !important; }
 .order-card { position: sticky; top: 80px; align-self: start; margin-left: 10px; padding: 16px; }
 .order-card-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .order-card-heading h1 { margin: 0; font-size: 14px; font-weight: 600; }
@@ -246,6 +249,36 @@
 .risk-modal-footer { min-height: 61px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 27px; border-top: 1px solid #222e3a; color: #7e8a98; font-size: 10px; }
 .risk-modal-footer button { padding: 9px 16px; border: 0; border-radius: 8px; background: #0065d2; color: white; font-size: 10px; font-weight: 600; }
 .risk-modal-footer button:hover { background: #1579e5; }
+.share-modal { width: min(440px, 100%); max-height: min(760px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: auto; border: 1px solid #2b3744; border-radius: 16px; background: #10161e; box-shadow: 0 28px 90px #0009; animation: modal-in 170ms cubic-bezier(.2,.8,.2,1) both; }
+.share-modal .risk-modal-header { padding: 21px 23px 17px; }
+.share-modal .risk-modal-header h2 { font-size: 20px; }
+.share-modal-content { padding: 20px 23px 12px; }
+.share-trade-card { padding: 19px; overflow: hidden; border: 1px solid #1b2b3c; border-radius: 14px; background: radial-gradient(ellipse at 100% 0%, #102b48 0, transparent 48%), linear-gradient(145deg, #141d28, #0d131b 72%); }
+.share-card-brand { display: flex; align-items: center; gap: 7px; color: #e7edf4; font-size: 11px; font-weight: 600; }
+.share-card-brand img { width: 19px; height: 19px; object-fit: contain; }
+.share-card-side { margin-left: auto; padding: 5px 8px; border-radius: 6px; font-size: 9px; font-weight: 600; }
+.share-card-side.long { background: #102d26; color: #54dba8; }
+.share-card-side.short { background: #301b21; color: #ff9ba5; }
+.share-card-market { display: flex; align-items: center; gap: 10px; margin-top: 25px; }
+.share-card-market > div { display: grid; gap: 3px; }
+.share-card-market b { color: #f0f4f8; font-size: 16px; }
+.share-card-market small { color: #8190a0; font-size: 9px; }
+.share-card-profit { display: flex; align-items: baseline; gap: 8px; margin-top: 19px; color: #4cdaa0; }
+.share-card-profit strong { font-size: 29px; font-weight: 620; letter-spacing: -.045em; }
+.share-card-profit span { font-size: 11px; }
+.share-card-details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin-top: 20px; padding-top: 17px; border-top: 1px solid #202c39; }
+.share-card-details div { display: grid; gap: 5px; }
+.share-card-details span { color: #83909e; font-size: 9px; }
+.share-card-details b { color: #dce4ec; font-size: 11px; font-weight: 550; }
+.share-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 21px; color: #80baff; font-size: 9px; }
+.share-card-footer span { color: #778595; }
+.share-notice { margin: 12px 0 0; color: #9cc8f8; font-size: 10px; }
+.share-modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 23px 20px; }
+.share-modal-footer button { padding: 9px 14px; border-radius: 8px; font-size: 10px; font-weight: 550; }
+.share-copy-button { border: 1px solid #263443; background: #151e28; color: #c5d0db !important; }
+.share-copy-button:hover { border-color: #354a60; background: #1b2937; }
+.share-action-button { border: 1px solid #0065d2; background: #0065d2; color: white !important; }
+.share-action-button:hover { border-color: #1579e5; background: #1579e5; }
 .mobile-trade-wip { display: none; }
 
 @media (min-width: 1500px) {
@@ -284,9 +317,13 @@
   .risk-modal-header { padding: 18px 17px 15px; }
   .risk-modal-content { padding: 3px 17px; }
   .risk-modal-footer { padding: 10px 17px; }
+  .share-modal { max-height: calc(100dvh - 20px); border-radius: 13px; }
+  .share-modal .risk-modal-header { padding: 18px 17px 15px; }
+  .share-modal-content { padding: 16px 17px 8px; }
+  .share-modal-footer { padding: 12px 17px 17px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .trade-app *, .trade-app *::before, .trade-app *::after { transition-duration: .01ms !important; }
-  .market-menu, .notification-drawer, .drawer-backdrop, .risk-modal, .risk-modal-backdrop { animation-duration: .01ms !important; }
+  .market-menu, .notification-drawer, .drawer-backdrop, .risk-modal, .share-modal, .risk-modal-backdrop { animation-duration: .01ms !important; }
 }
