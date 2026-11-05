@@ -48,6 +48,9 @@ contracts/deployer/
 landing-server/
 # Local project goals and working notes
 /goal.md
+contract_audit_report.md
+contracts/contract_audit_report_v2.md
+contracts/contract_audit_report_v3.md
 **/.near-credentials/
 **/near-cli/
 *.seed

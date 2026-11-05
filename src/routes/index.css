@@ -1,0 +1,165 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #f4f6f8;
+  background: #0c1016;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-width: 320px; min-height: 100%; margin: 0; }
+body { min-height: 100vh; }
+button, a { font: inherit; }
+
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(390px, 0.88fr) minmax(0, 1.12fr);
+  gap: 14px;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px;
+  background: #0c1016;
+}
+
+.auth-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(28px, 4vw, 58px);
+}
+
+.brand {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 11px;
+  color: #f4f6f8;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  text-decoration: none;
+}
+
+.brand-mark { display: block; width: 31px; height: 31px; object-fit: contain; }
+
+.auth-content {
+  width: min(100%, 420px);
+  align-self: center;
+  margin: 50px auto;
+}
+
+.auth-content h1 {
+  margin: 0;
+  color: #f4f6f8;
+  font-size: clamp(30px, 3.2vw, 42px);
+  font-weight: 600;
+  letter-spacing: -0.055em;
+  line-height: 1.12;
+}
+
+.auth-subtitle { margin: 13px 0 32px; color: #929ba7; font-size: 15px; line-height: 1.6; }
+
+.connect-button {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 9px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: #0065d2;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.connect-button:hover { background: #0b70df; }
+.connect-button:active { transform: translateY(1px); }
+.connect-button:focus-visible { outline: 3px solid #4a9cff; outline-offset: 3px; }
+.connect-button > svg:first-child { width: 18px; height: 18px; }
+
+.wallet-note { margin: 17px 0 0; color: #737e8b; font-size: 12px; }
+.auth-footer { color: #697482; font-size: 12px; }
+
+.art-panel {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  place-items: center;
+  padding: clamp(24px, 5vw, 72px);
+  border: 1px solid #242c36;
+  border-radius: 18px;
+  background: #080c11;
+  isolation: isolate;
+}
+
+.art-glow {
+  position: absolute;
+  z-index: -1;
+  width: min(70vw, 670px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #0065d2;
+  opacity: .1;
+  filter: blur(120px);
+}
+
+.market-art {
+  display: block;
+  width: min(100%, 700px);
+  max-height: 100%;
+  border-radius: 3px;
+  box-shadow: 0 26px 90px #0008;
+}
+
+.art-tile { cursor: default; }
+.art-tile > rect:first-child { transition: fill 180ms ease; }
+.art-tile-shape {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 220ms cubic-bezier(.2, .8, .2, 1), filter 220ms ease;
+}
+.art-tile:hover > rect:first-child { fill: #14243a; }
+.art-tile:hover .art-tile-shape {
+  transform: scale(1.13) rotate(-5deg);
+  filter: drop-shadow(0 0 8px #0065d2aa);
+}
+
+@media (max-width: 760px) {
+  .auth-layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) clamp(110px, 28dvh, 230px); gap: 8px; padding: 8px; }
+  .auth-panel { min-height: 0; padding: 22px 20px; }
+  .auth-content { margin: 0 auto; }
+  .auth-content h1 { font-size: clamp(29px, 8vw, 38px); }
+  .auth-subtitle { margin: 10px 0 25px; }
+  .art-panel { min-height: 0; padding: 18px 38px 34px; border-radius: 14px; }
+  .market-art { width: auto; height: 100%; max-width: 100%; max-height: 100%; }
+}
+
+@media (max-width: 390px) {
+  .auth-layout { grid-template-rows: minmax(0, 1fr) clamp(100px, 23dvh, 190px); }
+  .auth-panel { padding: 20px 16px; }
+}
+
+@media (max-height: 620px) {
+  .auth-panel { padding-top: 16px; padding-bottom: 16px; }
+  .auth-content h1 { font-size: clamp(25px, 3vw, 32px); }
+  .auth-subtitle { margin-top: 8px; margin-bottom: 18px; }
+  .wallet-note { margin-top: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  .art-tile:hover .art-tile-shape { transform: none; }
+}
