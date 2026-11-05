@@ -4261,7 +4261,7 @@ fn marked_global_exposure(
     added_notional: u128,
 ) -> (u128, i128) {
     let mut gross = 0u128;
-    let mut net = 0i128;
+    let mut directional_skew = 0i128;
     for market_id in read_perp_market_ids() {
         let exposure = read_perp_exposure(&market_id);
         if market_id != target_market
@@ -4299,12 +4299,14 @@ fn marked_global_exposure(
             .checked_add(long)
             .and_then(|value| value.checked_add(short))
             .expect("global marked OI overflow");
-        net = net
-            .checked_add(i128::try_from(long).expect("global exposure exceeds signed range"))
-            .and_then(|value| value.checked_sub(i128::try_from(short).ok()?))
-            .expect("global marked net overflow");
+        directional_skew = directional_skew
+            .checked_add(
+                i128::try_from(long.abs_diff(short))
+                    .expect("global directional exposure exceeds signed range"),
+            )
+            .expect("global directional exposure overflow");
     }
-    (gross, net)
+    (gross, directional_skew)
 }
 
 fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
@@ -5451,6 +5453,56 @@ mod tests {
             exposure_pnl(100, first_base, 200, true) + exposure_pnl(100, second_base, 200, true),
             100
         );
+    }
+
+    #[test]
+    fn global_directional_exposure_does_not_offset_unrelated_markets() {
+        let contract = setup("a1.near");
+        let config = PerpMarketConfig {
+            market_id: "NVDA".to_string(),
+            enabled: true,
+            close_only: false,
+            max_leverage_bps: 50_000,
+            maintenance_margin_bps: 500,
+            max_execution_deviation_bps: 1_000,
+            max_oracle_confidence_bps: 100,
+            max_position_usdc: U128(1_000_000),
+            max_market_oi_bps: 1_000,
+            max_market_skew_bps: 300,
+        };
+        let mut other_market = config.clone();
+        other_market.market_id = "TSLA".to_string();
+        for market in [&config, &other_market] {
+            add_perp_market_id(&market.market_id);
+            write_perp_market(market);
+            write_market_price(&MarketPrice {
+                market_id: market.market_id.clone(),
+                price: U128(100),
+                observed_at_ms: NOW_MS,
+                sequence: 1,
+            });
+        }
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: U128(100),
+                long_base_units: U128(PERP_BASE_UNITS_SCALE),
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        write_perp_exposure(
+            &PerpExposure {
+                short_notional_usdc: U128(100),
+                short_base_units: U128(PERP_BASE_UNITS_SCALE),
+                ..PerpExposure::default()
+            },
+            "TSLA",
+        );
+
+        let (_, directional_skew) = marked_global_exposure("NVDA", 100, true, 0);
+
+        assert_eq!(directional_skew, 200);
+        assert_eq!(contract.perp_market_ids().len(), 2);
     }
 
     fn deposit_msg(id: &str, account_id: &str) -> String {
