@@ -3314,6 +3314,11 @@ impl SharedLedger {
             "price-aware positions require market close"
         );
         let config = read_agent_config(&agent_record_id).expect("agent config is missing");
+        assert!(config.enabled, "agent is disabled");
+        assert!(
+            env::block_timestamp() / 1_000_000 < config.expires_at_ms,
+            "agent authorization expired"
+        );
         assert_valid_agent_action_expiry(expires_at_ms);
         assert!(
             expires_at_ms <= config.expires_at_ms,
@@ -9397,6 +9402,39 @@ mod tests {
             expiry,
             nonce,
             Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "agent is disabled")]
+    fn revoked_agent_key_cannot_close_legacy_positions() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[90; 32]);
+        let agent_key = SigningKey::from_bytes(&[89; 32]);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        let mut config = read_agent_config(&agent_id).unwrap();
+        config.enabled = false;
+        write_agent_config(&agent_id, &config);
+        write_agent_position(
+            &agent_id,
+            "legacy-position",
+            &AgentPosition {
+                position_id: "legacy-position".to_string(),
+                agent_record_id: agent_id.clone(),
+                market_id: "NVDA".to_string(),
+                is_long: true,
+                notional_usdc: U128(100),
+                margin_usdc: U128(100),
+                leverage_bps: 10_000,
+                entry_price: None,
+            },
+        );
+        contract.close_agent_position(
+            agent_id,
+            "legacy-position".to_string(),
+            1,
+            NOW_MS + 30_000,
+            Base64VecU8::from(vec![0; 64]),
         );
     }
 
