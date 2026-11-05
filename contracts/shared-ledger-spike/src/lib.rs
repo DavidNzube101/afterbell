@@ -1207,6 +1207,17 @@ impl SharedLedger {
             "margin removal would breach maintenance"
         );
         let config = read_agent_config(&account_id);
+        let max_leverage_bps = config
+            .as_ref()
+            .filter(|agent| agent.enabled)
+            .map(|agent| agent.max_leverage_bps.min(market.max_leverage_bps))
+            .unwrap_or(market.max_leverage_bps);
+        let required_margin = crate::engine_math::required_margin(current_notional, max_leverage_bps)
+            .expect("maximum leverage margin overflow");
+        assert!(
+            next_margin >= required_margin,
+            "margin removal would exceed maximum leverage"
+        );
         let destination = if config.as_ref().is_some_and(|agent| !agent.enabled) {
             owner_record.clone()
         } else {
@@ -7601,6 +7612,65 @@ mod tests {
             U128(0)
         );
         assert_eq!(contract.balance_of(USER.to_string()), U128(2_049_400));
+    }
+
+    #[test]
+    #[should_panic(expected = "margin removal would exceed maximum leverage")]
+    fn cannot_remove_margin_below_market_maximum_leverage() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[81; 32]);
+        let quote_key = SigningKey::from_bytes(&[82; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        fund_record(&mut contract, USER, 100, "remove-margin-user");
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+        let position = PerpPosition {
+            account_id: USER.to_string(),
+            position_id: "max-leverage-position".to_string(),
+            market_id: "NVDA".to_string(),
+            is_long: true,
+            notional_usdc: U128(500_000),
+            margin_usdc: U128(250_000),
+            entry_price: U128(10_000_000_000),
+            opened_at_ms: NOW_MS,
+            funding_index: U128(0),
+            funding_remainder: 0,
+        };
+        write_perp_position(USER, &position.position_id, &position);
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: position.notional_usdc,
+                long_base_units: U128(perp_base_units(500_000, 10_000_000_000)),
+                funding_updated_at_ms: NOW_MS,
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        write_u128_storage(PERP_TOTAL_MARGIN_KEY, 250_000);
+
+        let expiry = NOW_MS + 30_000;
+        let message = build_perp_margin_message(
+            &position,
+            "remove",
+            U128(200_000),
+            1,
+            expiry,
+        );
+        let signature = owner_key.sign(message.as_bytes());
+        contract.remove_perp_margin(
+            USER.to_string(),
+            position.position_id,
+            U128(200_000),
+            1,
+            expiry,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
     }
 
     #[test]
