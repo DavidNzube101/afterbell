@@ -1975,10 +1975,10 @@ impl SharedLedger {
         } else {
             (0, position.margin_usdc.0)
         };
-        if agent_config.is_some() {
-            record_agent_realized_loss(&account_id, loss.saturating_add(calculated_penalty));
-        }
         let penalty = calculated_penalty.min(remaining_margin);
+        if agent_config.is_some() {
+            record_agent_realized_loss(&account_id, loss.saturating_add(penalty));
+        }
         let keeper_reward = if keeper_registered {
             penalty * u128::from(PERP_LIQUIDATOR_REWARD_BPS)
                 / u128::from(PERP_LIQUIDATION_PENALTY_BPS)
