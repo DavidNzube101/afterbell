@@ -252,11 +252,14 @@
 .risk-modal-footer button:hover { background: #1579e5; }
 .share-modal { width: min(570px, 100%); max-height: min(800px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: auto; border: 1px solid #2b3744; border-radius: 16px; background: #10161e; box-shadow: 0 28px 90px #0009; animation: modal-in 170ms cubic-bezier(.2,.8,.2,1) both; }
 .share-modal .risk-modal-header { padding: 21px 23px 17px; }
+.share-modal .drawer-close { border-color: #10161e; background: #10161e; }
+.share-modal .drawer-close:hover { border-color: #1a2531; background: #1a2531; }
 .share-modal .risk-modal-header h2 { font-size: 20px; }
 .share-modal-content { padding: 20px 23px 12px; }
 .share-trade-card { position: relative; isolation: isolate; aspect-ratio: 16 / 9; display: flex; flex-direction: column; justify-content: space-between; padding: clamp(13px, 3.5vw, 22px); overflow: hidden; border: 1px solid #1b2b3c; border-radius: 12px; background: radial-gradient(ellipse at 100% 0%, #102b48 0, transparent 48%), linear-gradient(145deg, #141d28, #0d131b 72%); background-position: center; background-size: cover; }
 .share-trade-card::before { position: absolute; z-index: -1; inset: 0; content: ''; background: linear-gradient(115deg, #090e15a8, #090e1530 75%); }
 .share-trade-card > * { position: relative; }
+.share-trade-card, .share-trade-card * { text-shadow: 0 2px 5px #0009; }
 .share-trade-card.gradient-2 { background-image: radial-gradient(ellipse at 100% 0%, #452d71 0, transparent 54%), linear-gradient(145deg, #20172f, #0d131b 75%); }
 .share-trade-card.gradient-3 { background-image: radial-gradient(ellipse at 100% 0%, #155a45 0, transparent 52%), linear-gradient(145deg, #132920, #0d131b 75%); }
 .share-trade-card.gradient-4 { background-image: radial-gradient(ellipse at 100% 0%, #72452c 0, transparent 54%), linear-gradient(145deg, #302018, #0d131b 75%); }
