@@ -767,6 +767,70 @@ impl SharedLedger {
         build_bad_debt_cover_message(&account_id, amount, nonce, expires_at_ms)
     }
 
+    pub fn vault_recapitalization_message(
+        &self,
+        account_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        build_vault_recapitalization_message(&account_id, amount, nonce, expires_at_ms)
+    }
+
+    /// Owner-authorized donation to restore vault cash when deferred trader
+    /// profits exceed cash net of insurance. No LP shares are minted.
+    pub fn recapitalize_perp_vault(
+        &mut self,
+        account_id: String,
+        amount: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        signature: Base64VecU8,
+    ) -> U128 {
+        assert!(amount.0 > 0, "recapitalization amount must be positive");
+        assert!(
+            read_u128_storage(LP_TOTAL_SHARES_KEY) > 0,
+            "vault has no LP shares to recapitalize"
+        );
+        let vault_id = SHARED_VAULT_RECORD_ID.to_string();
+        let vault_cash = self.balances.get(&vault_id).unwrap_or_default();
+        let available_after_insurance =
+            vault_cash.saturating_sub(read_u128_storage(PERP_INSURANCE_KEY));
+        assert!(
+            read_u128_storage(PERP_DEFERRED_TOTAL_KEY) > available_after_insurance,
+            "vault has no deferred-profit funding deficit"
+        );
+        let expected_nonce = read_user_perp_nonce(&account_id)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        assert_eq!(nonce, expected_nonce, "invalid trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let message = build_vault_recapitalization_message(
+            &account_id,
+            amount,
+            nonce,
+            expires_at_ms,
+        );
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert!(
+            verify_owner_signature(&owner, &message, signature.as_ref(), nonce),
+            "invalid vault recapitalization signature"
+        );
+        let balance = self.balances.get(&account_id).unwrap_or_default();
+        assert!(balance >= amount.0, "insufficient free USDC");
+        let storage_before = env::storage_usage();
+        self.balances.insert(&account_id, &(balance - amount.0));
+        self.balances.insert(
+            &vault_id,
+            &vault_cash
+                .checked_add(amount.0)
+                .expect("vault recapitalization overflow"),
+        );
+        write_user_perp_nonce(&account_id, nonce);
+        settle_storage_credit(&account_id, storage_before);
+        U128(amount.0)
+    }
+
     /// Owner-authorized recapitalization. Repayment cannot exceed recorded bad
     /// debt, and any remaining debt continues to keep opens paused.
     pub fn cover_perp_bad_debt(
@@ -4262,6 +4326,18 @@ fn build_bad_debt_cover_message(
 ) -> String {
     format!(
         "afterbell:v1\ncontract:{}\naction:cover_perp_bad_debt\naccount:{}\namount_usdc:{}\nnonce:{}\nexpires_at_ms:{}",
+        env::current_account_id(), account_id, amount.0, nonce, expires_at_ms
+    )
+}
+
+fn build_vault_recapitalization_message(
+    account_id: &str,
+    amount: U128,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!(
+        "afterbell:v1\ncontract:{}\naction:recapitalize_perp_vault\naccount:{}\namount_usdc:{}\nnonce:{}\nexpires_at_ms:{}",
         env::current_account_id(), account_id, amount.0, nonce, expires_at_ms
     )
 }
@@ -8107,6 +8183,49 @@ mod tests {
         testing_env!(context.build());
         contract.unpause_perps();
         assert!(!contract.perp_paused());
+    }
+
+    #[test]
+    fn owner_can_recapitalize_zero_nav_vault_with_deferred_profit_deficit() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[145; 32]);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        fund_record(&mut contract, USER, 1_000, "vault-recapitalization-user");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100,
+            "vault-recapitalization-cash",
+        );
+        write_lp_shares(USER, 1);
+        write_u128_storage(LP_TOTAL_SHARES_KEY, 1);
+        write_perp_deferred(USER, 200);
+        write_u128_storage(PERP_DEFERRED_TOTAL_KEY, 200);
+        assert_eq!(contract.vault_nav_usdc(), U128(0));
+
+        let expiry = NOW_MS + 30_000;
+        let message = contract.vault_recapitalization_message(
+            USER.to_string(),
+            U128(200),
+            1,
+            expiry,
+        );
+        let signature = owner_key.sign(message.as_bytes());
+        assert_eq!(
+            contract.recapitalize_perp_vault(
+                USER.to_string(),
+                U128(200),
+                1,
+                expiry,
+                Base64VecU8::from(signature.to_bytes().to_vec()),
+            ),
+            U128(200)
+        );
+
+        assert_eq!(contract.vault_balance(), U128(300));
+        assert_eq!(contract.balance_of(USER.to_string()), U128(800));
+        assert_eq!(contract.vault_nav_usdc(), U128(100));
+        assert_eq!(read_u128_storage(LP_TOTAL_SHARES_KEY), 1);
     }
 
     #[test]
