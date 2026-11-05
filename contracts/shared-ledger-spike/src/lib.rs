@@ -746,8 +746,9 @@ impl SharedLedger {
             "market skew cap exceeds protocol bound"
         );
         let pending_key = perp_market_key(PERP_PENDING_MARKET_PREFIX, &config.market_id);
-        let current_config = read_perp_market(&config.market_id)
-            .or_else(|| read_json_storage::<PerpMarketConfig>(&pending_key));
+        // Pending risk is never an active baseline. Re-submitting a pending
+        // config must not make its own risk increase appear already applied.
+        let current_config = read_perp_market(&config.market_id);
         let increases_risk = match current_config {
             Some(current) => {
                 (config.enabled && !current.enabled)
@@ -760,9 +761,8 @@ impl SharedLedger {
                     || (config.max_market_skew_bps > current.max_market_skew_bps)
                     || (current.close_only && !config.close_only)
             }
-            // A market that does not exist yet has no safer active config to
-            // compare against. Stage its first enabled config just like an
-            // explicit disabled -> enabled transition.
+            // A market that does not exist yet has no active config to compare
+            // against, so its first enabled config always waits for the delay.
             None => config.enabled,
         };
         if increases_risk {
@@ -7282,6 +7282,20 @@ mod tests {
     #[test]
     fn enabling_a_new_market_waits_for_delay() {
         let mut contract = setup("a1.near");
+        contract.configure_perp_market(PerpMarketConfig {
+            market_id: "NVDA".to_string(),
+            enabled: true,
+            close_only: false,
+            max_leverage_bps: 50_000,
+            maintenance_margin_bps: 500,
+            max_execution_deviation_bps: 1_000,
+            max_oracle_confidence_bps: 100,
+            max_position_usdc: U128(1_000_000),
+            max_market_oi_bps: 1_000,
+            max_market_skew_bps: 300,
+        });
+        // Repeating the exact staged config cannot treat it as an active
+        // baseline and activate it early.
         contract.configure_perp_market(PerpMarketConfig {
             market_id: "NVDA".to_string(),
             enabled: true,
