@@ -2348,7 +2348,7 @@ impl SharedLedger {
             crate::engine_math::required_margin(notional.0, leverage_bps).expect("margin overflow");
         let fee = crate::engine_math::fee_ceil(notional.0, fee_bps).expect("fee overflow");
         if let Some(config) = &agent_config {
-            assert_agent_daily_loss_within(&account_id, config, fee);
+            assert_agent_daily_loss_within(&account_id, config, margin.saturating_add(fee));
         }
         let required = margin.checked_add(fee).expect("required balance overflow");
         let balance = self.balances.get(&account_id).unwrap_or_default();
@@ -5081,7 +5081,8 @@ fn assert_agent_daily_loss_within(agent_record_id: &str, config: &AgentConfig, a
         read_agent_daily_loss(agent_record_id)
             .realized_loss_usdc
             .0
-            .checked_add(additional)
+            .checked_add(read_agent_reserved_margin(agent_record_id))
+            .and_then(|risk| risk.checked_add(additional))
             .is_some_and(|loss| loss <= config.max_daily_loss_usdc.0),
         "agent daily loss limit reached"
     );
@@ -6824,6 +6825,22 @@ mod tests {
             Base64VecU8::from(vec![0; 64]),
             Base64VecU8::from(vec![0; 64]),
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "agent daily loss limit reached")]
+    fn agent_cannot_reserve_margin_beyond_remaining_daily_loss_budget() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[90; 32]);
+        let agent_key = SigningKey::from_bytes(&[89; 32]);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        let mut config = read_agent_config(&agent_id).unwrap();
+        config.max_daily_loss_usdc = U128(200_000);
+        write_agent_config(&agent_id, &config);
+        write_agent_reserved_margin(&agent_id, 150_000);
+        record_agent_realized_loss(&agent_id, 40_000);
+        assert_agent_daily_loss_within(&agent_id, &config, 10_000);
+        assert_agent_daily_loss_within(&agent_id, &config, 10_001);
     }
 
     fn fund_test_agent(
