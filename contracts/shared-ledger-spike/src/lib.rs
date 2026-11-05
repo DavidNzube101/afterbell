@@ -259,6 +259,8 @@ pub struct AgentDailyLoss {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LpWithdrawalRequest {
     pub shares: U128,
+    #[serde(default)]
+    pub min_amount_usdc: U128,
     pub requested_at_ms: u64,
 }
 
@@ -1076,6 +1078,7 @@ impl SharedLedger {
         &mut self,
         account_id: String,
         shares: U128,
+        min_amount_usdc: U128,
         nonce: u64,
         expires_at_ms: u64,
         signature: Base64VecU8,
@@ -1087,7 +1090,7 @@ impl SharedLedger {
             nonce,
             expires_at_ms,
             "request_vault_withdrawal",
-            &shares.0.to_string(),
+            &format!("{}:{}", shares.0, min_amount_usdc.0),
             signature.as_ref(),
             &owner,
         );
@@ -1104,9 +1107,37 @@ impl SharedLedger {
             &account_id,
             &LpWithdrawalRequest {
                 shares,
+                min_amount_usdc,
                 requested_at_ms: env::block_timestamp() / 1_000_000,
             },
         );
+        settle_storage_credit(&account_id, storage_before);
+        write_user_perp_nonce(&account_id, nonce);
+    }
+
+    pub fn cancel_vault_withdrawal(
+        &mut self,
+        account_id: String,
+        nonce: u64,
+        expires_at_ms: u64,
+        signature: Base64VecU8,
+    ) {
+        assert!(
+            read_lp_withdrawal(&account_id).is_some(),
+            "no withdrawal request"
+        );
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        assert_next_user_action(
+            &account_id,
+            nonce,
+            expires_at_ms,
+            "cancel_vault_withdrawal",
+            "",
+            signature.as_ref(),
+            &owner,
+        );
+        let storage_before = env::storage_usage();
+        delete_lp_withdrawal(&account_id);
         settle_storage_credit(&account_id, storage_before);
         write_user_perp_nonce(&account_id, nonce);
     }
@@ -1126,6 +1157,11 @@ impl SharedLedger {
         let total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
         assert!(total_shares > 0, "no LP shares");
         let amount = request.shares.0.saturating_mul(vault_nav(&self.balances)) / total_shares;
+        assert!(amount > 0, "withdrawal output is zero");
+        assert!(
+            amount >= request.min_amount_usdc.0,
+            "withdrawal below minimum output"
+        );
         let cash = self
             .balances
             .get(&SHARED_VAULT_RECORD_ID.to_string())
@@ -7607,13 +7643,14 @@ mod tests {
         assert_eq!(contract.vault_nav_usdc(), U128(101_000_000));
 
         let request_message = format!(
-            "afterbell:v1\ncontract:a1.near\naction:request_vault_withdrawal\naccount:{}\namount:{}\nnonce:2\nexpires_at_ms:{}",
-            USER, 1_000_000, deposit_expiry
+            "afterbell:v1\ncontract:a1.near\naction:request_vault_withdrawal\naccount:{}\namount:{}:{}\nnonce:2\nexpires_at_ms:{}",
+            USER, 1_000_000, 0, deposit_expiry
         );
         let request_signature = owner_key.sign(request_message.as_bytes());
         contract.request_vault_withdrawal(
             USER.to_string(),
             U128(1_000_000),
+            U128(0),
             2,
             deposit_expiry,
             Base64VecU8::from(request_signature.to_bytes().to_vec()),
