@@ -1431,7 +1431,7 @@ impl SharedLedger {
             .expect("margin split overflow")
             / position.notional_usdc.0;
         let fee = crate::engine_math::fee_ceil(reduce_notional.0, fee_bps).expect("fee overflow");
-        let (loss, fee_collected, margin_credit, bad_debt) =
+        let (loss, fee_collected, margin_credit) =
             perp_settlement_components(margin_part, realized_pnl, fee);
         if agent_config.is_some() {
             record_agent_realized_loss(&account_id, loss.saturating_add(fee_collected));
@@ -1480,21 +1480,8 @@ impl SharedLedger {
                     .expect("vault overflow"),
             );
         }
-        if bad_debt != 0 {
-            let covered = bad_debt.min(read_u128_storage(PERP_INSURANCE_KEY));
-            write_u128_storage(
-                PERP_INSURANCE_KEY,
-                read_u128_storage(PERP_INSURANCE_KEY) - covered,
-            );
-            let debt = read_u128_storage(PERP_BAD_DEBT_KEY)
-                .checked_add(bad_debt - covered)
-                .expect("bad debt overflow");
-            write_u128_storage(PERP_BAD_DEBT_KEY, debt);
-            if debt > 0 {
-                write_u64_storage(PERP_PAUSED_KEY, 1);
-            }
-            credit = 0;
-        }
+        // A trader's loss is capped at isolated margin. Loss beyond that
+        // margin is not a vault liability and must not consume LP insurance.
         if fee_collected > 0 {
             write_u128_storage(
                 PERP_INSURANCE_KEY,
@@ -1711,7 +1698,7 @@ impl SharedLedger {
         .expect("PnL overflow");
         let close_fee =
             crate::engine_math::fee_ceil(position.notional_usdc.0, fee_bps).expect("fee overflow");
-        let (loss, fee_collected, margin_credit, bad_debt) =
+        let (loss, fee_collected, margin_credit) =
             perp_settlement_components(position.margin_usdc.0, pnl, close_fee);
         if agent_config.is_some() {
             record_agent_realized_loss(&account_id, loss.saturating_add(fee_collected));
@@ -1766,21 +1753,8 @@ impl SharedLedger {
                     .expect("vault overflow"),
             );
         }
-        if bad_debt != 0 {
-            let covered = bad_debt.min(read_u128_storage(PERP_INSURANCE_KEY));
-            write_u128_storage(
-                PERP_INSURANCE_KEY,
-                read_u128_storage(PERP_INSURANCE_KEY) - covered,
-            );
-            let debt = read_u128_storage(PERP_BAD_DEBT_KEY)
-                .checked_add(bad_debt - covered)
-                .expect("bad debt overflow");
-            write_u128_storage(PERP_BAD_DEBT_KEY, debt);
-            if debt != 0 {
-                write_u64_storage(PERP_PAUSED_KEY, 1);
-            }
-            user_credit = 0;
-        }
+        // Isolated trader losses cannot create vault bad debt; any loss above
+        // margin is uncollectible and is not an LP or insurance shortfall.
         if fee_collected != 0 {
             let insurance_fee = fee_collected / 4;
             write_u128_storage(
@@ -2025,21 +1999,6 @@ impl SharedLedger {
                     .and_then(|v| v.checked_add(vault_fee))
                     .expect("vault overflow"),
             );
-        }
-        if pnl < 0 && pnl.unsigned_abs() > position.margin_usdc.0 {
-            let shortfall = pnl.unsigned_abs() - position.margin_usdc.0;
-            let covered = shortfall.min(read_u128_storage(PERP_INSURANCE_KEY));
-            write_u128_storage(
-                PERP_INSURANCE_KEY,
-                read_u128_storage(PERP_INSURANCE_KEY) - covered,
-            );
-            let bad_debt = read_u128_storage(PERP_BAD_DEBT_KEY)
-                .checked_add(shortfall - covered)
-                .expect("bad debt overflow");
-            write_u128_storage(PERP_BAD_DEBT_KEY, bad_debt);
-            if bad_debt != 0 {
-                write_u64_storage(PERP_PAUSED_KEY, 1);
-            }
         }
         if penalty != 0 {
             let reserve = penalty / 4;
@@ -4525,11 +4484,7 @@ fn exposure_pnl(notional: u128, base_units: u128, mark_price: u128, is_long: boo
 /// Splits a perp settlement into amounts backed by trader margin. Fees are
 /// collected only from margin left after realized losses; an unpaid fee is
 /// waived rather than being minted into vault accounting or treated as debt.
-fn perp_settlement_components(
-    margin: u128,
-    realized_pnl: i128,
-    fee: u128,
-) -> (u128, u128, u128, u128) {
+fn perp_settlement_components(margin: u128, realized_pnl: i128, fee: u128) -> (u128, u128, u128) {
     let loss = if realized_pnl < 0 {
         realized_pnl.unsigned_abs().min(margin)
     } else {
@@ -4538,12 +4493,7 @@ fn perp_settlement_components(
     let margin_after_loss = margin - loss;
     let fee_collected = fee.min(margin_after_loss);
     let margin_credit = margin_after_loss - fee_collected;
-    let bad_debt = if realized_pnl < 0 {
-        realized_pnl.unsigned_abs() - loss
-    } else {
-        0
-    };
-    (loss, fee_collected, margin_credit, bad_debt)
+    (loss, fee_collected, margin_credit)
 }
 
 fn validate_close_mark(
@@ -5591,10 +5541,10 @@ mod tests {
 
     #[test]
     fn perp_settlement_never_collects_fees_beyond_remaining_margin() {
-        assert_eq!(perp_settlement_components(100, -100, 10), (100, 0, 0, 0));
-        assert_eq!(perp_settlement_components(100, -120, 10), (100, 0, 0, 20));
-        assert_eq!(perp_settlement_components(100, 20, 150), (0, 100, 0, 0));
-        assert_eq!(perp_settlement_components(100, -40, 30), (40, 30, 30, 0));
+        assert_eq!(perp_settlement_components(100, -100, 10), (100, 0, 0));
+        assert_eq!(perp_settlement_components(100, -120, 10), (100, 0, 0));
+        assert_eq!(perp_settlement_components(100, 20, 150), (0, 100, 0));
+        assert_eq!(perp_settlement_components(100, -40, 30), (40, 30, 30));
     }
 
     #[test]
