@@ -109,8 +109,8 @@ function InterfaceSpeed() {
   }, [])
 
   const grade = speed.ms === null ? 'measuring' : speed.ms <= 100 ? 'good' : speed.ms <= 250 ? 'medium' : 'poor'
-  const networkReadout = speed.ms !== null ? `Internet ${Math.round(speed.ms)} ms` : 'Internet unavailable'
-  return <span className={`interface-speed ${grade}`} title="Round-trip time between your browser and the Afterbell API.">{networkReadout}</span>
+  const networkReadout = speed.ms !== null ? `${Math.round(speed.ms)} ms` : '-- ms'
+  return <span className={`interface-speed ${grade}`} title="Internet latency">{networkReadout}</span>
 }
 
 const initialNotifications = [
