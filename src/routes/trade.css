@@ -61,7 +61,7 @@
 .market-search > svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .market-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #e8edf3; font: inherit; font-size: 11px; }
 .market-search input::placeholder { color: #697786; }
-.market-menu-list { max-height: 310px; overflow: auto; padding-top: 5px; }
+.market-menu-list { max-height: 310px; display: flex; flex-direction: column; gap: 4px; overflow: auto; padding-top: 8px; }
 .market-menu button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 5px 7px; border: 0; border-radius: 7px; background: transparent; text-align: left; }
 .market-menu button:hover, .market-menu button.selected { background: #1a2634; }
 .market-menu button > span:nth-child(2) { display: grid; gap: 2px; }
