@@ -2,17 +2,13 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import logo from '../assets/afterbell-logo.png'
 import { TickerIcon } from '../components/TickerIcon'
+import { markets } from '../data/markets'
 import './trade.css'
 
-export const Route = createFileRoute('/trade')({ component: TradingPage })
-
-const markets = [
-  { ticker: 'NVDA', name: 'NVIDIA' },
-  { ticker: 'TSLA', name: 'Tesla' },
-  { ticker: 'AAPL', name: 'Apple' },
-  { ticker: 'GOOGL', name: 'Alphabet' },
-  { ticker: 'META', name: 'Meta' },
-]
+export const Route = createFileRoute('/trade')({
+  validateSearch: (search: Record<string, unknown>) => ({ market: typeof search.market === 'string' ? search.market : undefined }),
+  component: TradingPage,
+})
 
 function Icon({ name }: { name: 'chart' | 'chevron' | 'bell' | 'search' }) {
   const paths = {
@@ -184,7 +180,8 @@ const riskDisclosureSections = [
 ]
 
 function TradingPage() {
-  const [marketIndex, setMarketIndex] = useState(0)
+  const { market: selectedTicker } = Route.useSearch()
+  const [marketIndex, setMarketIndex] = useState(() => Math.max(0, markets.findIndex(item => item.ticker === selectedTicker)))
   const [side, setSide] = useState<'long' | 'short'>('long')
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
   const [leverage, setLeverage] = useState(3)
@@ -236,7 +233,7 @@ function TradingPage() {
     </section>
     <header className="trade-header">
       <a href="/" className="trade-brand"><img className="trade-logo" src={logo} alt=""/><span>Afterbell</span></a>
-      <nav className="trade-nav" aria-label="Main navigation"><a className="nav-active" href="/trade">Trade</a><a href="#markets">Markets</a><a href="#agent">AI agent</a></nav>
+      <nav className="trade-nav" aria-label="Main navigation"><a className="nav-active" href="/trade">Trade</a><a href="/markets">Markets</a><a href="#agent">AI agent</a></nav>
       <div className="header-right"><button className={`icon-button header-bell ${notificationsOpen ? 'is-open' : ''}`} aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(open => !open)}><Icon name="bell"/>{notifications.length > 0 && <span className="notification-count">{notifications.length}</span>}</button><button className="account-button" onClick={() => setNotice('Wallet connection will be added in the next integration step.')}><span className="account-avatar">D</span><span className="account-address">0x84...b29a</span><Icon name="chevron"/></button></div>
     </header>
 
