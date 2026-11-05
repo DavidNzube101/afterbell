@@ -40,6 +40,9 @@ const PERP_PENDING_MARKET_PREFIX: &[u8] = b"afterbell:a1:perp:pending_market:";
 const PERP_PENDING_MARKET_AT_PREFIX: &[u8] = b"afterbell:a1:perp:pending_market_at:";
 const PERP_MARKET_IDS_KEY: &[u8] = b"afterbell:a1:perp:market_ids";
 const PERP_POSITION_PREFIX: &[u8] = b"afterbell:a1:perp:position:";
+const PERP_MARKET_POSITION_INDEX_PREFIX: &[u8] = b"afterbell:a1:perp:market_positions:";
+const PERP_POSITION_MARKET_INDEX_PREFIX: &[u8] = b"afterbell:a1:perp:position_market_index:";
+const PERP_POSITION_INDEXED_OI_KEY: &[u8] = b"afterbell:a1:perp:indexed_oi";
 const PERP_EXPOSURE_PREFIX: &[u8] = b"afterbell:a1:perp:exposure:";
 const PERP_QUOTE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:quote_signer";
 const PERP_PENDING_QUOTE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:pending_quote_signer";
@@ -4044,13 +4047,90 @@ fn read_perp_position(account_id: &str, position_id: &str) -> Option<PerpPositio
     read_json_storage(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]))
 }
 fn write_perp_position(account_id: &str, position_id: &str, position: &PerpPosition) {
+    let entry = perp_position_index_entry(account_id, position_id);
+    let position_index_key = raw_key(PERP_POSITION_MARKET_INDEX_PREFIX, &[account_id, position_id]);
+    let was_indexed = env::storage_read(&position_index_key).is_some();
+    if !was_indexed {
+        let count_key = perp_market_position_count_key(&position.market_id);
+        let count = read_u64_storage(&count_key);
+        env::storage_write(
+            &perp_market_position_slot_key(&position.market_id, count),
+            entry.as_bytes(),
+        );
+        write_u64_storage(&count_key, count.checked_add(1).expect("position index overflow"));
+        write_u64_storage(&position_index_key, count);
+        write_u128_storage(
+            PERP_POSITION_INDEXED_OI_KEY,
+            read_u128_storage(PERP_POSITION_INDEXED_OI_KEY)
+                .checked_add(position.notional_usdc.0)
+                .expect("indexed open interest overflow"),
+        );
+    } else if let Some(previous) = read_perp_position(account_id, position_id) {
+        let indexed_oi = read_u128_storage(PERP_POSITION_INDEXED_OI_KEY);
+        let updated_oi = if position.notional_usdc.0 >= previous.notional_usdc.0 {
+            indexed_oi
+                .checked_add(position.notional_usdc.0 - previous.notional_usdc.0)
+                .expect("indexed open interest overflow")
+        } else {
+            indexed_oi.saturating_sub(previous.notional_usdc.0 - position.notional_usdc.0)
+        };
+        write_u128_storage(PERP_POSITION_INDEXED_OI_KEY, updated_oi);
+    }
     write_json_storage(
         &raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]),
         position,
     );
 }
 fn delete_perp_position(account_id: &str, position_id: &str) {
+    if let Some(position) = read_perp_position(account_id, position_id) {
+        let position_index_key = raw_key(PERP_POSITION_MARKET_INDEX_PREFIX, &[account_id, position_id]);
+        if let Some(index_bytes) = env::storage_read(&position_index_key) {
+            let index = u64::from_le_bytes(index_bytes.try_into().expect("invalid position index"));
+            let count_key = perp_market_position_count_key(&position.market_id);
+            let count = read_u64_storage(&count_key);
+            assert!(count > 0 && index < count, "invalid market position index");
+            let last_index = count - 1;
+            if index != last_index {
+                let last_key = perp_market_position_slot_key(&position.market_id, last_index);
+                let moved_entry = env::storage_read(&last_key).expect("missing market position");
+                let moved_entry_text = String::from_utf8(moved_entry.clone())
+                    .expect("invalid market position index entry");
+                let (moved_account_id, moved_position_id) = moved_entry_text
+                    .split_once('\n')
+                    .expect("invalid market position index entry");
+                env::storage_write(
+                    &perp_market_position_slot_key(&position.market_id, index),
+                    &moved_entry,
+                );
+                write_u64_storage(
+                    &raw_key(
+                        PERP_POSITION_MARKET_INDEX_PREFIX,
+                        &[moved_account_id, moved_position_id],
+                    ),
+                    index,
+                );
+            }
+            env::storage_remove(&perp_market_position_slot_key(&position.market_id, last_index));
+            env::storage_remove(&position_index_key);
+            write_u64_storage(&count_key, last_index);
+            write_u128_storage(
+                PERP_POSITION_INDEXED_OI_KEY,
+                read_u128_storage(PERP_POSITION_INDEXED_OI_KEY)
+                    .saturating_sub(position.notional_usdc.0),
+            );
+        }
+    }
     env::storage_remove(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]));
+}
+fn perp_position_index_entry(account_id: &str, position_id: &str) -> String {
+    format!("{account_id}\n{position_id}")
+}
+fn perp_market_position_count_key(market_id: &str) -> Vec<u8> {
+    raw_key(PERP_MARKET_POSITION_INDEX_PREFIX, &[market_id, "count"])
+}
+fn perp_market_position_slot_key(market_id: &str, index: u64) -> Vec<u8> {
+    let index = index.to_string();
+    raw_key(PERP_MARKET_POSITION_INDEX_PREFIX, &[market_id, &index])
 }
 fn read_user_perp_nonce(account_id: &str) -> u64 {
     read_u64_storage(&raw_key(PERP_QUOTE_NONCE_PREFIX, &[account_id]))
@@ -4458,49 +4538,57 @@ fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
     if !vault_prices_fresh() {
         return 0;
     }
+    // Fail closed for pre-index contract state until all old open positions
+    // have been closed or re-indexed by their next position update.
+    if read_u128_storage(PERP_POSITION_INDEXED_OI_KEY)
+        != read_u128_storage(PERP_TOTAL_OI_KEY)
+    {
+        return 0;
+    }
     let cash = balances
         .get(&SHARED_VAULT_RECORD_ID.to_string())
         .unwrap_or_default()
         .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
         .saturating_sub(read_u128_storage(PERP_DEFERRED_TOTAL_KEY));
-    let mut pnl: i128 = 0;
+    let mut trader_profit_liability = 0u128;
     for id in read_perp_market_ids() {
-        let exposure = read_perp_exposure(&id);
         let Some(price) = read_market_price(&id) else {
             continue;
         };
         if price.price.0 == 0 {
             continue;
         }
-        for (notional, base_units, is_long) in [
-            (
-                exposure.long_notional_usdc.0,
-                exposure.long_base_units.0,
-                true,
-            ),
-            (
-                exposure.short_notional_usdc.0,
-                exposure.short_base_units.0,
-                false,
-            ),
-        ] {
-            if notional == 0 || base_units == 0 {
-                continue;
+        let market_position_count = read_u64_storage(&perp_market_position_count_key(&id));
+        for index in 0..market_position_count {
+            let entry = env::storage_read(&perp_market_position_slot_key(&id, index))
+                .expect("missing market position index entry");
+            let entry = String::from_utf8(entry).expect("invalid market position index entry");
+            let (account_id, position_id) = entry
+                .split_once('\n')
+                .expect("invalid market position index entry");
+            let position = read_perp_position(account_id, position_id)
+                .expect("market position index references missing position");
+            let pnl = crate::engine_math::linear_pnl(
+                position.notional_usdc.0,
+                position.entry_price.0,
+                price.price.0,
+                position.is_long,
+            )
+            .expect("position PnL overflow");
+            if pnl > 0 {
+                trader_profit_liability = trader_profit_liability
+                    .checked_add(pnl as u128)
+                    .unwrap_or(u128::MAX);
             }
-            let side_pnl = exposure_pnl(notional, base_units, price.price.0, is_long);
-            pnl = pnl.saturating_add(side_pnl);
         }
     }
-    if pnl > 0 {
-        cash.saturating_sub(pnl as u128)
-    } else {
-        cash.saturating_add(
-            pnl.unsigned_abs()
-                .min(read_u128_storage(PERP_TOTAL_MARGIN_KEY)),
-        )
-    }
+    // Count each position's positive PnL as a vault liability. Ignore
+    // unrealized losses because isolated losses are collectible only up to
+    // that position's margin and cannot safely back another trader's profit.
+    cash.saturating_sub(trader_profit_liability)
 }
 
+#[cfg(test)]
 fn exposure_pnl(notional: u128, base_units: u128, mark_price: u128, is_long: bool) -> i128 {
     let marked_value = revalue_exposure(base_units, mark_price);
     let marked = i128::try_from(marked_value).unwrap_or(i128::MAX);
@@ -5673,6 +5761,94 @@ mod tests {
             exposure_pnl(100, first_base, 200, true) + exposure_pnl(100, second_base, 200, true),
             100
         );
+    }
+
+    #[test]
+    fn vault_nav_subtracts_profitable_positions_without_nets_over_losses() {
+        let mut contract = setup("a1.near");
+        configure_test_perp(&mut contract, &SigningKey::from_bytes(&[144; 32]));
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            1_000_000,
+            "nav-profit-liability-vault",
+        );
+        write_market_price(&MarketPrice {
+            market_id: "NVDA".to_string(),
+            price: U128(11_000_000_000),
+            observed_at_ms: NOW_MS,
+            sequence: 1,
+        });
+        write_oracle_health(
+            "NVDA",
+            &OracleHealth {
+                circuit_broken: false,
+                confidence_bps: 1,
+                spot_twap_deviation_bps: 0,
+            },
+        );
+        let notional = 100_000;
+        write_perp_position(
+            "near:winning-long",
+            "long-1",
+            &PerpPosition {
+                account_id: "near:winning-long".to_string(),
+                position_id: "long-1".to_string(),
+                market_id: "NVDA".to_string(),
+                is_long: true,
+                notional_usdc: U128(notional),
+                margin_usdc: U128(20_000),
+                entry_price: U128(10_000_000_000),
+                opened_at_ms: NOW_MS,
+                funding_index: U128(0),
+                funding_remainder: 0,
+            },
+        );
+        assert_eq!(read_u64_storage(&perp_market_position_count_key("NVDA")), 1);
+        write_perp_position(
+            "near:underwater-short",
+            "short-1",
+            &PerpPosition {
+                account_id: "near:underwater-short".to_string(),
+                position_id: "short-1".to_string(),
+                market_id: "NVDA".to_string(),
+                is_long: false,
+                notional_usdc: U128(notional),
+                margin_usdc: U128(100),
+                entry_price: U128(10_000_000_000),
+                opened_at_ms: NOW_MS,
+                funding_index: U128(0),
+                funding_remainder: 0,
+            },
+        );
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: U128(notional),
+                short_notional_usdc: U128(notional),
+                long_base_units: U128(perp_base_units(notional, 10_000_000_000)),
+                short_base_units: U128(perp_base_units(notional, 10_000_000_000)),
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        write_u128_storage(PERP_TOTAL_OI_KEY, notional * 2);
+        write_u128_storage(PERP_TOTAL_MARGIN_KEY, 20_100);
+        assert_eq!(read_u128_storage(PERP_POSITION_INDEXED_OI_KEY), notional * 2);
+        assert_eq!(
+            crate::engine_math::linear_pnl(
+                notional,
+                10_000_000_000,
+                11_000_000_000,
+                true,
+            ),
+            Ok(10_000)
+        );
+        assert_eq!(read_u64_storage(&perp_market_position_count_key("NVDA")), 2);
+        assert!(vault_prices_fresh());
+
+        // Both sides net to zero PnL, but the long's 10,000-raw-unit gain is a
+        // vault liability; the short's loss exceeds its 100-unit isolated margin.
+        assert_eq!(contract.vault_nav_usdc(), U128(990_000));
     }
 
     #[test]
