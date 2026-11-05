@@ -80,28 +80,50 @@ function InterfaceSpeed() {
   const [speed, setSpeed] = useState<PerformanceState>({ fps: null, ms: null })
 
   useEffect(() => {
-    let frame = 0
-    let startedAt: number | null = null
-    let frameCount = 0
-    const measure = (timestamp: number) => {
-      if (document.visibilityState === 'hidden') {
-        startedAt = null
-        frameCount = 0
-        frame = requestAnimationFrame(measure)
-        return
+    let frame: number | undefined
+    let timer: number | undefined
+    let active = true
+
+    const sample = () => {
+      timer = undefined
+      if (!active || document.visibilityState === 'hidden') return
+
+      let frames = 0
+      const startedAt = performance.now()
+      const countFrame = () => {
+        if (!active || document.visibilityState === 'hidden') {
+          frame = undefined
+          return
+        }
+        frames += 1
+        const elapsed = performance.now() - startedAt
+        if (elapsed >= 1000) {
+          setSpeed(current => ({ ...current, fps: Math.round(frames * 1000 / elapsed) }))
+          frame = undefined
+          timer = window.setTimeout(sample, 4000)
+          return
+        }
+        frame = requestAnimationFrame(countFrame)
       }
-      if (startedAt === null) startedAt = timestamp
-      frameCount += 1
-      const elapsed = timestamp - startedAt
-      if (elapsed >= 1000 && frameCount > 0) {
-        setSpeed(current => ({ ...current, fps: Math.round(frameCount * 1000 / elapsed) }))
-        startedAt = timestamp
-        frameCount = 0
-      }
-      frame = requestAnimationFrame(measure)
+      frame = requestAnimationFrame(countFrame)
     }
-    frame = requestAnimationFrame(measure)
-    return () => cancelAnimationFrame(frame)
+
+    const handleVisibility = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      timer = undefined
+      frame = undefined
+      if (document.visibilityState === 'visible') timer = window.setTimeout(sample, 100)
+    }
+
+    timer = window.setTimeout(sample, 100)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      active = false
+      if (timer !== undefined) window.clearTimeout(timer)
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [])
 
   useEffect(() => {
@@ -126,7 +148,7 @@ function InterfaceSpeed() {
       }
     }
     void measureNetwork()
-    const interval = window.setInterval(() => void measureNetwork(), 10000)
+    const interval = window.setInterval(() => void measureNetwork(), 30000)
     return () => {
       active = false
       window.clearInterval(interval)
