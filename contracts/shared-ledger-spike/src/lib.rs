@@ -4434,8 +4434,7 @@ fn settle_market_position(
     mark_price: U128,
 ) -> U128 {
     let pnl = agent_market_position_pnl(position, mark_price);
-    let margin = i128::try_from(position.margin_usdc.0).expect("margin exceeds signed range");
-    let payout = u128::try_from(margin + pnl).expect("settlement payout is negative");
+    let margin = position.margin_usdc.0;
 
     let vault_id = SHARED_VAULT_RECORD_ID.to_string();
     let vault_balance = balances.get(&vault_id).unwrap_or_default();
@@ -4444,10 +4443,30 @@ fn settle_market_position(
         reserved >= position.notional_usdc.0,
         "vault reservation invariant failed"
     );
-    if pnl > 0 {
+    let paid_profit = if pnl > 0 {
         let profit = pnl as u128;
-        assert!(vault_balance >= profit, "vault cannot fund realized profit");
-        balances.insert(&vault_id, &(vault_balance - profit));
+        let free = vault_balance
+            .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
+            .saturating_sub(read_u128_storage(PERP_DEFERRED_TOTAL_KEY))
+            .saturating_sub(reserved.saturating_sub(position.notional_usdc.0));
+        let paid = profit.min(free);
+        let unpaid = profit - paid;
+        if unpaid != 0 {
+            write_perp_deferred(
+                &config.user_record_id,
+                read_perp_deferred(&config.user_record_id)
+                    .checked_add(unpaid)
+                    .expect("claim overflow"),
+            );
+            write_u128_storage(
+                PERP_DEFERRED_TOTAL_KEY,
+                read_u128_storage(PERP_DEFERRED_TOTAL_KEY)
+                    .checked_add(unpaid)
+                    .expect("claim overflow"),
+            );
+        }
+        balances.insert(&vault_id, &(vault_balance - paid));
+        paid
     } else if pnl < 0 {
         balances.insert(
             &vault_id,
@@ -4455,7 +4474,10 @@ fn settle_market_position(
                 .checked_add(pnl.unsigned_abs())
                 .expect("vault balance overflow"),
         );
-    }
+        0
+    } else {
+        0
+    };
 
     let reserved_margin = read_agent_reserved_margin(&position.agent_record_id);
     assert!(
@@ -4473,6 +4495,14 @@ fn settle_market_position(
         &position.agent_record_id
     } else {
         &config.user_record_id
+    };
+    let payout = if pnl > 0 {
+        margin
+            .checked_add(paid_profit)
+            .expect("settlement payout overflow")
+    } else {
+        u128::try_from(i128::try_from(margin).expect("margin exceeds signed range") + pnl)
+            .expect("settlement payout is negative")
     };
     let recipient_balance = balances.get(recipient).unwrap_or_default();
     balances.insert(
@@ -6380,6 +6410,54 @@ mod tests {
         assert_eq!(position.margin_usdc, U128(99));
         assert_eq!(read_agent_reserved_margin(agent_id), 199);
         assert!(read_agent_reserved_margin(agent_id) >= 100);
+    }
+
+    #[test]
+    fn legacy_market_settlement_preserves_insurance_and_defers_unfunded_profit() {
+        let mut contract = setup(TOKEN);
+        let agent_id = "agent:near:test-user:legacy";
+        let config = AgentConfig {
+            user_record_id: USER.to_string(),
+            agent_record_id: agent_id.to_string(),
+            agent_key: OwnerKey::NearEd25519 {
+                public_key: [8; 32],
+            },
+            allowed_markets: vec!["NVDA".to_string()],
+            max_position_usdc: U128(1_000),
+            max_open_notional_usdc: U128(1_000),
+            max_leverage_bps: 10_000,
+            max_allocation_usdc: U128(1_000),
+            max_daily_loss_usdc: U128(1_000),
+            expires_at_ms: EXPIRY_MS,
+            enabled: false,
+        };
+        let position = AgentPosition {
+            position_id: "legacy-priced".to_string(),
+            agent_record_id: agent_id.to_string(),
+            market_id: "NVDA".to_string(),
+            is_long: true,
+            notional_usdc: U128(100),
+            margin_usdc: U128(100),
+            leverage_bps: 10_000,
+            entry_price: Some(U128(100)),
+        };
+        write_agent_reserved_margin(agent_id, 100);
+        write_agent_open_notional(agent_id, 100);
+        write_agent_position_count(agent_id, 1);
+        write_vault_reserved_payout(500);
+        write_u128_storage(PERP_INSURANCE_KEY, 80);
+        contract
+            .balances
+            .insert(&SHARED_VAULT_RECORD_ID.to_string(), &100);
+
+        assert_eq!(
+            settle_market_position(&mut contract.balances, &position, &config, U128(200)),
+            U128(100)
+        );
+        assert_eq!(contract.balance_of(USER.to_string()), U128(100));
+        assert_eq!(contract.vault_balance(), U128(100));
+        assert_eq!(contract.perp_insurance(), U128(80));
+        assert_eq!(read_perp_deferred(USER), 100);
     }
 
     #[test]
