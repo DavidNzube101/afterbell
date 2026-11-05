@@ -27,8 +27,10 @@
 .robinhood-icon path { fill: #080b0e; }
 .market-actions { justify-self: end; display: flex; align-items: center; gap: 7px; }
 .market-open-link { min-width: 50px; display: inline-flex; align-items: center; justify-content: center; padding: 7px 9px; border: 1px solid #293746; border-radius: 7px; color: #b5c3d0; font-size: 10px; text-decoration: none; transition: border-color .15s ease, color .15s ease, background .15s ease; }
-.market-open-link.long:hover { border-color: #236b54; background: #10261f; color: #80e0b7; }
-.market-open-link.short:hover { border-color: #70404a; background: #2a171d; color: #ff9ba5; }
+.market-open-link.long { border-color: #10261f; background: #10261f; color: #80e0b7; }
+.market-open-link.long:hover { border-color: #18382d; background: #18382d; color: #9aebc9; }
+.market-open-link.short { border-color: #2a171d; background: #2a171d; color: #ff9ba5; }
+.market-open-link.short:hover { border-color: #3a2028; background: #3a2028; color: #ffb3ba; }
 .markets-no-results { padding: 42px 20px; color: #8290a0; font-size: 12px; text-align: center; }
 
 @media (max-width: 760px) {
