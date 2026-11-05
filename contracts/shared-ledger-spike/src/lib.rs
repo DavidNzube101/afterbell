@@ -1123,6 +1123,7 @@ impl SharedLedger {
         );
         if let Some(agent) = &config {
             if agent.enabled {
+                assert_agent_daily_loss_within(&account_id, agent, amount.0);
                 assert!(
                     read_agent_reserved_margin(&account_id)
                         .checked_add(amount.0)
@@ -3128,7 +3129,6 @@ impl SharedLedger {
             config.allowed_markets.contains(&market_id),
             "market is not allowed for this agent"
         );
-        assert_agent_daily_loss_allowed(&agent_record_id, &config);
         assert!(notional_usdc.0 > 0, "position notional must be positive");
         assert!(
             notional_usdc.0 <= config.max_position_usdc.0,
@@ -3178,6 +3178,7 @@ impl SharedLedger {
             .and_then(|value| value.checked_add(u128::from(leverage_bps) - 1))
             .expect("required margin overflow")
             / u128::from(leverage_bps);
+        assert_agent_daily_loss_within(&agent_record_id, &config, margin);
         let agent_balance = self.balances.get(&agent_record_id).unwrap_or_default();
         assert!(agent_balance >= margin, "insufficient agent free balance");
         let reserved_margin = read_agent_reserved_margin(&agent_record_id)
@@ -7224,6 +7225,88 @@ mod tests {
         record_agent_realized_loss(&agent_id, 40_000);
         assert_agent_daily_loss_within(&agent_id, &config, 10_000);
         assert_agent_daily_loss_within(&agent_id, &config, 10_001);
+    }
+
+    #[test]
+    #[should_panic(expected = "agent daily loss limit reached")]
+    fn reservation_only_agent_open_enforces_daily_loss_budget() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[90; 32]);
+        let agent_key = SigningKey::from_bytes(&[89; 32]);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        let mut config = read_agent_config(&agent_id).unwrap();
+        config.max_daily_loss_usdc = U128(100_000);
+        write_agent_config(&agent_id, &config);
+        write_agent_reserved_margin(&agent_id, 50_000);
+        record_agent_realized_loss(&agent_id, 40_000);
+        let expiry = NOW_MS + 30_000;
+        let message = agent_open_message(
+            &agent_id,
+            "loss-budget-position",
+            "NVDA",
+            true,
+            U128(100_000),
+            10_000,
+            1,
+            expiry,
+        );
+        let signature = agent_key.sign(message.as_bytes());
+        contract.open_agent_position(
+            agent_id,
+            "loss-budget-position".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(100_000),
+            10_000,
+            1,
+            expiry,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "agent daily loss limit reached")]
+    fn active_agent_cannot_add_margin_beyond_daily_loss_budget() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[90; 32]);
+        let agent_key = SigningKey::from_bytes(&[89; 32]);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        let mut config = read_agent_config(&agent_id).unwrap();
+        config.max_daily_loss_usdc = U128(100);
+        write_agent_config(&agent_id, &config);
+        write_agent_reserved_margin(&agent_id, 90);
+        record_agent_realized_loss(&agent_id, 10);
+        contract.balances.insert(&agent_id, &100);
+        let position = PerpPosition {
+            account_id: agent_id.clone(),
+            position_id: "agent-margin-budget".to_string(),
+            market_id: "NVDA".to_string(),
+            is_long: true,
+            notional_usdc: U128(100),
+            margin_usdc: U128(90),
+            entry_price: U128(10_000_000_000),
+            opened_at_ms: NOW_MS,
+            funding_index: U128(0),
+            funding_remainder: 0,
+        };
+        write_perp_position(&agent_id, &position.position_id, &position);
+        let expiry = NOW_MS + 30_000;
+        let message = build_perp_margin_message(
+            &position,
+            "add",
+            U128(1),
+            1,
+            expiry,
+        );
+        let signature = owner_key.sign(message.as_bytes());
+        contract.add_perp_margin(
+            agent_id,
+            "agent-margin-budget".to_string(),
+            U128(1),
+            1,
+            expiry,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
     }
 
     fn fund_test_agent(
