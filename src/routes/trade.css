@@ -39,6 +39,11 @@
 .account-address { color: #d4dbe3; font-variant-numeric: tabular-nums; }
 .trade-main { width: 100%; max-width: 1760px; flex: 1 0 auto; margin: 0 auto; padding: 20px 32px 34px; }
 .market-overview { min-height: 86px; display: flex; align-items: center; gap: clamp(28px, 4.2vw, 70px); margin-bottom: 17px; padding: 0 4px 17px; border-bottom: 1px solid var(--trade-line-soft); }
+.stock-quote { display: grid; gap: 4px; margin-left: auto; min-width: 118px; color-scheme: dark; --tv-widget-background-color: transparent; --tv-widget-text-color: #eef2f6; --tv-widget-price-text-color: #eef2f6; --tv-widget-market-status-open-color: #75d6a8; --tv-widget-font-family: Inter, sans-serif; }
+.stock-quote > small { color: #788594; font-size: 11px; }
+.stock-quote-widget { min-height: 25px; color: #d0d9e3; font-size: 11px; }
+.stock-quote-widget tv-single-ticker { display: block; min-width: 125px; }
+.stock-quote-placeholder { color: #7d8997; }
 .market-selector-wrap { position: relative; z-index: 4; }
 .market-selector { min-width: 190px; display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; border: 1px solid var(--trade-line); border-radius: 11px; background: #121a24; text-align: left; }
 .market-selector:hover { border-color: #34475c; }
@@ -135,13 +140,16 @@
 .order-types button { height: 100%; padding: 0 1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #7e8b99; font-size: 11px; }
 .order-types button.active { border-bottom-color: var(--trade-accent); color: #e7edf4; }
 .order-types .order-info { width: 15px; height: 15px; align-self: center; margin-left: auto; border: 1px solid #566474; border-radius: 50%; color: #94a0ad; font-size: 10px; line-height: 13px; }
+.help-trigger { position: relative; }
+.trade-tooltip { position: absolute; z-index: 35; right: -5px; bottom: calc(100% + 9px); width: 230px; padding: 10px 12px; border: 1px solid #131c27; border-radius: 8px; background: #131c27; box-shadow: 0 10px 28px #0008; color: #d0d9e3; font-size: 10px; font-weight: 400; line-height: 1.5; text-align: left; opacity: 0; pointer-events: none; visibility: hidden; transform: translateY(3px); transition: opacity .14s ease, transform .14s ease, visibility .14s ease; }
+.help-trigger:hover .trade-tooltip, .help-trigger:focus-visible .trade-tooltip { opacity: 1; pointer-events: auto; visibility: visible; transform: translateY(0); }
 .field-label { display: block; margin-top: 17px; color: #a4afba; font-size: 10px; }
 .input-wrap { height: 43px; display: flex; align-items: center; gap: 7px; margin-top: 7px; padding: 0 10px; border: 1px solid #273442; border-radius: 8px; background: #0c1219; color: #8492a1; }
 .input-wrap:focus-within { border-color: #286eb7; box-shadow: 0 0 0 2px #0065d21a; }
 .input-wrap > span { color: #8f9ba8; font-size: 12px; }
 .input-wrap input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #eef2f6; font: inherit; font-size: 14px; font-variant-numeric: tabular-nums; }
-.input-unit { display: flex; align-items: center; gap: 4px; padding: 5px 0 5px 7px; border: 0; background: transparent; color: #d6dde5 !important; font-size: 10px; white-space: nowrap; }
-.input-unit svg { width: 12px; height: 12px; color: #8190a0; }
+.input-unit { display: flex; align-items: center; gap: 6px; padding-left: 7px; color: #d6dde5; font-size: 10px; white-space: nowrap; }
+.input-unit .usdc-icon { width: 17px; height: 17px; }
 .input-subtext { display: block; margin: 6px 1px 0; color: #718090; font-size: 9px; }
 .payment-label { margin-top: 17px; }
 .payment-label > span:first-child { color: #a4afba; }

@@ -24,6 +24,60 @@ function Icon({ name }: { name: 'chart' | 'chevron' | 'bell' | 'search' }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>
 }
 
+function UsdcIcon() {
+  return <svg className="usdc-icon" role="img" aria-label="USD Coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#2775CA"/><path d="M12 5v14m3.4-10.7c-.8-.8-2-1.2-3.5-1.2-1.9 0-3.3.9-3.3 2.4 0 3.3 6.7 1.3 6.7 4.7 0 1.5-1.4 2.4-3.3 2.4-1.5 0-2.8-.4-3.7-1.3" fill="none" stroke="white" strokeWidth="1.6" strokeLinecap="round"/></svg>
+}
+
+let singleTickerWidget: Promise<void> | undefined
+
+function loadSingleTickerWidget() {
+  if (customElements.get('tv-single-ticker')) return Promise.resolve()
+  if (!singleTickerWidget) {
+    singleTickerWidget = new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script')
+      script.type = 'module'
+      script.src = 'https://widgets.tradingview-widget.com/w/en/tv-single-ticker.js'
+      script.onload = () => { void customElements.whenDefined('tv-single-ticker').then(() => resolve()) }
+      script.onerror = () => reject(new Error('TradingView ticker failed to load'))
+      document.head.appendChild(script)
+    })
+  }
+  return singleTickerWidget
+}
+
+function StockQuote({ ticker }: { ticker: string }) {
+  const quoteRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = quoteRef.current
+    if (!container) return
+    let active = true
+    container.replaceChildren()
+    const placeholder = document.createElement('span')
+    placeholder.className = 'stock-quote-placeholder'
+    placeholder.textContent = 'Loading price'
+    container.appendChild(placeholder)
+
+    void loadSingleTickerWidget().then(() => {
+      if (!active || !quoteRef.current) return
+      const widget = document.createElement('tv-single-ticker')
+      widget.setAttribute('symbol', `NASDAQ:${ticker}`)
+      widget.setAttribute('theme', 'dark')
+      widget.setAttribute('hide-market-status', '')
+      container.replaceChildren(widget)
+    }).catch(() => {
+      if (active) placeholder.textContent = 'Price unavailable'
+    })
+
+    return () => {
+      active = false
+      container.replaceChildren()
+    }
+  }, [ticker])
+
+  return <div className="stock-quote"><small>Stock price</small><div className="stock-quote-widget" ref={quoteRef} aria-label={`${ticker} stock price`} /></div>
+}
+
 function PriceChart({ market }: { market: (typeof markets)[number] }) {
   const symbol = `NASDAQ:${market.ticker}`
   const chartRef = useRef<HTMLDivElement>(null)
@@ -196,6 +250,7 @@ function TradingPage() {
         <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-volume">24h volume<span className="metric-tooltip" id="tip-volume" role="tooltip">The total value of trades recorded in this market over the past 24 hours.</span></small><strong>Unavailable</strong></div>
         <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-open-interest">Open interest<span className="metric-tooltip" id="tip-open-interest" role="tooltip">The current total value of open positions in this market.</span></small><strong>Unavailable</strong></div>
         <div className="overview-metric funding"><small className="metric-label" tabIndex={0} aria-describedby="tip-funding">Funding / 8h<span className="metric-tooltip" id="tip-funding" role="tooltip">The funding rate applied for each 8-hour interval. Funding payments help keep the contract price aligned with its reference market.</span></small><strong>Unavailable</strong></div>
+        <StockQuote ticker={market.ticker}/>
       </section>
 
       <div className="trading-grid" style={{ '--order-width': `${orderWidth}px`, '--chart-height': `${chartHeight}px` } as CSSProperties}>
@@ -214,12 +269,12 @@ function TradingPage() {
         <aside className="order-card" aria-label="Place an order">
           <div className="order-card-heading"><h1>Place order</h1></div>
           <div className="side-switch"><button className={side === 'long' ? 'active long-active' : ''} onClick={() => setSide('long')}><span>↗</span> Long</button><button className={side === 'short' ? 'active short-active' : ''} onClick={() => setSide('short')}><span>↘</span> Short</button></div>
-          <div className="order-types"><button className={orderType === 'market' ? 'active' : ''} onClick={() => setOrderType('market')}>Market</button><button className={orderType === 'limit' ? 'active' : ''} onClick={() => setOrderType('limit')}>Limit</button><button className="order-info" title="Market orders execute at the current market price.">i</button></div>
+          <div className="order-types"><button className={orderType === 'market' ? 'active' : ''} onClick={() => setOrderType('market')}>Market</button><button className={orderType === 'limit' ? 'active' : ''} onClick={() => setOrderType('limit')}>Limit</button><button className="order-info help-trigger" aria-label="Market and limit order help" aria-describedby="tip-order-types">i<span className="trade-tooltip" id="tip-order-types" role="tooltip">Market orders execute promptly at available prices. Limit orders execute only at your limit price or better, and may not fill.</span></button></div>
           {orderType === 'limit' && <label className="field-label">Limit price<div className="input-wrap"><span>$</span><input inputMode="decimal" placeholder="Enter limit price" aria-label="Limit price"/></div></label>}
-          <label className="field-label">Order size<div className="input-wrap"><span>$</span><input inputMode="decimal" value={size} onChange={e => setSize(e.target.value)} aria-label="Order size"/><button className="input-unit">USDC <Icon name="chevron"/></button></div><small className="input-subtext">Notional size</small></label>
-          <label className="field-label payment-label"><span>Margin</span><span className="available-label">Available <b>$1,240.00</b> <button onClick={() => setPayment('1240')}>Max</button></span><div className="input-wrap"><span>$</span><input inputMode="decimal" value={payment} onChange={e => setPayment(e.target.value)} aria-label="Margin amount"/><button className="input-unit">USDC <Icon name="chevron"/></button></div></label>
+          <label className="field-label">Order size<div className="input-wrap"><span>$</span><input inputMode="decimal" value={size} onChange={e => setSize(e.target.value)} aria-label="Order size"/><span className="input-unit"><UsdcIcon/>USDC</span></div><small className="input-subtext">Notional size</small></label>
+          <label className="field-label payment-label"><span>Margin</span><span className="available-label">Available <b>$1,240.00</b> <button onClick={() => setPayment('1240')}>Max</button></span><div className="input-wrap"><span>$</span><input inputMode="decimal" value={payment} onChange={e => setPayment(e.target.value)} aria-label="Margin amount"/><span className="input-unit"><UsdcIcon/>USDC</span></div></label>
           <div className={`leverage-control ${side}`} style={{ '--leverage-progress': `${((leverage - 1) / 9) * 100}%` } as CSSProperties}><div className="leverage-heading"><span>Leverage</span><strong>{leverage.toFixed(1)}×</strong></div><input type="range" min="1" max="10" step="0.5" value={leverage} onChange={e => setLeverage(Number(e.target.value))} aria-label="Leverage"/><div className="range-labels">{[1, 3, 5, 7, 10].map(value => <span className={leverage >= value ? 'reached' : ''} key={value}>{value}×</span>)}</div></div>
-          <label className="tp-sl-toggle"><input type="checkbox"/><span className="custom-check"/><span>Take profit / Stop loss</span><button type="button" title="Set automatic close prices">i</button></label>
+          <label className="tp-sl-toggle"><input type="checkbox"/><span className="custom-check"/><span>Take profit / Stop loss</span><button className="help-trigger" type="button" aria-label="Take profit and stop loss help" aria-describedby="tip-tp-sl">i<span className="trade-tooltip" id="tip-tp-sl" role="tooltip">Set trigger prices to close a position automatically when reached. The final execution price may differ from your trigger.</span></button></label>
           <div className="order-summary"><div><span>Entry price</span><b>See chart</b></div><div><span>Position value</span><b>${positionValue.toFixed(2)}</b></div><div><span>Liquidation price</span><b>Unavailable</b></div><div><span>Trading fee</span><b>Unavailable</b></div></div>
           <button className={`submit-order ${side}`} onClick={() => setNotice('Order preview only. Connect trading to submit.')}>{side === 'long' ? 'Open long' : 'Open short'} <span>${positionValue.toFixed(2)}</span></button>
           <p className="order-disclaimer">Orders are simulated in this preview.</p>
