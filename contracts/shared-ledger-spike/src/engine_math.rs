@@ -87,7 +87,7 @@ pub fn funding_rate_bps_per_hour(
     max_rate_bps: u16,
 ) -> u16 {
     if vault_assets == 0 {
-        return max_rate_bps.min(base_rate_bps);
+        return max_rate_bps;
     }
     let variable = skew_notional
         .saturating_mul(u128::from(max_rate_bps.saturating_sub(base_rate_bps)))
@@ -132,6 +132,7 @@ mod tests {
     #[test]
     fn funding_rate_is_skew_proportional_and_capped() {
         assert_eq!(funding_rate_bps_per_hour(0, 1_000, 1, 10), 1);
+        assert_eq!(funding_rate_bps_per_hour(1, 0, 1, 10), 10);
         assert_eq!(funding_rate_bps_per_hour(500, 1_000, 1, 10), 5);
         assert_eq!(funding_rate_bps_per_hour(5_000, 1_000, 1, 10), 10);
     }

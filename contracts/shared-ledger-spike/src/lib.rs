@@ -442,11 +442,7 @@ impl SharedLedger {
     }
 
     pub fn vault_available_payout(&self) -> U128 {
-        let balance = self
-            .balances
-            .get(&SHARED_VAULT_RECORD_ID.to_string())
-            .unwrap_or_default();
-        U128(balance.saturating_sub(read_vault_reserved_payout()))
+        U128(vault_risk_available(&self.balances))
     }
 
     pub fn vault_record_id(&self) -> String {
@@ -559,11 +555,14 @@ impl SharedLedger {
             .long_notional_usdc
             .0
             .abs_diff(exposure.short_notional_usdc.0);
+        let vault_assets = self
+            .balances
+            .get(&SHARED_VAULT_RECORD_ID.to_string())
+            .unwrap_or_default()
+            .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY));
         crate::engine_math::funding_rate_bps_per_hour(
             skew,
-            self.balances
-                .get(&SHARED_VAULT_RECORD_ID.to_string())
-                .unwrap_or_default(),
+            vault_assets,
             PERP_BASE_FUNDING_BPS_HOURLY,
             PERP_MAX_FUNDING_BPS_HOURLY,
         )
@@ -7962,6 +7961,27 @@ mod tests {
         assert_eq!(position.margin_usdc, U128(99_900));
         assert_eq!(contract.vault_balance().0, vault_before + 100);
         assert_eq!(contract.perp_total_margin(), U128(99_900));
+    }
+
+    #[test]
+    fn vault_views_use_net_assets_and_deduct_all_reserved_liabilities() {
+        let mut contract = setup(TOKEN);
+        contract
+            .balances
+            .insert(&SHARED_VAULT_RECORD_ID.to_string(), &200);
+        write_u128_storage(PERP_INSURANCE_KEY, 150);
+        write_u128_storage(PERP_DEFERRED_TOTAL_KEY, 10);
+        write_vault_reserved_payout(20);
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: U128(3),
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+
+        assert_eq!(contract.vault_available_payout(), U128(20));
+        assert_eq!(contract.perp_funding_rate_bps_per_hour("NVDA".to_string()), 2);
     }
 
     #[test]
