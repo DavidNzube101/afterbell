@@ -5548,6 +5548,91 @@ mod tests {
     }
 
     #[test]
+    fn isolated_loss_above_margin_does_not_spend_insurance_or_pause_perps() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[88; 32]);
+        let quote_key = SigningKey::from_bytes(&[87; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        write_storage_credit(USER, u128::MAX - 10_u128.pow(30));
+        fund_record(&mut contract, SHARED_VAULT_RECORD_ID, 10_000, "loss-vault");
+        write_market_price(&MarketPrice {
+            market_id: "NVDA".to_string(),
+            price: U128(5_000_000_000),
+            observed_at_ms: NOW_MS,
+            sequence: 1,
+        });
+        write_oracle_health(
+            "NVDA",
+            &OracleHealth {
+                circuit_broken: false,
+                confidence_bps: 1,
+                spot_twap_deviation_bps: 0,
+            },
+        );
+        write_perp_position(
+            USER,
+            "deep-loss",
+            &PerpPosition {
+                account_id: USER.to_string(),
+                position_id: "deep-loss".to_string(),
+                market_id: "NVDA".to_string(),
+                is_long: true,
+                notional_usdc: U128(1_000),
+                margin_usdc: U128(100),
+                entry_price: U128(10_000_000_000),
+                opened_at_ms: NOW_MS,
+                funding_index: U128(0),
+                funding_remainder: 0,
+            },
+        );
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: U128(1_000),
+                long_base_units: U128(perp_base_units(1_000, 10_000_000_000)),
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        write_vault_reserved_payout(1_000);
+        write_u128_storage(PERP_TOTAL_MARGIN_KEY, 100);
+        write_u128_storage(PERP_TOTAL_OI_KEY, 1_000);
+        write_i128_storage(PERP_GLOBAL_NET_KEY, 1_000);
+        write_perp_open_notional(USER, 1_000);
+        write_perp_position_count(USER, 1);
+        write_u128_storage(PERP_INSURANCE_KEY, 200);
+        let expiry = NOW_MS + 30_000;
+        let message = contract.close_perp_position_message(
+            USER.to_string(),
+            "deep-loss".to_string(),
+            U128(5_000_000_000),
+            0,
+            1,
+            1,
+            1,
+            expiry,
+        );
+        let owner_signature = owner_key.sign(message.as_bytes());
+        let quote_signature = quote_key.sign(message.as_bytes());
+        contract.close_perp_position(
+            USER.to_string(),
+            "deep-loss".to_string(),
+            U128(5_000_000_000),
+            0,
+            1,
+            1,
+            1,
+            expiry,
+            Base64VecU8::from(owner_signature.to_bytes().to_vec()),
+            Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+        );
+        assert_eq!(contract.perp_insurance(), U128(200));
+        assert_eq!(contract.perp_bad_debt(), U128(0));
+        assert!(!contract.perp_paused());
+        assert_eq!(contract.vault_balance(), U128(10_100));
+    }
+
+    #[test]
     fn aggregated_perp_exposure_matches_sum_of_position_pnl() {
         let first_base = perp_base_units(100, 100);
         let second_base = perp_base_units(100, 200);
