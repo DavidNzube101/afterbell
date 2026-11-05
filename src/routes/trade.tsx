@@ -237,6 +237,7 @@ function TradingPage() {
   const [notice, setNotice] = useState('')
   const [orderWidth, setOrderWidth] = useState(342)
   const [chartHeight, setChartHeight] = useState(485)
+  const marketMenuRef = useRef<HTMLDivElement>(null)
   const dragState = useRef<{ axis: 'x' | 'y'; start: number; initial: number } | null>(null)
   const market = markets[marketIndex]
   const filteredMarkets = markets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase()))
@@ -250,6 +251,15 @@ function TradingPage() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [notificationsOpen, riskOpen, sharePosition])
+
+  useEffect(() => {
+    if (!marketMenu) return
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !marketMenuRef.current?.contains(event.target)) setMarketMenu(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+  }, [marketMenu])
 
   function chooseCustomShareBackground(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
@@ -363,7 +373,7 @@ function TradingPage() {
 
     <div className="trade-main">
       <section className="market-overview">
-        <div className="market-selector-wrap">
+        <div className="market-selector-wrap" ref={marketMenuRef}>
           <button className="market-selector" aria-expanded={marketMenu} onClick={() => { setMarketMenu(open => !open); setMarketSearch('') }}><span className="stock-avatar"><TickerIcon ticker={market.ticker} size={20}/></span><span className="market-selector-text"><b>{market.ticker}</b></span><Icon name="chevron"/></button>
           {marketMenu && <div className="market-menu"><label className="market-search"><Icon name="search"/><input autoFocus value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search stocks" aria-label="Search stocks"/></label><div className="market-menu-list">{filteredMarkets.map((item) => { const i = markets.indexOf(item); return <button key={item.ticker} className={i === marketIndex ? 'selected' : ''} onClick={() => { setMarketIndex(i); setMarketMenu(false); setMarketSearch('') }}><span className="stock-avatar small"><TickerIcon ticker={item.ticker} size={17}/></span><span><b>{item.ticker}</b><small>{item.name} / US equity</small></span></button> })}{filteredMarkets.length === 0 && <p className="market-empty">No stocks found.</p>}</div></div>}
         </div>
