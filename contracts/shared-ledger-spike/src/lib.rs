@@ -1295,15 +1295,8 @@ impl SharedLedger {
             .expect("margin split overflow")
             / position.notional_usdc.0;
         let fee = crate::engine_math::fee_ceil(reduce_notional.0, fee_bps).expect("fee overflow");
-        let post_trade = i128::try_from(margin_part)
-            .expect("margin overflow")
-            .saturating_add(realized_pnl)
-            .saturating_sub(i128::try_from(fee).expect("fee overflow"));
-        let loss = if realized_pnl < 0 {
-            realized_pnl.unsigned_abs().min(margin_part)
-        } else {
-            0
-        };
+        let (loss, fee_collected, margin_credit, bad_debt) =
+            perp_settlement_components(margin_part, realized_pnl, fee);
         if agent_config.is_some() && realized_pnl < 0 {
             record_agent_realized_loss(&account_id, realized_pnl.unsigned_abs());
         }
@@ -1314,14 +1307,14 @@ impl SharedLedger {
             .filter(|config| !config.enabled)
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
-        let mut credit = post_trade.max(0) as u128;
+        let mut credit = margin_credit;
         if realized_pnl > 0 {
             let free = vault_cash
                 .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
                 .saturating_sub(read_u128_storage(PERP_DEFERRED_TOTAL_KEY))
                 .saturating_sub(read_vault_reserved_payout().saturating_sub(reduce_notional.0));
             let paid = (realized_pnl as u128).min(free);
-            credit = margin_part.saturating_sub(fee).saturating_add(paid);
+            credit = margin_credit.saturating_add(paid);
             let unpaid = (realized_pnl as u128).saturating_sub(paid);
             if unpaid > 0 {
                 write_perp_deferred(
@@ -1339,26 +1332,27 @@ impl SharedLedger {
             }
             self.balances.insert(
                 &vault_id,
-                &vault_cash.saturating_add(fee).saturating_sub(paid),
+                &vault_cash
+                    .saturating_add(fee_collected)
+                    .saturating_sub(paid),
             );
         } else {
             self.balances.insert(
                 &vault_id,
                 &vault_cash
                     .checked_add(loss)
-                    .and_then(|v| v.checked_add(fee))
+                    .and_then(|v| v.checked_add(fee_collected))
                     .expect("vault overflow"),
             );
         }
-        if post_trade < 0 {
-            let shortfall = post_trade.unsigned_abs();
-            let covered = shortfall.min(read_u128_storage(PERP_INSURANCE_KEY));
+        if bad_debt != 0 {
+            let covered = bad_debt.min(read_u128_storage(PERP_INSURANCE_KEY));
             write_u128_storage(
                 PERP_INSURANCE_KEY,
                 read_u128_storage(PERP_INSURANCE_KEY) - covered,
             );
             let debt = read_u128_storage(PERP_BAD_DEBT_KEY)
-                .checked_add(shortfall - covered)
+                .checked_add(bad_debt - covered)
                 .expect("bad debt overflow");
             write_u128_storage(PERP_BAD_DEBT_KEY, debt);
             if debt > 0 {
@@ -1366,11 +1360,11 @@ impl SharedLedger {
             }
             credit = 0;
         }
-        if fee > 0 {
+        if fee_collected > 0 {
             write_u128_storage(
                 PERP_INSURANCE_KEY,
                 read_u128_storage(PERP_INSURANCE_KEY)
-                    .checked_add(fee / 4)
+                    .checked_add(fee_collected / 4)
                     .expect("insurance overflow"),
             );
         }
@@ -1565,15 +1559,8 @@ impl SharedLedger {
         .expect("PnL overflow");
         let close_fee =
             crate::engine_math::fee_ceil(position.notional_usdc.0, fee_bps).expect("fee overflow");
-        let margin = i128::try_from(position.margin_usdc.0).expect("margin overflow");
-        let post_trade = margin
-            .saturating_add(pnl)
-            .saturating_sub(i128::try_from(close_fee).expect("fee overflow"));
-        let loss = if pnl < 0 {
-            pnl.unsigned_abs().min(position.margin_usdc.0)
-        } else {
-            0
-        };
+        let (loss, fee_collected, margin_credit, bad_debt) =
+            perp_settlement_components(position.margin_usdc.0, pnl, close_fee);
         if agent_config.is_some() && pnl < 0 {
             record_agent_realized_loss(&account_id, pnl.unsigned_abs());
         }
@@ -1584,11 +1571,7 @@ impl SharedLedger {
             .filter(|config| !config.enabled)
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
-        let mut user_credit = if post_trade > 0 {
-            post_trade as u128
-        } else {
-            0
-        };
+        let mut user_credit = margin_credit;
         if pnl > 0 {
             let free = vault_balance
                 .saturating_sub(read_u128_storage(PERP_INSURANCE_KEY))
@@ -1600,7 +1583,7 @@ impl SharedLedger {
             user_credit = position
                 .margin_usdc
                 .0
-                .saturating_sub(close_fee)
+                .saturating_sub(fee_collected)
                 .saturating_add(paid);
             let unpaid = (pnl as u128).saturating_sub(paid);
             if unpaid != 0 {
@@ -1619,26 +1602,27 @@ impl SharedLedger {
             }
             self.balances.insert(
                 &vault_id,
-                &vault_balance.saturating_add(close_fee).saturating_sub(paid),
+                &vault_balance
+                    .saturating_add(fee_collected)
+                    .saturating_sub(paid),
             );
         } else {
             self.balances.insert(
                 &vault_id,
                 &vault_balance
                     .checked_add(loss)
-                    .and_then(|v| v.checked_add(close_fee))
+                    .and_then(|v| v.checked_add(fee_collected))
                     .expect("vault overflow"),
             );
         }
-        if post_trade < 0 {
-            let shortfall = post_trade.unsigned_abs();
-            let covered = shortfall.min(read_u128_storage(PERP_INSURANCE_KEY));
+        if bad_debt != 0 {
+            let covered = bad_debt.min(read_u128_storage(PERP_INSURANCE_KEY));
             write_u128_storage(
                 PERP_INSURANCE_KEY,
                 read_u128_storage(PERP_INSURANCE_KEY) - covered,
             );
             let debt = read_u128_storage(PERP_BAD_DEBT_KEY)
-                .checked_add(shortfall - covered)
+                .checked_add(bad_debt - covered)
                 .expect("bad debt overflow");
             write_u128_storage(PERP_BAD_DEBT_KEY, debt);
             if debt != 0 {
@@ -1646,8 +1630,8 @@ impl SharedLedger {
             }
             user_credit = 0;
         }
-        if close_fee != 0 {
-            let insurance_fee = close_fee / 4;
+        if fee_collected != 0 {
+            let insurance_fee = fee_collected / 4;
             write_u128_storage(
                 PERP_INSURANCE_KEY,
                 read_u128_storage(PERP_INSURANCE_KEY)
@@ -4332,6 +4316,30 @@ fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
     }
 }
 
+/// Splits a perp settlement into amounts backed by trader margin. Fees are
+/// collected only from margin left after realized losses; an unpaid fee is
+/// waived rather than being minted into vault accounting or treated as debt.
+fn perp_settlement_components(
+    margin: u128,
+    realized_pnl: i128,
+    fee: u128,
+) -> (u128, u128, u128, u128) {
+    let loss = if realized_pnl < 0 {
+        realized_pnl.unsigned_abs().min(margin)
+    } else {
+        0
+    };
+    let margin_after_loss = margin - loss;
+    let fee_collected = fee.min(margin_after_loss);
+    let margin_credit = margin_after_loss - fee_collected;
+    let bad_debt = if realized_pnl < 0 {
+        realized_pnl.unsigned_abs() - loss
+    } else {
+        0
+    };
+    (loss, fee_collected, margin_credit, bad_debt)
+}
+
 fn validate_close_mark(
     position: &AgentPosition,
     reference_price: U128,
@@ -5344,6 +5352,14 @@ mod tests {
             .block_timestamp(NOW_MS * 1_000_000);
         testing_env!(context.build());
         SharedLedger::new(TOKEN.parse().unwrap(), "a1.near".parse().unwrap())
+    }
+
+    #[test]
+    fn perp_settlement_never_collects_fees_beyond_remaining_margin() {
+        assert_eq!(perp_settlement_components(100, -100, 10), (100, 0, 0, 0));
+        assert_eq!(perp_settlement_components(100, -120, 10), (100, 0, 0, 20));
+        assert_eq!(perp_settlement_components(100, 20, 150), (0, 100, 0, 0));
+        assert_eq!(perp_settlement_components(100, -40, 30), (40, 30, 30, 0));
     }
 
     fn deposit_msg(id: &str, account_id: &str) -> String {
