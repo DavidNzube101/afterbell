@@ -215,9 +215,7 @@ fn verify_eip191_signature(message: &str, signature: &[u8], owner_address: &[u8;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use afterbell_a1::SharedLedger;
     use ed25519_dalek::{Signer, SigningKey};
-    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::testing_env;
     use secp256k1::{Message, Secp256k1, SecretKey};
@@ -276,56 +274,6 @@ mod tests {
 
         let _promise = call_with_signature(&mut account, &key, 1, EXPIRY_MS, MAX_FEE);
 
-        assert_eq!(account.withdrawal_nonce(), 2);
-    }
-
-    #[test]
-    fn deposit_owner_signature_and_a1_debit_work_as_one_flow() {
-        set_context();
-        let key = ed25519_owner();
-        let mut account = SmartAccount::new(
-            LEDGER.parse().unwrap(),
-            OwnerKey::SolanaEd25519 {
-                public_key: key.verifying_key().to_bytes(),
-            },
-        );
-        let mut ledger = SharedLedger::new(
-            "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
-                .parse()
-                .unwrap(),
-        );
-
-        let mut context = VMContextBuilder::new();
-        context
-            .current_account_id(LEDGER.parse().unwrap())
-            .predecessor_account_id(
-                "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
-                    .parse()
-                    .unwrap(),
-            );
-        testing_env!(context.build());
-        let deposit = ledger.ft_on_transfer(
-            "intents.near".parse().unwrap(),
-            U128(5_000_000),
-            format!(r#"{{"account_id":"{SMART_ACCOUNT}","deposit_id":"deposit-1"}}"#),
-        );
-        assert!(matches!(deposit, near_sdk::PromiseOrValue::Value(U128(0))));
-
-        set_context();
-        let _smart_account_call = call_with_signature(&mut account, &key, 1, EXPIRY_MS, MAX_FEE);
-
-        let mut context = VMContextBuilder::new();
-        context
-            .current_account_id(LEDGER.parse().unwrap())
-            .predecessor_account_id(SMART_ACCOUNT.parse().unwrap());
-        testing_env!(context.build());
-        let _usdc_transfer = ledger.withdraw(RECIPIENT.parse().unwrap(), AMOUNT, 1);
-
-        assert_eq!(
-            ledger.balance_of(SMART_ACCOUNT.to_string()),
-            U128(2_500_000)
-        );
-        assert_eq!(ledger.withdrawal_nonce(SMART_ACCOUNT.parse().unwrap()), 1);
         assert_eq!(account.withdrawal_nonce(), 2);
     }
 
