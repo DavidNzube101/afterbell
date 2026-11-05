@@ -216,9 +216,11 @@
 .drawer-heading p { margin: 6px 0 0; color: #818d9b; font-size: 11px; }
 .drawer-close { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #293644; border-radius: 8px; background: #141c26; color: #a9b5c1; font-size: 20px; line-height: 1; }
 .drawer-close:hover { border-color: #40556a; color: white; }
+.notification-drawer .drawer-close { border-color: #0f151d; background: #0f151d; }
+.notification-drawer .drawer-close:hover { border-color: #18232f; background: #18232f; }
 .drawer-actions { min-height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 23px; border-bottom: 1px solid #202b37; color: #778493; font-size: 10px; }
-.drawer-actions button { padding: 6px 9px; border: 1px solid #394859; border-radius: 6px; background: transparent; color: #c3cfdb; font-size: 10px; }
-.drawer-actions button:hover:not(:disabled) { border-color: #e0757b; color: #ff9ba1; }
+.drawer-actions button { padding: 6px 9px; border: 1px solid #141c26; border-radius: 6px; background: #141c26; color: #c3cfdb; font-size: 10px; }
+.drawer-actions button:hover:not(:disabled) { border-color: #2b181c; background: #2b181c; color: #ff9ba1; }
 .drawer-actions button:disabled { opacity: .4; cursor: default; }
 .notification-list { flex: 1; overflow-y: auto; }
 .notification-item { display: flex; gap: 12px; padding: 18px 22px; border-bottom: 1px solid #1d2732; }
@@ -228,9 +230,9 @@
 .notification-title-row h3 { margin: 0; color: #e2e8ef; font-size: 11px; font-weight: 600; }
 .notification-title-row time { color: #6f7c8a; font-size: 9px; white-space: nowrap; }
 .notification-body p { margin: 7px 0 9px; color: #929eab; font-size: 10px; line-height: 1.55; }
-.notification-delete { width: 30px; height: 30px; display: grid; flex: 0 0 30px; place-items: center; align-self: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #7e8b99; }
+.notification-delete { width: 30px; height: 30px; display: grid; flex: 0 0 30px; place-items: center; align-self: center; border: 1px solid #141c26; border-radius: 7px; background: #141c26; color: #7e8b99; }
 .notification-delete svg { width: 15px; height: 15px; }
-.notification-delete:hover { border-color: #5c3036; background: #2b181c; color: #f08a91; }
+.notification-delete:hover { border-color: #2b181c; background: #2b181c; color: #f08a91; }
 .notifications-empty { display: grid; justify-items: center; padding: 70px 25px; color: #7e8b99; text-align: center; }
 .notifications-empty > span { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid #294839; border-radius: 50%; background: #13251d; color: #55d69e; font-size: 17px; }
 .notifications-empty h3 { margin: 15px 0 5px; color: #dfe7ee; font-size: 13px; }
