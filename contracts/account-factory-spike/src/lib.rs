@@ -1,5 +1,5 @@
 use near_sdk::json_types::Base64VecU8;
-use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise};
+use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseError};
 use serde::Serialize;
 
 const NEP_413_MESSAGE_PREFIX: u32 = (1 << 31) + 413;
@@ -26,6 +26,13 @@ pub struct AccountCreationSigningPayload {
 struct SmartAccountInitArgs {
     ledger_contract: AccountId,
     owner: OwnerKey,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct CreationCallbackArgs {
+    refund_to: AccountId,
+    amount: near_sdk::json_types::U128,
 }
 
 #[near(contract_state)]
@@ -122,6 +129,12 @@ impl AccountFactory {
         })
         .expect("serialize smart-account initializer arguments");
 
+        let callback_args = near_sdk::serde_json::to_vec(&CreationCallbackArgs {
+            refund_to: env::predecessor_account_id(),
+            amount: near_sdk::json_types::U128(attached_deposit.as_yoctonear()),
+        })
+        .expect("serialize creation callback arguments");
+
         Promise::new(account_id)
             .create_account()
             .transfer(attached_deposit)
@@ -132,6 +145,31 @@ impl AccountFactory {
                 NearToken::from_yoctonear(0),
                 Gas::from_tgas(30),
             )
+            .then(Promise::new(factory_id).function_call(
+                "on_create_account_complete".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(10),
+            ))
+    }
+
+    /// Return the attached account deposit if account creation or initialization
+    /// fails. The failed child-account action batch rolls back before this
+    /// callback runs, leaving the deposit in the factory to refund.
+    #[private]
+    pub fn on_create_account_complete(
+        &mut self,
+        refund_to: AccountId,
+        amount: near_sdk::json_types::U128,
+        #[callback_result] result: Result<(), PromiseError>,
+    ) -> bool {
+        if result.is_ok() {
+            return true;
+        }
+        Promise::new(refund_to)
+            .transfer(NearToken::from_yoctonear(amount.0))
+            .detach();
+        false
     }
 }
 
@@ -296,6 +334,24 @@ mod tests {
             Base64VecU8(signature.to_bytes().to_vec()),
         );
         let _ = promise;
+    }
+
+    #[test]
+    fn failed_child_creation_schedules_refund_to_original_caller() {
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id(FACTORY.parse().unwrap())
+            .predecessor_account_id(FACTORY.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        let mut contract = factory();
+        let refunded = contract.on_create_account_complete(
+            "david.near".parse().unwrap(),
+            near_sdk::json_types::U128(5_000_000_000_000_000_000_000_000),
+            Err(PromiseError::Failed),
+        );
+        assert!(!refunded);
+        assert!(!near_sdk::test_utils::get_created_receipts().is_empty());
     }
 
     #[test]
