@@ -1244,14 +1244,13 @@ impl SharedLedger {
             "execution price exceeds signed slippage"
         );
         let agent_config = read_agent_config(&account_id);
-        let expected_nonce = if agent_config.is_some() {
-            read_agent_action_nonce(&account_id)
-        } else {
-            read_user_perp_nonce(&account_id)
-        }
-        .checked_add(1)
-        .expect("trading nonce overflow");
-        assert_eq!(nonce, expected_nonce, "invalid trading nonce");
+        let owner_record = position_owner_record(&account_id);
+        let owner_nonce = read_user_perp_nonce(&owner_record)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        let agent_nonce = read_agent_action_nonce(&account_id)
+            .checked_add(1)
+            .expect("agent action nonce overflow");
         assert_valid_short_trade_expiry(expires_at_ms);
         let message = perp_reduce_message(
             &position,
@@ -1263,9 +1262,24 @@ impl SharedLedger {
             nonce,
             expires_at_ms,
         );
-        if let Some(config) = &agent_config {
+        let owner_signed = agent_config
+            .as_ref()
+            .and_then(|config| read_owner(&config.user_record_id))
+            .or_else(|| {
+                if agent_config.is_none() {
+                    read_owner(&account_id)
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|owner| {
+                nonce == owner_nonce
+                    && verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce)
+            });
+        let agent_signed = if let Some(config) = &agent_config {
             let now = env::block_timestamp() / 1_000_000;
-            let agent_signed = config.enabled
+            nonce == agent_nonce
+                && config.enabled
                 && now < config.expires_at_ms
                 && expires_at_ms <= config.expires_at_ms
                 && verify_owner_signature(
@@ -1273,18 +1287,11 @@ impl SharedLedger {
                     &message,
                     owner_signature.as_ref(),
                     nonce,
-                );
-            let owner_signed = read_owner(&config.user_record_id).is_some_and(|owner| {
-                verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce)
-            });
-            assert!(agent_signed || owner_signed, "invalid reduce authorization");
+                )
         } else {
-            let owner = read_owner(&account_id).expect("owner is not registered");
-            assert!(
-                verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
-                "invalid owner signature"
-            );
-        }
+            false
+        };
+        assert!(owner_signed || agent_signed, "invalid reduce authorization");
         let quote_signer = read_perp_quote_signer().expect("quote signer is not configured");
         assert!(
             verify_owner_signature(&quote_signer, &message, quote_signature.as_ref(), nonce),
@@ -1455,7 +1462,11 @@ impl SharedLedger {
             read_perp_open_notional(&account_id).saturating_sub(reduce_notional.0),
         );
         if let Some(config) = &agent_config {
-            write_agent_action_nonce(&account_id, nonce);
+            if agent_signed {
+                write_agent_action_nonce(&account_id, nonce);
+            } else {
+                write_user_perp_nonce(&owner_record, nonce);
+            }
             write_agent_open_notional(
                 &account_id,
                 read_agent_open_notional(&account_id).saturating_sub(reduce_notional.0),
@@ -1509,14 +1520,13 @@ impl SharedLedger {
             "execution price exceeds signed slippage"
         );
         let agent_config = read_agent_config(&account_id);
-        let expected_nonce = if agent_config.is_some() {
-            read_agent_action_nonce(&account_id)
-        } else {
-            read_user_perp_nonce(&account_id)
-        }
-        .checked_add(1)
-        .expect("nonce overflow");
-        assert_eq!(nonce, expected_nonce, "invalid trading nonce");
+        let owner_record = position_owner_record(&account_id);
+        let owner_nonce = read_user_perp_nonce(&owner_record)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        let agent_nonce = read_agent_action_nonce(&account_id)
+            .checked_add(1)
+            .expect("agent action nonce overflow");
         assert_valid_short_trade_expiry(expires_at_ms);
         let message = perp_close_message(
             &position,
@@ -1527,9 +1537,24 @@ impl SharedLedger {
             nonce,
             expires_at_ms,
         );
-        if let Some(config) = &agent_config {
+        let owner_signed = agent_config
+            .as_ref()
+            .and_then(|config| read_owner(&config.user_record_id))
+            .or_else(|| {
+                if agent_config.is_none() {
+                    read_owner(&account_id)
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|owner| {
+                nonce == owner_nonce
+                    && verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce)
+            });
+        let agent_signed = if let Some(config) = &agent_config {
             let now = env::block_timestamp() / 1_000_000;
-            let agent_signed = config.enabled
+            nonce == agent_nonce
+                && config.enabled
                 && now < config.expires_at_ms
                 && expires_at_ms <= config.expires_at_ms
                 && verify_owner_signature(
@@ -1537,23 +1562,26 @@ impl SharedLedger {
                     &message,
                     owner_signature.as_ref(),
                     nonce,
-                );
-            let owner_signed = read_owner(&config.user_record_id).is_some_and(|owner| {
-                verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce)
-            });
-            assert!(agent_signed || owner_signed, "invalid close authorization");
+                )
         } else {
-            let owner = read_owner(&account_id).expect("owner is not registered");
+            false
+        };
+        assert!(owner_signed || agent_signed, "invalid close authorization");
+        let emergency_owner_close = quote_signature.0.is_empty();
+        if emergency_owner_close {
+            assert!(owner_signed, "emergency close requires owner signature");
+            assert_eq!(
+                reference_price.0, mark.price.0,
+                "emergency close must use mark"
+            );
+            assert_eq!(max_slippage_bps, 0, "emergency close slippage must be zero");
+        } else {
+            let signer = read_perp_quote_signer().expect("quote signer is not configured");
             assert!(
-                verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
-                "invalid owner signature"
+                verify_owner_signature(&signer, &message, quote_signature.as_ref(), nonce),
+                "invalid quote signature"
             );
         }
-        let signer = read_perp_quote_signer().expect("quote signer is not configured");
-        assert!(
-            verify_owner_signature(&signer, &message, quote_signature.as_ref(), nonce),
-            "invalid quote signature"
-        );
         // Funding may create balance state, and an underfunded vault may
         // create a deferred-profit claim below. Meter the whole operation.
         let storage_before = env::storage_usage();
@@ -1710,7 +1738,11 @@ impl SharedLedger {
         );
         delete_perp_position(&account_id, &position_id);
         if let Some(config) = &agent_config {
-            write_agent_action_nonce(&account_id, nonce);
+            if agent_signed {
+                write_agent_action_nonce(&account_id, nonce);
+            } else {
+                write_user_perp_nonce(&owner_record, nonce);
+            }
             write_agent_open_notional(
                 &account_id,
                 read_agent_open_notional(&account_id).saturating_sub(position.notional_usdc.0),
@@ -7047,25 +7079,24 @@ mod tests {
             agent_id.clone(),
             "agent-nvda-1".to_string(),
             U128(10_000_000_000),
-            100,
+            0,
             1,
             6,
-            2,
+            1,
             close_expiry,
         );
         let owner_close_signature = owner_key.sign(close_message.as_bytes());
-        let quote_signature = quote_key.sign(close_message.as_bytes());
         contract.close_perp_position(
             agent_id.clone(),
             "agent-nvda-1".to_string(),
             U128(10_000_000_000),
-            100,
+            0,
             1,
             6,
-            2,
+            1,
             close_expiry,
             Base64VecU8::from(owner_close_signature.to_bytes().to_vec()),
-            Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+            Base64VecU8::from(Vec::new()),
         );
         assert!(contract
             .perp_position(agent_id.clone(), "agent-nvda-1".to_string())
