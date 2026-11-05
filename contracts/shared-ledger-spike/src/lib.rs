@@ -71,6 +71,7 @@ const PERP_ORACLE_SIGNER_DELAY_MS: u64 = 20 * 60 * 1000;
 const MAX_PERP_MARKETS: usize = 64;
 const MAX_PERP_POSITIONS_PER_RECORD: u64 = 64;
 const MAX_PERP_POSITION_USDC: u128 = 5_000_000_000_000;
+const PERP_BASE_UNITS_SCALE: u128 = 1_000_000_000_000_000_000;
 const MAX_PERP_LEVERAGE_BPS: u32 = 50_000;
 const MAX_PERP_FEE_BPS: u16 = 100;
 const MAX_PERP_SLIPPAGE_BPS: u16 = 1_000;
@@ -233,8 +234,15 @@ pub struct PerpPosition {
 pub struct PerpExposure {
     pub long_notional_usdc: U128,
     pub short_notional_usdc: U128,
+    // Legacy arithmetic entry values remain readable for state compatibility.
+    #[serde(default)]
     pub long_entry_value: U128,
+    #[serde(default)]
     pub short_entry_value: U128,
+    #[serde(default)]
+    pub long_base_units: U128,
+    #[serde(default)]
+    pub short_base_units: U128,
     pub long_funding_index: U128,
     pub short_funding_index: U128,
     pub funding_updated_at_ms: u64,
@@ -1015,13 +1023,8 @@ impl SharedLedger {
         )
         .expect("PnL overflow");
         let next_margin = position.margin_usdc.0 - amount.0;
-        let entry_value = position
-            .notional_usdc
-            .0
-            .checked_mul(position.entry_price.0)
-            .expect("entry value overflow");
-        let current_notional =
-            revalue_exposure(position.notional_usdc.0, entry_value, mark.price.0);
+        let base_units = perp_base_units(position.notional_usdc.0, position.entry_price.0);
+        let current_notional = revalue_exposure(base_units, mark.price.0);
         assert!(
             !crate::engine_math::is_liquidatable(
                 next_margin,
@@ -1369,10 +1372,6 @@ impl SharedLedger {
             );
         }
         let exposure = read_perp_exposure(&position.market_id);
-        let entry_value = reduce_notional
-            .0
-            .checked_mul(position.entry_price.0)
-            .expect("entry value overflow");
         position.funding_remainder = position.funding_remainder.saturating_mul(
             i128::try_from(position.notional_usdc.0 - reduce_notional.0)
                 .expect("position size overflow"),
@@ -1388,11 +1387,11 @@ impl SharedLedger {
                     .checked_sub(reduce_notional.0)
                     .expect("long exposure invariant"),
             );
-            next.long_entry_value = U128(
-                next.long_entry_value
+            next.long_base_units = U128(
+                next.long_base_units
                     .0
-                    .checked_sub(entry_value)
-                    .expect("long entry value invariant"),
+                    .checked_sub(perp_base_units(reduce_notional.0, position.entry_price.0))
+                    .expect("long base exposure invariant"),
             );
             write_perp_exposure(&next, &position.market_id);
         } else {
@@ -1405,11 +1404,11 @@ impl SharedLedger {
                     .checked_sub(reduce_notional.0)
                     .expect("short exposure invariant"),
             );
-            next.short_entry_value = U128(
-                next.short_entry_value
+            next.short_base_units = U128(
+                next.short_base_units
                     .0
-                    .checked_sub(entry_value)
-                    .expect("short entry value invariant"),
+                    .checked_sub(perp_base_units(reduce_notional.0, position.entry_price.0))
+                    .expect("short base exposure invariant"),
             );
             write_perp_exposure(&next, &position.market_id);
         }
@@ -1647,11 +1646,7 @@ impl SharedLedger {
             );
         }
         let exposure = read_perp_exposure(&position.market_id);
-        let entry_value = position
-            .notional_usdc
-            .0
-            .checked_mul(position.entry_price.0)
-            .expect("entry value overflow");
+        let base_units = perp_base_units(position.notional_usdc.0, position.entry_price.0);
         let mut next_exposure = exposure;
         if position.is_long {
             next_exposure.long_notional_usdc = U128(
@@ -1661,8 +1656,8 @@ impl SharedLedger {
                     .checked_sub(position.notional_usdc.0)
                     .expect("long exposure invariant"),
             );
-            next_exposure.long_entry_value =
-                U128(next_exposure.long_entry_value.0.saturating_sub(entry_value));
+            next_exposure.long_base_units =
+                U128(next_exposure.long_base_units.0.saturating_sub(base_units));
         } else {
             next_exposure.short_notional_usdc = U128(
                 next_exposure
@@ -1671,12 +1666,8 @@ impl SharedLedger {
                     .checked_sub(position.notional_usdc.0)
                     .expect("short exposure invariant"),
             );
-            next_exposure.short_entry_value = U128(
-                next_exposure
-                    .short_entry_value
-                    .0
-                    .saturating_sub(entry_value),
-            );
+            next_exposure.short_base_units =
+                U128(next_exposure.short_base_units.0.saturating_sub(base_units));
         }
         write_perp_exposure(&next_exposure, &position.market_id);
         write_vault_reserved_payout(
@@ -1918,11 +1909,7 @@ impl SharedLedger {
             );
         }
         let mut exposure = read_perp_exposure(&position.market_id);
-        let entry_value = position
-            .notional_usdc
-            .0
-            .checked_mul(position.entry_price.0)
-            .expect("entry value overflow");
+        let base_units = perp_base_units(position.notional_usdc.0, position.entry_price.0);
         if position.is_long {
             exposure.long_notional_usdc = U128(
                 exposure
@@ -1931,8 +1918,7 @@ impl SharedLedger {
                     .checked_sub(position.notional_usdc.0)
                     .expect("long exposure invariant"),
             );
-            exposure.long_entry_value =
-                U128(exposure.long_entry_value.0.saturating_sub(entry_value));
+            exposure.long_base_units = U128(exposure.long_base_units.0.saturating_sub(base_units));
         } else {
             exposure.short_notional_usdc = U128(
                 exposure
@@ -1941,8 +1927,8 @@ impl SharedLedger {
                     .checked_sub(position.notional_usdc.0)
                     .expect("short exposure invariant"),
             );
-            exposure.short_entry_value =
-                U128(exposure.short_entry_value.0.saturating_sub(entry_value));
+            exposure.short_base_units =
+                U128(exposure.short_base_units.0.saturating_sub(base_units));
         }
         write_perp_exposure(&exposure, &position.market_id);
         write_vault_reserved_payout(
@@ -2204,16 +2190,8 @@ impl SharedLedger {
         assert!(balance >= required, "insufficient free USDC");
         let mut exposure = read_perp_exposure(&market_id);
         let nav = vault_nav(&self.balances);
-        let old_long_marked = revalue_exposure(
-            exposure.long_notional_usdc.0,
-            exposure.long_entry_value.0,
-            price.price.0,
-        );
-        let old_short_marked = revalue_exposure(
-            exposure.short_notional_usdc.0,
-            exposure.short_entry_value.0,
-            price.price.0,
-        );
+        let old_long_marked = revalue_exposure(exposure.long_base_units.0, price.price.0);
+        let old_short_marked = revalue_exposure(exposure.short_base_units.0, price.price.0);
         let old_oi = old_long_marked
             .checked_add(old_short_marked)
             .expect("OI overflow");
@@ -2290,27 +2268,24 @@ impl SharedLedger {
         );
         write_u128_storage(PERP_TOTAL_OI_KEY, total_oi);
         write_i128_storage(PERP_GLOBAL_NET_KEY, global_net);
-        let entry_value = notional
-            .0
-            .checked_mul(price.price.0)
-            .expect("entry value overflow");
+        let base_units = perp_base_units(notional.0, price.price.0);
         if is_long {
             exposure.long_notional_usdc = U128(new_long);
-            exposure.long_entry_value = U128(
+            exposure.long_base_units = U128(
                 exposure
-                    .long_entry_value
+                    .long_base_units
                     .0
-                    .checked_add(entry_value)
-                    .expect("entry value overflow"),
+                    .checked_add(base_units)
+                    .expect("base exposure overflow"),
             );
         } else {
             exposure.short_notional_usdc = U128(new_short);
-            exposure.short_entry_value = U128(
+            exposure.short_base_units = U128(
                 exposure
-                    .short_entry_value
+                    .short_base_units
                     .0
-                    .checked_add(entry_value)
-                    .expect("entry value overflow"),
+                    .checked_add(base_units)
+                    .expect("base exposure overflow"),
             );
         }
         write_perp_exposure(&exposure, &market_id);
@@ -3849,10 +3824,42 @@ fn perp_market_time_key(market_id: &str) -> Vec<u8> {
     raw_key(PERP_PENDING_MARKET_AT_PREFIX, &[market_id])
 }
 fn read_perp_exposure(market_id: &str) -> PerpExposure {
-    read_json_storage(&raw_key(PERP_EXPOSURE_PREFIX, &[market_id])).unwrap_or_default()
+    let mut exposure: PerpExposure =
+        read_json_storage(&raw_key(PERP_EXPOSURE_PREFIX, &[market_id])).unwrap_or_default();
+    // Convert legacy arithmetic aggregates to the equivalent base exposure
+    // under the old average-entry valuation. Existing open positions keep
+    // their prior NAV until their next state mutation, then persist the new
+    // representation.
+    if exposure.long_base_units.0 == 0 && exposure.long_notional_usdc.0 != 0 {
+        exposure.long_base_units = U128(legacy_base_units(
+            exposure.long_notional_usdc.0,
+            exposure.long_entry_value.0,
+        ));
+    }
+    if exposure.short_base_units.0 == 0 && exposure.short_notional_usdc.0 != 0 {
+        exposure.short_base_units = U128(legacy_base_units(
+            exposure.short_notional_usdc.0,
+            exposure.short_entry_value.0,
+        ));
+    }
+    exposure
 }
 fn write_perp_exposure(exposure: &PerpExposure, market_id: &str) {
     write_json_storage(&raw_key(PERP_EXPOSURE_PREFIX, &[market_id]), exposure);
+}
+fn perp_base_units(notional: u128, entry_price: u128) -> u128 {
+    assert!(entry_price > 0, "entry price must be positive");
+    notional
+        .checked_mul(PERP_BASE_UNITS_SCALE)
+        .expect("base exposure overflow")
+        / entry_price
+}
+fn legacy_base_units(notional: u128, entry_value: u128) -> u128 {
+    let average_entry = entry_value / notional;
+    if average_entry == 0 {
+        return 0;
+    }
+    perp_base_units(notional, average_entry)
 }
 fn read_perp_position(account_id: &str, position_id: &str) -> Option<PerpPosition> {
     read_json_storage(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]))
@@ -4189,18 +4196,11 @@ fn vault_risk_available(balances: &LookupMap<String, u128>) -> u128 {
         .saturating_sub(read_vault_reserved_payout())
 }
 
-fn revalue_exposure(notional: u128, entry_value: u128, mark_price: u128) -> u128 {
-    if notional == 0 {
-        return 0;
-    }
-    let average_entry_price = entry_value / notional;
-    if average_entry_price == 0 {
-        return notional;
-    }
-    notional
+fn revalue_exposure(base_units: u128, mark_price: u128) -> u128 {
+    base_units
         .checked_mul(mark_price)
-        .expect("marked exposure overflow")
-        / average_entry_price
+        .map(|value| value / PERP_BASE_UNITS_SCALE)
+        .unwrap_or(u128::MAX)
 }
 
 fn marked_global_exposure(
@@ -4232,16 +4232,8 @@ fn marked_global_exposure(
                 && health.spot_twap_deviation_bps <= market.max_execution_deviation_bps,
             "active market oracle unsafe for global risk calculation"
         );
-        let long = revalue_exposure(
-            exposure.long_notional_usdc.0,
-            exposure.long_entry_value.0,
-            mark,
-        );
-        let short = revalue_exposure(
-            exposure.short_notional_usdc.0,
-            exposure.short_entry_value.0,
-            mark,
-        );
+        let long = revalue_exposure(exposure.long_base_units.0, mark);
+        let short = revalue_exposure(exposure.short_base_units.0, mark);
         let long = long.saturating_add(if market_id == target_market && target_is_long {
             added_notional
         } else {
@@ -4282,27 +4274,22 @@ fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
         if price.price.0 == 0 {
             continue;
         }
-        for (notional, entry_value, is_long) in [
+        for (notional, base_units, is_long) in [
             (
                 exposure.long_notional_usdc.0,
-                exposure.long_entry_value.0,
+                exposure.long_base_units.0,
                 true,
             ),
             (
                 exposure.short_notional_usdc.0,
-                exposure.short_entry_value.0,
+                exposure.short_base_units.0,
                 false,
             ),
         ] {
-            if notional == 0 || entry_value == 0 {
+            if notional == 0 || base_units == 0 {
                 continue;
             }
-            let avg_entry = entry_value / notional;
-            let Ok(side_pnl) =
-                crate::engine_math::linear_pnl(notional, avg_entry, price.price.0, is_long)
-            else {
-                continue;
-            };
+            let side_pnl = exposure_pnl(notional, base_units, price.price.0, is_long);
             pnl = pnl.saturating_add(side_pnl);
         }
     }
@@ -4313,6 +4300,17 @@ fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
             pnl.unsigned_abs()
                 .min(read_u128_storage(PERP_TOTAL_MARGIN_KEY)),
         )
+    }
+}
+
+fn exposure_pnl(notional: u128, base_units: u128, mark_price: u128, is_long: bool) -> i128 {
+    let marked_value = revalue_exposure(base_units, mark_price);
+    let marked = i128::try_from(marked_value).unwrap_or(i128::MAX);
+    let notional = i128::try_from(notional).unwrap_or(i128::MAX);
+    if is_long {
+        marked.saturating_sub(notional)
+    } else {
+        notional.saturating_sub(marked)
     }
 }
 
@@ -5360,6 +5358,18 @@ mod tests {
         assert_eq!(perp_settlement_components(100, -120, 10), (100, 0, 0, 20));
         assert_eq!(perp_settlement_components(100, 20, 150), (0, 100, 0, 0));
         assert_eq!(perp_settlement_components(100, -40, 30), (40, 30, 30, 0));
+    }
+
+    #[test]
+    fn aggregated_perp_exposure_matches_sum_of_position_pnl() {
+        let first_base = perp_base_units(100, 100);
+        let second_base = perp_base_units(100, 200);
+        assert_eq!(revalue_exposure(first_base + second_base, 200), 300);
+        assert_eq!(exposure_pnl(200, first_base + second_base, 200, true), 100);
+        assert_eq!(
+            exposure_pnl(100, first_base, 200, true) + exposure_pnl(100, second_base, 200, true),
+            100
+        );
     }
 
     fn deposit_msg(id: &str, account_id: &str) -> String {
