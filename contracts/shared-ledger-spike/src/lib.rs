@@ -807,12 +807,8 @@ impl SharedLedger {
             .expect("trading nonce overflow");
         assert_eq!(nonce, expected_nonce, "invalid trading nonce");
         assert_valid_short_trade_expiry(expires_at_ms);
-        let message = build_vault_recapitalization_message(
-            &account_id,
-            amount,
-            nonce,
-            expires_at_ms,
-        );
+        let message =
+            build_vault_recapitalization_message(&account_id, amount, nonce, expires_at_ms);
         let owner = read_owner(&account_id).expect("owner is not registered");
         assert!(
             verify_owner_signature(&owner, &message, signature.as_ref(), nonce),
@@ -1213,8 +1209,9 @@ impl SharedLedger {
             .filter(|agent| agent.enabled)
             .map(|agent| agent.max_leverage_bps.min(market.max_leverage_bps))
             .unwrap_or(market.max_leverage_bps);
-        let required_margin = crate::engine_math::required_margin(current_notional, max_leverage_bps)
-            .expect("maximum leverage margin overflow");
+        let required_margin =
+            crate::engine_math::required_margin(current_notional, max_leverage_bps)
+                .expect("maximum leverage margin overflow");
         assert!(
             next_margin >= required_margin,
             "margin removal would exceed maximum leverage"
@@ -4172,7 +4169,10 @@ fn read_perp_position(account_id: &str, position_id: &str) -> Option<PerpPositio
 }
 fn write_perp_position(account_id: &str, position_id: &str, position: &PerpPosition) {
     let entry = perp_position_index_entry(account_id, position_id);
-    let position_index_key = raw_key(PERP_POSITION_MARKET_INDEX_PREFIX, &[account_id, position_id]);
+    let position_index_key = raw_key(
+        PERP_POSITION_MARKET_INDEX_PREFIX,
+        &[account_id, position_id],
+    );
     let was_indexed = env::storage_read(&position_index_key).is_some();
     if !was_indexed {
         let count_key = perp_market_position_count_key(&position.market_id);
@@ -4181,7 +4181,10 @@ fn write_perp_position(account_id: &str, position_id: &str, position: &PerpPosit
             &perp_market_position_slot_key(&position.market_id, count),
             entry.as_bytes(),
         );
-        write_u64_storage(&count_key, count.checked_add(1).expect("position index overflow"));
+        write_u64_storage(
+            &count_key,
+            count.checked_add(1).expect("position index overflow"),
+        );
         write_u64_storage(&position_index_key, count);
         write_u128_storage(
             PERP_POSITION_INDEXED_OI_KEY,
@@ -4207,7 +4210,10 @@ fn write_perp_position(account_id: &str, position_id: &str, position: &PerpPosit
 }
 fn delete_perp_position(account_id: &str, position_id: &str) {
     if let Some(position) = read_perp_position(account_id, position_id) {
-        let position_index_key = raw_key(PERP_POSITION_MARKET_INDEX_PREFIX, &[account_id, position_id]);
+        let position_index_key = raw_key(
+            PERP_POSITION_MARKET_INDEX_PREFIX,
+            &[account_id, position_id],
+        );
         if let Some(index_bytes) = env::storage_read(&position_index_key) {
             let index = u64::from_le_bytes(index_bytes.try_into().expect("invalid position index"));
             let count_key = perp_market_position_count_key(&position.market_id);
@@ -4234,7 +4240,10 @@ fn delete_perp_position(account_id: &str, position_id: &str) {
                     index,
                 );
             }
-            env::storage_remove(&perp_market_position_slot_key(&position.market_id, last_index));
+            env::storage_remove(&perp_market_position_slot_key(
+                &position.market_id,
+                last_index,
+            ));
             env::storage_remove(&position_index_key);
             write_u64_storage(&count_key, last_index);
             write_u128_storage(
@@ -4322,7 +4331,10 @@ fn read_unpaid_funding_rebate(account_id: &str, position_id: &str) -> u128 {
     ))
 }
 fn write_unpaid_funding_rebate(account_id: &str, position_id: &str, amount: u128) {
-    let key = raw_key(PERP_UNPAID_FUNDING_REBATE_PREFIX, &[account_id, position_id]);
+    let key = raw_key(
+        PERP_UNPAID_FUNDING_REBATE_PREFIX,
+        &[account_id, position_id],
+    );
     if amount == 0 {
         env::storage_remove(&key);
     } else {
@@ -4750,9 +4762,7 @@ fn vault_nav(balances: &LookupMap<String, u128>) -> u128 {
     }
     // Fail closed for pre-index contract state until all old open positions
     // have been closed or re-indexed by their next position update.
-    if read_u128_storage(PERP_POSITION_INDEXED_OI_KEY)
-        != read_u128_storage(PERP_TOTAL_OI_KEY)
-    {
+    if read_u128_storage(PERP_POSITION_INDEXED_OI_KEY) != read_u128_storage(PERP_TOTAL_OI_KEY) {
         return 0;
     }
     let cash = balances
@@ -6049,14 +6059,12 @@ mod tests {
         );
         write_u128_storage(PERP_TOTAL_OI_KEY, notional * 2);
         write_u128_storage(PERP_TOTAL_MARGIN_KEY, 20_100);
-        assert_eq!(read_u128_storage(PERP_POSITION_INDEXED_OI_KEY), notional * 2);
         assert_eq!(
-            crate::engine_math::linear_pnl(
-                notional,
-                10_000_000_000,
-                11_000_000_000,
-                true,
-            ),
+            read_u128_storage(PERP_POSITION_INDEXED_OI_KEY),
+            notional * 2
+        );
+        assert_eq!(
+            crate::engine_math::linear_pnl(notional, 10_000_000_000, 11_000_000_000, true,),
             Ok(10_000)
         );
         assert_eq!(read_u64_storage(&perp_market_position_count_key("NVDA")), 2);
@@ -7374,13 +7382,7 @@ mod tests {
         };
         write_perp_position(&agent_id, &position.position_id, &position);
         let expiry = NOW_MS + 30_000;
-        let message = build_perp_margin_message(
-            &position,
-            "add",
-            U128(1),
-            1,
-            expiry,
-        );
+        let message = build_perp_margin_message(&position, "add", U128(1), 1, expiry);
         let signature = owner_key.sign(message.as_bytes());
         contract.add_perp_margin(
             agent_id,
@@ -7682,13 +7684,7 @@ mod tests {
         write_u128_storage(PERP_TOTAL_MARGIN_KEY, 250_000);
 
         let expiry = NOW_MS + 30_000;
-        let message = build_perp_margin_message(
-            &position,
-            "remove",
-            U128(200_000),
-            1,
-            expiry,
-        );
+        let message = build_perp_margin_message(&position, "remove", U128(200_000), 1, expiry);
         let signature = owner_key.sign(message.as_bytes());
         contract.remove_perp_margin(
             USER.to_string(),
@@ -8132,13 +8128,21 @@ mod tests {
         );
 
         assert_eq!(contract.vault_available_payout(), U128(20));
-        assert_eq!(contract.perp_funding_rate_bps_per_hour("NVDA".to_string()), 2);
+        assert_eq!(
+            contract.perp_funding_rate_bps_per_hour("NVDA".to_string()),
+            2
+        );
     }
 
     #[test]
     fn funding_rebate_shortfall_is_carried_until_insurance_can_pay_it() {
         let mut contract = setup(TOKEN);
-        fund_record(&mut contract, SHARED_VAULT_RECORD_ID, 1_000, "funding-arrears-vault");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            1_000,
+            "funding-arrears-vault",
+        );
         write_u128_storage(PERP_INSURANCE_KEY, 10);
         write_u128_storage(PERP_TOTAL_MARGIN_KEY, 100);
         write_perp_exposure(
@@ -8563,12 +8567,8 @@ mod tests {
         assert_eq!(contract.vault_nav_usdc(), U128(0));
 
         let expiry = NOW_MS + 30_000;
-        let message = contract.vault_recapitalization_message(
-            USER.to_string(),
-            U128(200),
-            1,
-            expiry,
-        );
+        let message =
+            contract.vault_recapitalization_message(USER.to_string(), U128(200), 1, expiry);
         let signature = owner_key.sign(message.as_bytes());
         assert_eq!(
             contract.recapitalize_perp_vault(
@@ -8598,12 +8598,8 @@ mod tests {
         assert_eq!(contract.vault_nav_usdc(), U128(0));
 
         let expiry = NOW_MS + 30_000;
-        let message = contract.vault_recapitalization_message(
-            USER.to_string(),
-            U128(10),
-            1,
-            expiry,
-        );
+        let message =
+            contract.vault_recapitalization_message(USER.to_string(), U128(10), 1, expiry);
         let signature = owner_key.sign(message.as_bytes());
         contract.recapitalize_perp_vault(
             USER.to_string(),
