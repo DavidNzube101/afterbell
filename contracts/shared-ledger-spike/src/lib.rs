@@ -4292,7 +4292,12 @@ fn read_perp_deferred(account_id: &str) -> u128 {
     read_u128_storage(&raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[account_id]))
 }
 fn write_perp_deferred(account_id: &str, amount: u128) {
-    write_u128_storage(&raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[account_id]), amount);
+    let key = raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[account_id]);
+    if amount == 0 {
+        env::storage_remove(&key);
+    } else {
+        write_u128_storage(&key, amount);
+    }
 }
 fn read_unpaid_funding_rebate(account_id: &str, position_id: &str) -> u128 {
     read_u128_storage(&raw_key(
@@ -4331,7 +4336,12 @@ fn read_lp_shares(account_id: &str) -> u128 {
     read_u128_storage(&raw_key(LP_SHARE_PREFIX, &[account_id]))
 }
 fn write_lp_shares(account_id: &str, shares: u128) {
-    write_u128_storage(&raw_key(LP_SHARE_PREFIX, &[account_id]), shares);
+    let key = raw_key(LP_SHARE_PREFIX, &[account_id]);
+    if shares == 0 {
+        env::storage_remove(&key);
+    } else {
+        write_u128_storage(&key, shares);
+    }
 }
 fn read_lp_withdrawal(account_id: &str) -> Option<LpWithdrawalRequest> {
     read_json_storage(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]))
@@ -6698,6 +6708,7 @@ mod tests {
         assert_eq!(contract.balance_of(USER.to_string()), U128(500));
         assert_eq!(contract.balance_of(old_agent.to_string()), U128(0));
         assert_eq!(read_perp_deferred(old_agent), 0);
+        assert!(env::storage_read(&raw_key(PERP_DEFERRED_CLAIM_PREFIX, &[old_agent])).is_none());
     }
 
     #[test]
@@ -8643,6 +8654,7 @@ mod tests {
             U128(1_000_000)
         );
         assert_eq!(contract.balance_of(USER.to_string()), U128(1_000_000));
+        assert!(env::storage_read(&raw_key(LP_SHARE_PREFIX, &[USER])).is_none());
     }
 
     #[test]
