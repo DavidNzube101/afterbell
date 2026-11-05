@@ -231,6 +231,7 @@
 .notification-title-row time { color: #6f7c8a; font-size: 9px; white-space: nowrap; }
 .notification-body p { margin: 7px 0 9px; color: #929eab; font-size: 10px; line-height: 1.55; }
 .notification-delete { width: 30px; height: 30px; display: grid; flex: 0 0 30px; place-items: center; align-self: center; border: 1px solid #141c26; border-radius: 7px; background: #141c26; color: #f08a91; }
+.notification-drawer .notification-delete { color: #f08a91; }
 .notification-delete svg { width: 15px; height: 15px; }
 .notification-delete:hover { border-color: #2b181c; background: #2b181c; color: #f08a91; }
 .notifications-empty { display: grid; justify-items: center; padding: 70px 25px; color: #7e8b99; text-align: center; }
