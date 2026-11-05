@@ -1379,8 +1379,8 @@ impl SharedLedger {
         let fee = crate::engine_math::fee_ceil(reduce_notional.0, fee_bps).expect("fee overflow");
         let (loss, fee_collected, margin_credit, bad_debt) =
             perp_settlement_components(margin_part, realized_pnl, fee);
-        if agent_config.is_some() && realized_pnl < 0 {
-            record_agent_realized_loss(&account_id, realized_pnl.unsigned_abs());
+        if agent_config.is_some() {
+            record_agent_realized_loss(&account_id, loss.saturating_add(fee_collected));
         }
         let vault_id = SHARED_VAULT_RECORD_ID.to_string();
         let vault_cash = self.balances.get(&vault_id).unwrap_or_default();
@@ -1659,8 +1659,8 @@ impl SharedLedger {
             crate::engine_math::fee_ceil(position.notional_usdc.0, fee_bps).expect("fee overflow");
         let (loss, fee_collected, margin_credit, bad_debt) =
             perp_settlement_components(position.margin_usdc.0, pnl, close_fee);
-        if agent_config.is_some() && pnl < 0 {
-            record_agent_realized_loss(&account_id, pnl.unsigned_abs());
+        if agent_config.is_some() {
+            record_agent_realized_loss(&account_id, loss.saturating_add(fee_collected));
         }
         let vault_id = SHARED_VAULT_RECORD_ID.to_string();
         let vault_balance = self.balances.get(&vault_id).unwrap_or_default();
@@ -1921,8 +1921,8 @@ impl SharedLedger {
         } else {
             (0, position.margin_usdc.0)
         };
-        if agent_config.is_some() && pnl < 0 {
-            record_agent_realized_loss(&account_id, pnl.unsigned_abs());
+        if agent_config.is_some() {
+            record_agent_realized_loss(&account_id, loss.saturating_add(calculated_penalty));
         }
         let penalty = calculated_penalty.min(remaining_margin);
         let keeper_reward = if keeper_registered {
@@ -2293,6 +2293,9 @@ impl SharedLedger {
         let margin =
             crate::engine_math::required_margin(notional.0, leverage_bps).expect("margin overflow");
         let fee = crate::engine_math::fee_ceil(notional.0, fee_bps).expect("fee overflow");
+        if let Some(config) = &agent_config {
+            assert_agent_daily_loss_within(&account_id, config, fee);
+        }
         let required = margin.checked_add(fee).expect("required balance overflow");
         let balance = self.balances.get(&account_id).unwrap_or_default();
         assert!(balance >= required, "insufficient free USDC");
@@ -2432,6 +2435,7 @@ impl SharedLedger {
                 .expect("total margin overflow"),
         );
         if agent_config.is_some() {
+            record_agent_realized_loss(&account_id, fee);
             write_agent_action_nonce(&account_id, nonce);
             write_agent_open_notional(
                 &account_id,
@@ -4262,6 +4266,9 @@ fn settle_position_funding(position: &mut PerpPosition, balances: &mut LookupMap
     if amount_signed > 0 {
         let amount = amount_signed as u128;
         let fee = amount.min(position.margin_usdc.0);
+        if read_agent_config(&position.account_id).is_some() {
+            record_agent_realized_loss(&position.account_id, fee);
+        }
         position.margin_usdc = U128(position.margin_usdc.0 - fee);
         if read_agent_config(&position.account_id).is_some() {
             write_agent_reserved_margin(
@@ -5011,6 +5018,17 @@ fn record_agent_realized_loss(agent_record_id: &str, loss_usdc: u128) {
 fn assert_agent_daily_loss_allowed(agent_record_id: &str, config: &AgentConfig) {
     assert!(
         read_agent_daily_loss(agent_record_id).realized_loss_usdc.0 < config.max_daily_loss_usdc.0,
+        "agent daily loss limit reached"
+    );
+}
+
+fn assert_agent_daily_loss_within(agent_record_id: &str, config: &AgentConfig, additional: u128) {
+    assert!(
+        read_agent_daily_loss(agent_record_id)
+            .realized_loss_usdc
+            .0
+            .checked_add(additional)
+            .is_some_and(|loss| loss <= config.max_daily_loss_usdc.0),
         "agent daily loss limit reached"
     );
 }
@@ -7113,6 +7131,7 @@ mod tests {
             contract.agent_reserved_margin(agent_id.clone()),
             U128(250_000)
         );
+        assert_eq!(contract.agent_daily_loss(agent_id.clone()), U128(300));
 
         let revoke_message = agent_revocation_message(USER, &agent_id, 3, EXPIRY_MS);
         let revoke_signature = owner_key.sign(revoke_message.as_bytes());
@@ -7151,7 +7170,8 @@ mod tests {
             .perp_position(agent_id.clone(), "agent-nvda-1".to_string())
             .is_none());
         assert_eq!(contract.agent_open_notional(agent_id.clone()), U128(0));
-        assert_eq!(contract.agent_reserved_margin(agent_id), U128(0));
+        assert_eq!(contract.agent_reserved_margin(agent_id.clone()), U128(0));
+        assert_eq!(contract.agent_daily_loss(agent_id), U128(600));
         assert_eq!(contract.balance_of(USER.to_string()), U128(999_400));
     }
 
