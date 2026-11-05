@@ -1408,11 +1408,24 @@ impl SharedLedger {
             false
         };
         assert!(owner_signed || agent_signed, "invalid reduce authorization");
-        let quote_signer = read_perp_quote_signer().expect("quote signer is not configured");
-        assert!(
-            verify_owner_signature(&quote_signer, &message, quote_signature.as_ref(), nonce),
-            "invalid quote signature"
-        );
+        let emergency_owner_reduce = quote_signature.0.is_empty();
+        if emergency_owner_reduce {
+            assert!(owner_signed, "emergency reduction requires owner signature");
+            assert_eq!(
+                reference_price.0, mark.price.0,
+                "emergency reduce must use mark"
+            );
+            assert_eq!(
+                max_slippage_bps, 0,
+                "emergency reduce slippage must be zero"
+            );
+        } else {
+            let quote_signer = read_perp_quote_signer().expect("quote signer is not configured");
+            assert!(
+                verify_owner_signature(&quote_signer, &message, quote_signature.as_ref(), nonce),
+                "invalid quote signature"
+            );
+        }
         // Capture before funding settlement or deferred-claim writes so every
         // new byte created by this action is charged to the logical owner.
         let storage_before = env::storage_usage();
@@ -7051,27 +7064,26 @@ mod tests {
             "nvda-1".to_string(),
             U128(200_000),
             U128(11_000_000_000),
-            100,
+            0,
             2,
             6,
             4,
             reduce_expiry,
         );
         let reduce_owner_signature = owner_key.sign(reduce_message.as_bytes());
-        let reduce_quote_signature = quote_key.sign(reduce_message.as_bytes());
         assert_eq!(
             contract.reduce_perp_position(
                 USER.to_string(),
                 "nvda-1".to_string(),
                 U128(200_000),
                 U128(11_000_000_000),
-                100,
+                0,
                 2,
                 6,
                 4,
                 reduce_expiry,
                 Base64VecU8::from(reduce_owner_signature.to_bytes().to_vec()),
-                Base64VecU8::from(reduce_quote_signature.to_bytes().to_vec()),
+                Base64VecU8::from(Vec::new()),
             ),
             U128(119_880)
         );
