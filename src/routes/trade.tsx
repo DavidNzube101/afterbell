@@ -74,57 +74,10 @@ function PriceChart({ market }: { market: (typeof markets)[number] }) {
   </div>
 }
 
-type PerformanceState = { fps: number | null; ms: number | null }
+type PerformanceState = { ms: number | null }
 
 function InterfaceSpeed() {
-  const [speed, setSpeed] = useState<PerformanceState>({ fps: null, ms: null })
-
-  useEffect(() => {
-    let frame: number | undefined
-    let timer: number | undefined
-    let active = true
-
-    const sample = () => {
-      timer = undefined
-      if (!active || document.visibilityState === 'hidden') return
-
-      let frames = 0
-      const startedAt = performance.now()
-      const countFrame = () => {
-        if (!active || document.visibilityState === 'hidden') {
-          frame = undefined
-          return
-        }
-        frames += 1
-        const elapsed = performance.now() - startedAt
-        if (elapsed >= 1000) {
-          setSpeed(current => ({ ...current, fps: Math.round(frames * 1000 / elapsed) }))
-          frame = undefined
-          timer = window.setTimeout(sample, 4000)
-          return
-        }
-        frame = requestAnimationFrame(countFrame)
-      }
-      frame = requestAnimationFrame(countFrame)
-    }
-
-    const handleVisibility = () => {
-      if (timer !== undefined) window.clearTimeout(timer)
-      if (frame !== undefined) cancelAnimationFrame(frame)
-      timer = undefined
-      frame = undefined
-      if (document.visibilityState === 'visible') timer = window.setTimeout(sample, 100)
-    }
-
-    timer = window.setTimeout(sample, 100)
-    document.addEventListener('visibilitychange', handleVisibility)
-    return () => {
-      active = false
-      if (timer !== undefined) window.clearTimeout(timer)
-      if (frame !== undefined) cancelAnimationFrame(frame)
-      document.removeEventListener('visibilitychange', handleVisibility)
-    }
-  }, [])
+  const [speed, setSpeed] = useState<PerformanceState>({ ms: null })
 
   useEffect(() => {
     let active = true
@@ -140,9 +93,9 @@ function InterfaceSpeed() {
           cache: 'no-store',
           signal: controller.signal,
         })
-        if (active) setSpeed(current => ({ ...current, ms: performance.now() - startedAt }))
+        if (active) setSpeed({ ms: performance.now() - startedAt })
       } catch {
-        if (active) setSpeed(current => ({ ...current, ms: null }))
+        if (active) setSpeed({ ms: null })
       } finally {
         window.clearTimeout(timeout)
       }
@@ -156,9 +109,8 @@ function InterfaceSpeed() {
   }, [])
 
   const grade = speed.ms === null ? 'measuring' : speed.ms <= 100 ? 'good' : speed.ms <= 250 ? 'medium' : 'poor'
-  const fpsReadout = speed.fps !== null ? `${speed.fps} FPS` : 'FPS measuring'
-  const networkReadout = speed.ms !== null ? `${Math.round(speed.ms)} ms` : 'Latency unavailable'
-  return <span className={`interface-speed ${grade}`} title="FPS measures display smoothness. Milliseconds measure the round-trip time to Afterbell API."><span>{fpsReadout}</span><span>{networkReadout}</span></span>
+  const networkReadout = speed.ms !== null ? `Internet ${Math.round(speed.ms)} ms` : 'Internet unavailable'
+  return <span className={`interface-speed ${grade}`} title="Round-trip time between your browser and the Afterbell API.">{networkReadout}</span>
 }
 
 const initialNotifications = [
