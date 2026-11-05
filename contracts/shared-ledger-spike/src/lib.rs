@@ -68,6 +68,7 @@ const LP_WITHDRAWAL_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1000;
 const PERP_QUOTE_SIGNER_DELAY_MS: u64 = 60 * 60 * 1000;
 const PERP_MARKET_RISK_DELAY_MS: u64 = 20 * 60 * 1000;
 const PERP_ORACLE_SIGNER_DELAY_MS: u64 = 20 * 60 * 1000;
+const PERP_ORACLE_JUMP_CONFIRM_DELAY_MS: u64 = 5 * 60 * 1000;
 const MAX_PERP_MARKETS: usize = 64;
 const MAX_PERP_POSITIONS_PER_RECORD: u64 = 64;
 const MAX_PERP_POSITION_USDC: u128 = 5_000_000_000_000;
@@ -283,6 +284,14 @@ pub struct OracleHealth {
     pub circuit_broken: bool,
     pub confidence_bps: u16,
     pub spot_twap_deviation_bps: u16,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+struct PendingOracleJump {
+    price: MarketPrice,
+    staged_at_ms: u64,
+    source_round: String,
 }
 
 #[near(serializers = [json])]
@@ -614,17 +623,27 @@ impl SharedLedger {
         // attestation must agree with the staged candidate before the mark
         // moves, while still allowing a genuinely shifted market to recover.
         let pending_jump_key = raw_key(PERP_ORACLE_PENDING_JUMP_PREFIX, &[&attestation.market_id]);
-        if let Some(pending) = read_json_storage::<MarketPrice>(&pending_jump_key) {
+        if let Some(pending) = read_json_storage::<PendingOracleJump>(&pending_jump_key) {
             let confirmation_deviation = pending
+                .price
                 .price
                 .0
                 .abs_diff(attestation.price.0)
                 .saturating_mul(10_000)
-                / pending.price.0;
+                / pending.price.price.0;
             if confirmation_deviation <= PERP_ORACLE_RECOVERY_DEVIATION_BPS {
-                write_market_price(&next_price);
-                write_oracle_health(&attestation.market_id, &health);
-                env::storage_remove(&pending_jump_key);
+                if attestation.source_round != pending.source_round
+                    && now
+                        >= pending
+                            .staged_at_ms
+                            .saturating_add(PERP_ORACLE_JUMP_CONFIRM_DELAY_MS)
+                {
+                    write_market_price(&next_price);
+                    write_oracle_health(&attestation.market_id, &health);
+                    env::storage_remove(&pending_jump_key);
+                    settle_storage_credit("protocol:market_prices", storage_before);
+                    return;
+                }
                 settle_storage_credit("protocol:market_prices", storage_before);
                 return;
             }
@@ -643,7 +662,14 @@ impl SharedLedger {
                     sequence: attestation.sequence,
                     ..previous.clone()
                 });
-                write_json_storage(&pending_jump_key, &next_price);
+                write_json_storage(
+                    &pending_jump_key,
+                    &PendingOracleJump {
+                        price: next_price,
+                        staged_at_ms: now,
+                        source_round: attestation.source_round,
+                    },
+                );
                 settle_storage_credit("protocol:market_prices", storage_before);
                 return;
             }
@@ -7317,33 +7343,48 @@ mod tests {
         let oracle_secret = SecretKey::from_slice(&[142; 32]).unwrap();
         contract.configure_oracle_signer(test_eoa_address(&oracle_secret));
 
-        let publish = |contract: &mut SharedLedger, price: u128, sequence: u64, round: &str| {
-            let attestation = OracleAttestation {
-                market_id: "NVDA".to_string(),
-                price: U128(price),
-                spot_price: U128(price),
-                confidence_bps: 10,
-                observed_at_ms: NOW_MS,
-                sequence,
-                source_round: round.to_string(),
-                expires_at_ms: NOW_MS + 30_000,
+        let publish =
+            |contract: &mut SharedLedger, price: u128, sequence: u64, round: &str, at_ms: u64| {
+                let attestation = OracleAttestation {
+                    market_id: "NVDA".to_string(),
+                    price: U128(price),
+                    spot_price: U128(price),
+                    confidence_bps: 10,
+                    observed_at_ms: at_ms,
+                    sequence,
+                    source_round: round.to_string(),
+                    expires_at_ms: at_ms + 30_000,
+                };
+                let message = contract.oracle_attestation_message(attestation.clone());
+                contract.publish_market_price_attestation(
+                    attestation,
+                    test_eoa_signature(&oracle_secret, &message),
+                );
             };
-            let message = contract.oracle_attestation_message(attestation.clone());
-            contract.publish_market_price_attestation(
-                attestation,
-                test_eoa_signature(&oracle_secret, &message),
-            );
-        };
 
-        publish(&mut contract, 10_000_000_000, 1, "stable-1");
-        publish(&mut contract, 13_000_000_000, 2, "jump-2");
+        publish(&mut contract, 10_000_000_000, 1, "stable-1", NOW_MS);
+        publish(&mut contract, 13_000_000_000, 2, "jump-2", NOW_MS);
         assert!(contract.oracle_health("NVDA".to_string()).circuit_broken);
         assert_eq!(
             read_market_price("NVDA").unwrap().price,
             U128(10_000_000_000)
         );
 
-        publish(&mut contract, 13_000_000_000, 3, "confirm-3");
+        publish(&mut contract, 13_000_000_000, 3, "jump-2", NOW_MS);
+        assert!(contract.oracle_health("NVDA".to_string()).circuit_broken);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp((NOW_MS + PERP_ORACLE_JUMP_CONFIRM_DELAY_MS) * 1_000_000);
+        testing_env!(context.build());
+        publish(
+            &mut contract,
+            13_000_000_000,
+            4,
+            "confirm-4",
+            NOW_MS + PERP_ORACLE_JUMP_CONFIRM_DELAY_MS,
+        );
         assert!(!contract.oracle_health("NVDA".to_string()).circuit_broken);
         assert_eq!(
             read_market_price("NVDA").unwrap().price,

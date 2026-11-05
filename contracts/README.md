@@ -9,7 +9,7 @@ create per-user contracts or use a factory.
 The current local `shared-ledger-spike/` source extends the earlier deposit and
 withdrawal prototype with the A1 trading and LP accounting foundation. It now
 contains configurable markets (up to 64), signed price/quote authorization,
-2-of-3 Ed25519 oracle attestations, freshness/deviation circuit breakers,
+single EOA-signed oracle attestations, freshness/deviation circuit breakers,
 owner and agent logical-record positions, isolated margin, partial/full closes,
 funding, liquidation, insurance and bad-debt accounting, deferred profit
 claims, LP shares with a 24-hour withdrawal queue, delayed risk increases,
@@ -20,7 +20,9 @@ opens after the cap while leaving closes/reductions available. The current Rust
 suite has 75 unit tests. The latest optimized WASM is 644,260 bytes
 (SHA-256 `0c4050061b1f0f9c33845fa2a4ae41ef97cd134e2b13841a324518106d418bc8`).
 
-This describes local source, **not deployment status**. The testnet deployment
+Large oracle price jumps are staged and require a second observation from a
+different source round after a five-minute confirmation delay. This describes
+local source, **not deployment status**. The testnet deployment
 history below describes older A1 versions. The current source requires
 `new(usdc_token, protocol_admin)` and initializes an explicit protocol admin;
 the existing testnet state does not have that admin record. A fresh test
