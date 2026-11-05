@@ -3628,6 +3628,10 @@ impl SharedLedger {
             "protocol records cannot have an owner"
         );
         assert!(
+            !account_id.starts_with("agent:"),
+            "agent record ids are reserved"
+        );
+        assert!(
             read_owner(&account_id).is_none(),
             "owner already registered"
         );
@@ -6218,6 +6222,14 @@ mod tests {
             EXPIRY_MS,
             Base64VecU8::from(signature.to_bytes().to_vec()),
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "agent record ids are reserved")]
+    fn rejects_external_owner_registration_for_reserved_agent_record_ids() {
+        let mut contract = setup(TOKEN);
+        let key = SigningKey::from_bytes(&[91; 32]);
+        register_solana_owner_for(&mut contract, "agent:uncreated", &key);
     }
 
     #[test]
