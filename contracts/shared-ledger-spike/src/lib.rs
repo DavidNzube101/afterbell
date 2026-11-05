@@ -964,13 +964,13 @@ impl SharedLedger {
                         .is_some_and(|v| v <= agent.max_allocation_usdc.0),
                     "agent allocation limit exceeded"
                 );
-                write_agent_reserved_margin(
-                    &account_id,
-                    read_agent_reserved_margin(&account_id)
-                        .checked_add(amount.0)
-                        .expect("agent margin overflow"),
-                );
             }
+            write_agent_reserved_margin(
+                &account_id,
+                read_agent_reserved_margin(&account_id)
+                    .checked_add(amount.0)
+                    .expect("agent margin overflow"),
+            );
         }
         self.balances.insert(&source, &(balance - amount.0));
         write_u128_storage(
@@ -1052,7 +1052,7 @@ impl SharedLedger {
             PERP_TOTAL_MARGIN_KEY,
             read_u128_storage(PERP_TOTAL_MARGIN_KEY).saturating_sub(amount.0),
         );
-        if config.as_ref().is_some_and(|agent| agent.enabled) {
+        if config.is_some() {
             write_agent_reserved_margin(
                 &account_id,
                 read_agent_reserved_margin(&account_id).saturating_sub(amount.0),
@@ -4159,6 +4159,12 @@ fn settle_position_funding(position: &mut PerpPosition, balances: &mut LookupMap
         let amount = amount_signed as u128;
         let fee = amount.min(position.margin_usdc.0);
         position.margin_usdc = U128(position.margin_usdc.0 - fee);
+        if read_agent_config(&position.account_id).is_some() {
+            write_agent_reserved_margin(
+                &position.account_id,
+                read_agent_reserved_margin(&position.account_id).saturating_sub(fee),
+            );
+        }
         write_u128_storage(
             PERP_TOTAL_MARGIN_KEY,
             read_u128_storage(PERP_TOTAL_MARGIN_KEY).saturating_sub(fee),
@@ -4177,6 +4183,14 @@ fn settle_position_funding(position: &mut PerpPosition, balances: &mut LookupMap
         // never make the shared vault insolvent.
         let rebate = amount.min(read_u128_storage(PERP_INSURANCE_KEY));
         position.margin_usdc = U128(position.margin_usdc.0.saturating_add(rebate));
+        if read_agent_config(&position.account_id).is_some() {
+            write_agent_reserved_margin(
+                &position.account_id,
+                read_agent_reserved_margin(&position.account_id)
+                    .checked_add(rebate)
+                    .expect("agent reserved margin overflow"),
+            );
+        }
         write_u128_storage(
             PERP_TOTAL_MARGIN_KEY,
             read_u128_storage(PERP_TOTAL_MARGIN_KEY).saturating_add(rebate),
@@ -6297,6 +6311,65 @@ mod tests {
             Base64VecU8::from(signature.to_bytes().to_vec()),
         );
         agent_id
+    }
+
+    #[test]
+    fn agent_funding_updates_aggregate_reserved_margin() {
+        let mut contract = setup(TOKEN);
+        let agent_id = "agent:near:test-user:funding";
+        let config = AgentConfig {
+            user_record_id: USER.to_string(),
+            agent_record_id: agent_id.to_string(),
+            agent_key: OwnerKey::NearEd25519 {
+                public_key: [9; 32],
+            },
+            allowed_markets: vec!["NVDA".to_string()],
+            max_position_usdc: U128(1_000),
+            max_open_notional_usdc: U128(1_000),
+            max_leverage_bps: 10_000,
+            max_allocation_usdc: U128(1_000),
+            max_daily_loss_usdc: U128(1_000),
+            expires_at_ms: EXPIRY_MS,
+            enabled: false,
+        };
+        write_agent_config(agent_id, &config);
+        write_agent_reserved_margin(agent_id, 200); // Perp margin plus a legacy reservation.
+        contract
+            .balances
+            .insert(&SHARED_VAULT_RECORD_ID.to_string(), &1_000_000);
+        write_perp_exposure(
+            &PerpExposure {
+                long_notional_usdc: U128(100),
+                funding_updated_at_ms: NOW_MS,
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        let mut position = PerpPosition {
+            account_id: agent_id.to_string(),
+            position_id: "funded-perp".to_string(),
+            market_id: "NVDA".to_string(),
+            is_long: true,
+            notional_usdc: U128(100),
+            margin_usdc: U128(100),
+            entry_price: U128(1),
+            opened_at_ms: NOW_MS,
+            funding_index: U128(0),
+            funding_remainder: 0,
+        };
+        write_perp_position(agent_id, &position.position_id, &position);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp((NOW_MS + 360_000_000) * 1_000_000);
+        testing_env!(context.build());
+
+        settle_position_funding(&mut position, &mut contract.balances);
+
+        assert_eq!(position.margin_usdc, U128(99));
+        assert_eq!(read_agent_reserved_margin(agent_id), 199);
+        assert!(read_agent_reserved_margin(agent_id) >= 100);
     }
 
     #[test]
