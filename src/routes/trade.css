@@ -94,6 +94,8 @@
 .chart-select svg, .chart-icon svg { width: 13px; height: 13px; }
 .chart-separator { width: 1px; height: 18px; background: #27313d; }
 .real-market-chart { width: 100%; height: calc(100% - 52px); display: block; border: 0; background: #0c1016; }
+.real-market-chart tv-advanced-chart { display: block; width: 100%; height: 100%; --tv-widget-background-color: #0c1016; --tv-widget-text-color: #d0d9e3; --tv-widget-scales-font-color: #8b98a7; }
+.chart-placeholder { display: grid; height: 100%; place-items: center; color: #7d8997; font-size: 11px; }
 .resize-handle { position: relative; z-index: 3; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; touch-action: none; }
 .resize-handle span { display: block; border-radius: 6px; background: #334252; opacity: 0; transition: opacity .16s ease, background .16s ease; }
 .resize-handle:hover span, .resize-handle:focus-visible span, .resize-handle:active span { background: #3c99fa; opacity: 1; }

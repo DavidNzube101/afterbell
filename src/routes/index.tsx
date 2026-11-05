@@ -97,7 +97,7 @@ function AuthPage() {
         <div className="auth-content">
           <h1 id="auth-title">Welcome to Afterbell</h1>
           <p className="auth-subtitle">Connect your wallet to continue.</p>
-          <button className="connect-button" type="button" onClick={() => void navigate({ to: '/trade', search: { market: undefined } })}>
+          <button className="connect-button" type="button" onClick={() => void navigate({ to: '/trade', search: { market: undefined, side: undefined } })}>
             <WalletIcon />
             <span>Connect wallet</span>
           </button>

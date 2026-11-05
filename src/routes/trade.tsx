@@ -6,7 +6,10 @@ import { markets } from '../data/markets'
 import './trade.css'
 
 export const Route = createFileRoute('/trade')({
-  validateSearch: (search: Record<string, unknown>) => ({ market: typeof search.market === 'string' ? search.market : undefined }),
+  validateSearch: (search: Record<string, unknown>): { market: string | undefined; side: 'long' | 'short' | undefined } => ({
+    market: typeof search.market === 'string' ? search.market : undefined,
+    side: search.side === 'long' || search.side === 'short' ? search.side : undefined,
+  }),
   component: TradingPage,
 })
 
@@ -74,6 +77,23 @@ function StockQuote({ ticker }: { ticker: string }) {
   return <div className="stock-quote"><small>Stock price</small><div className="stock-quote-widget" ref={quoteRef} aria-label={`${ticker} stock price`} /></div>
 }
 
+let advancedChartWidget: Promise<void> | undefined
+
+function loadAdvancedChartWidget() {
+  if (customElements.get('tv-advanced-chart')) return Promise.resolve()
+  if (!advancedChartWidget) {
+    advancedChartWidget = new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script')
+      script.type = 'module'
+      script.src = 'https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js'
+      script.onload = () => { void customElements.whenDefined('tv-advanced-chart').then(() => resolve()) }
+      script.onerror = () => reject(new Error('TradingView chart failed to load'))
+      document.head.appendChild(script)
+    })
+  }
+  return advancedChartWidget
+}
+
 function PriceChart({ market }: { market: (typeof markets)[number] }) {
   const symbol = `NASDAQ:${market.ticker}`
   const chartRef = useRef<HTMLDivElement>(null)
@@ -83,43 +103,31 @@ function PriceChart({ market }: { market: (typeof markets)[number] }) {
     if (!container) return
     container.replaceChildren()
 
-    const widget = document.createElement('div')
-    widget.className = 'tradingview-widget-container__widget'
-    widget.style.height = '100%'
-    widget.style.width = '100%'
+    let active = true
+    const placeholder = document.createElement('span')
+    placeholder.className = 'chart-placeholder'
+    placeholder.textContent = 'Loading chart'
+    container.appendChild(placeholder)
 
-    const script = document.createElement('script')
-    script.type = 'text/javascript'
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
-    script.async = true
-    script.textContent = JSON.stringify({
-      autosize: true,
-      symbol,
-      interval: '15',
-      timezone: 'Etc/UTC',
-      theme: 'dark',
-      style: '1',
-      locale: 'en',
-      allow_symbol_change: false,
-      calendar: false,
-      details: false,
-      hide_side_toolbar: false,
-      hide_top_toolbar: false,
-      hide_legend: false,
-      hide_volume: false,
-      hotlist: false,
-      save_image: false,
-      withdateranges: true,
-      backgroundColor: '#0c1016',
-      gridColor: 'rgba(31, 42, 54, 0.55)',
-      support_host: 'https://www.tradingview.com',
+    void loadAdvancedChartWidget().then(() => {
+      if (!active) return
+      const chart = document.createElement('tv-advanced-chart')
+      chart.setAttribute('symbol', symbol)
+      chart.setAttribute('interval', '15')
+      chart.setAttribute('timezone', 'Etc/UTC')
+      chart.setAttribute('chart-type', 'candles')
+      chart.setAttribute('theme', 'dark')
+      chart.style.width = '100%'
+      chart.style.height = '100%'
+      container.replaceChildren(chart)
+    }).catch(() => {
+      if (active) placeholder.textContent = 'Chart unavailable. Check your connection and reload.'
     })
-    container.append(widget, script)
-    return () => container.replaceChildren()
+    return () => { active = false; container.replaceChildren() }
   }, [symbol])
 
   return <div className="chart-shell">
-    <div className="chart-tools"><div className="chart-pair"><span>{market.ticker} / USD</span><span className="chart-pair-muted">Equity reference</span></div><span className="chart-source">TradingView</span></div>
+    <div className="chart-tools"><div className="chart-pair"><span>{market.ticker} / USD</span></div><span className="chart-source">TradingView</span></div>
     <div ref={chartRef} className="real-market-chart" aria-label={`${market.name} reference equity chart`} />
   </div>
 }
@@ -160,7 +168,7 @@ function InterfaceSpeed() {
 
   const grade = speed.ms === null ? 'measuring' : speed.ms <= 100 ? 'good' : speed.ms <= 250 ? 'medium' : 'poor'
   const networkReadout = speed.ms !== null ? `${Math.round(speed.ms)} ms` : '-- ms'
-  return <span className={`interface-speed ${grade}`} title="Internet latency">{networkReadout}</span>
+  return <span className={`interface-speed ${grade}`} title="Round-trip request time to the Afterbell API">{networkReadout}</span>
 }
 
 const initialNotifications = [
@@ -180,9 +188,9 @@ const riskDisclosureSections = [
 ]
 
 function TradingPage() {
-  const { market: selectedTicker } = Route.useSearch()
+  const { market: selectedTicker, side: initialSide } = Route.useSearch()
   const [marketIndex, setMarketIndex] = useState(() => Math.max(0, markets.findIndex(item => item.ticker === selectedTicker)))
-  const [side, setSide] = useState<'long' | 'short'>('long')
+  const [side, setSide] = useState<'long' | 'short'>(initialSide ?? 'long')
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
   const [leverage, setLeverage] = useState(3)
   const [size, setSize] = useState('250')
