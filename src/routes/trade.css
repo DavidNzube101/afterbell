@@ -249,29 +249,45 @@
 .risk-modal-footer { min-height: 61px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 27px; border-top: 1px solid #222e3a; color: #7e8a98; font-size: 10px; }
 .risk-modal-footer button { padding: 9px 16px; border: 0; border-radius: 8px; background: #0065d2; color: white; font-size: 10px; font-weight: 600; }
 .risk-modal-footer button:hover { background: #1579e5; }
-.share-modal { width: min(440px, 100%); max-height: min(760px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: auto; border: 1px solid #2b3744; border-radius: 16px; background: #10161e; box-shadow: 0 28px 90px #0009; animation: modal-in 170ms cubic-bezier(.2,.8,.2,1) both; }
+.share-modal { width: min(570px, 100%); max-height: min(800px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: auto; border: 1px solid #2b3744; border-radius: 16px; background: #10161e; box-shadow: 0 28px 90px #0009; animation: modal-in 170ms cubic-bezier(.2,.8,.2,1) both; }
 .share-modal .risk-modal-header { padding: 21px 23px 17px; }
 .share-modal .risk-modal-header h2 { font-size: 20px; }
 .share-modal-content { padding: 20px 23px 12px; }
-.share-trade-card { padding: 19px; overflow: hidden; border: 1px solid #1b2b3c; border-radius: 14px; background: radial-gradient(ellipse at 100% 0%, #102b48 0, transparent 48%), linear-gradient(145deg, #141d28, #0d131b 72%); }
+.share-trade-card { position: relative; isolation: isolate; aspect-ratio: 16 / 9; display: flex; flex-direction: column; justify-content: space-between; padding: clamp(13px, 3.5vw, 22px); overflow: hidden; border: 1px solid #1b2b3c; border-radius: 12px; background: radial-gradient(ellipse at 100% 0%, #102b48 0, transparent 48%), linear-gradient(145deg, #141d28, #0d131b 72%); background-position: center; background-size: cover; }
+.share-trade-card::before { position: absolute; z-index: -1; inset: 0; content: ''; background: linear-gradient(115deg, #090e15a8, #090e1530 75%); }
+.share-trade-card > * { position: relative; }
+.share-trade-card.gradient-2 { background-image: radial-gradient(ellipse at 100% 0%, #452d71 0, transparent 54%), linear-gradient(145deg, #20172f, #0d131b 75%); }
+.share-trade-card.gradient-3 { background-image: radial-gradient(ellipse at 100% 0%, #155a45 0, transparent 52%), linear-gradient(145deg, #132920, #0d131b 75%); }
+.share-trade-card.gradient-4 { background-image: radial-gradient(ellipse at 100% 0%, #72452c 0, transparent 54%), linear-gradient(145deg, #302018, #0d131b 75%); }
 .share-card-brand { display: flex; align-items: center; gap: 7px; color: #e7edf4; font-size: 11px; font-weight: 600; }
 .share-card-brand img { width: 19px; height: 19px; object-fit: contain; }
 .share-card-side { margin-left: auto; padding: 5px 8px; border-radius: 6px; font-size: 9px; font-weight: 600; }
 .share-card-side.long { background: #102d26; color: #54dba8; }
 .share-card-side.short { background: #301b21; color: #ff9ba5; }
-.share-card-market { display: flex; align-items: center; gap: 10px; margin-top: 25px; }
+.share-card-main { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.share-card-market { display: flex; align-items: center; gap: 10px; }
 .share-card-market > div { display: grid; gap: 3px; }
 .share-card-market b { color: #f0f4f8; font-size: 16px; }
 .share-card-market small { color: #8190a0; font-size: 9px; }
-.share-card-profit { display: flex; align-items: baseline; gap: 8px; margin-top: 19px; color: #4cdaa0; }
-.share-card-profit strong { font-size: 29px; font-weight: 620; letter-spacing: -.045em; }
+.share-card-profit { display: flex; align-items: baseline; gap: 8px; color: #4cdaa0; }
+.share-card-profit strong { font-size: clamp(21px, 5vw, 30px); font-weight: 620; letter-spacing: -.045em; }
 .share-card-profit span { font-size: 11px; }
-.share-card-details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin-top: 20px; padding-top: 17px; border-top: 1px solid #202c39; }
+.share-card-details { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ffffff24; }
 .share-card-details div { display: grid; gap: 5px; }
 .share-card-details span { color: #83909e; font-size: 9px; }
 .share-card-details b { color: #dce4ec; font-size: 11px; font-weight: 550; }
-.share-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 21px; color: #80baff; font-size: 9px; }
-.share-card-footer span { color: #778595; }
+.share-card-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; color: #b5d7fb; font-size: 9px; }
+.share-background-picker { margin-top: 17px; }
+.share-background-heading { margin-bottom: 9px; color: #aeb9c5; font-size: 10px; font-weight: 550; }
+.share-background-options { display: flex; flex-wrap: wrap; gap: 9px; }
+.share-background-option { width: 49px; height: 35px; padding: 0; border: 2px solid transparent; border-radius: 7px; background: radial-gradient(ellipse at 100% 0%, #102b48 0, transparent 60%), linear-gradient(145deg, #141d28, #0d131b 72%); background-size: cover; background-position: center; }
+.share-background-option.gradient-2 { background-image: radial-gradient(ellipse at 100% 0%, #6546a0 0, transparent 65%), linear-gradient(145deg, #20172f, #0d131b 75%); }
+.share-background-option.gradient-3 { background-image: radial-gradient(ellipse at 100% 0%, #258265 0, transparent 65%), linear-gradient(145deg, #132920, #0d131b 75%); }
+.share-background-option.gradient-4 { background-image: radial-gradient(ellipse at 100% 0%, #a5653a 0, transparent 65%), linear-gradient(145deg, #302018, #0d131b 75%); }
+.share-background-option.selected { border-color: #80baff; box-shadow: 0 0 0 2px #0065d255; }
+.share-background-option.custom-image { display: grid; place-items: center; border-color: #202c39; background-color: #141c26; color: #aebdcd; cursor: pointer; }
+.share-background-option.custom-image input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+.share-background-option.custom-image span { font-size: 20px; font-weight: 300; line-height: 1; text-shadow: 0 1px 8px #000; }
 .share-notice { margin: 12px 0 0; color: #9cc8f8; font-size: 10px; }
 .share-modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 23px 20px; }
 .share-modal-footer button { padding: 9px 14px; border-radius: 8px; font-size: 10px; font-weight: 550; }
@@ -321,6 +337,14 @@
   .share-modal .risk-modal-header { padding: 18px 17px 15px; }
   .share-modal-content { padding: 16px 17px 8px; }
   .share-modal-footer { padding: 12px 17px 17px; }
+  .share-trade-card { border-radius: 9px; }
+  .share-card-details { gap: 6px; margin-top: 8px; padding-top: 8px; }
+  .share-card-details span { font-size: 8px; }
+  .share-card-details b { font-size: 9px; }
+  .share-card-market .stock-avatar { width: 27px; height: 27px; }
+  .share-card-market b { font-size: 14px; }
+  .share-background-options { gap: 7px; }
+  .share-background-option { width: 42px; height: 30px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

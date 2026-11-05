@@ -1,6 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useRef, useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useState, useRef, useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import logo from '../assets/afterbell-logo.png'
+import shareImage1 from '../assets/share-images/1.png'
+import shareImage2 from '../assets/share-images/2.png'
+import shareImage3 from '../assets/share-images/3.png'
 import { TickerIcon } from '../components/TickerIcon'
 import { markets } from '../data/markets'
 import './trade.css'
@@ -24,7 +27,16 @@ function Icon({ name }: { name: 'chart' | 'chevron' | 'bell' | 'search' }) {
 }
 
 function UsdcIcon() {
-  return <svg className="usdc-icon" role="img" aria-label="USD Coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#2775CA"/><path d="M12 5v14m3.4-10.7c-.8-.8-2-1.2-3.5-1.2-1.9 0-3.3.9-3.3 2.4 0 3.3 6.7 1.3 6.7 4.7 0 1.5-1.4 2.4-3.3 2.4-1.5 0-2.8-.4-3.7-1.3" fill="none" stroke="white" strokeWidth="1.6" strokeLinecap="round"/></svg>
+  return <svg className="usdc-icon" role="img" aria-label="USDC" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#2775CA"/><path d="M20.2 18.4c0-2.2-1.3-3-4-3.3-1.9-.3-2.3-.8-2.3-1.7s.7-1.5 2-1.5c1.2 0 1.8.4 2.1 1.4.1.2.2.3.4.3h1c.3 0 .4-.2.4-.4-.3-1.4-1.4-2.5-2.9-2.6V9c0-.2-.2-.4-.5-.4h-.9c-.3 0-.4.2-.5.4v1.5c-1.9.3-3.1 1.5-3.1 3.1 0 2.1 1.3 2.9 4 3.2 1.8.3 2.4.7 2.4 1.7 0 1-.9 1.7-2.1 1.7-1.7 0-2.2-.7-2.4-1.6-.1-.3-.3-.4-.5-.4h-1c-.3 0-.4.2-.4.4.3 1.6 1.2 2.6 3.2 2.9V23c0 .2.2.4.5.4h.9c.3 0 .4-.2.5-.4v-1.5c1.9-.3 3.2-1.6 3.2-3.1z" fill="#fff"/><path d="M12.8 24.9c-4.9-1.8-7.4-7.2-5.6-12 .9-2.6 3-4.6 5.6-5.6.3-.1.4-.3.4-.6v-.9c0-.2-.1-.4-.4-.5h-.2C6.8 7.2 3.5 13.1 5.3 19c1.1 3.5 3.8 6.1 7.3 7.3.3.1.5 0 .6-.3v-1.1c0-.1-.2-.3-.4-.4zm6.5-19.6c-.3-.1-.5 0-.6.3v.9c0 .3.1.5.4.6 4.9 1.8 7.4 7.2 5.6 12-.9 2.6-3 4.6-5.6 5.6-.3.1-.4.3-.4.6v.9c0 .2.1.4.4.5h.2c5.9-1.9 9.2-8.2 7.3-14.1-1.1-3.6-3.9-6.2-7.3-7.3z" fill="#fff"/></svg>
+}
+
+function loadCanvasImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = reject
+    image.src = source
+  })
 }
 
 let singleTickerWidget: Promise<void> | undefined
@@ -194,6 +206,16 @@ const mockPositions: SharedPosition[] = [
   { ticker: 'META', side: 'Short', size: '$760.00', margin: '$380.00', leverage: '2.0×', entry: '$719.10', mark: '$712.66', pnl: '+$6.81', change: '+1.79%' },
 ]
 
+const shareBackgrounds = [
+  { id: 'gradient-1', label: 'Blue glow', kind: 'gradient' },
+  { id: 'gradient-2', label: 'Violet glow', kind: 'gradient' },
+  { id: 'gradient-3', label: 'Emerald glow', kind: 'gradient' },
+  { id: 'gradient-4', label: 'Warm glow', kind: 'gradient' },
+  { id: 'image-1', label: 'Image 1', kind: 'image', image: shareImage1 },
+  { id: 'image-2', label: 'Image 2', kind: 'image', image: shareImage2 },
+  { id: 'image-3', label: 'Image 3', kind: 'image', image: shareImage3 },
+]
+
 function TradingPage() {
   const { market: selectedTicker, side: initialSide } = Route.useSearch()
   const [marketIndex, setMarketIndex] = useState(() => Math.max(0, markets.findIndex(item => item.ticker === selectedTicker)))
@@ -209,6 +231,8 @@ function TradingPage() {
   const [notifications, setNotifications] = useState(initialNotifications)
   const [riskOpen, setRiskOpen] = useState(false)
   const [sharePosition, setSharePosition] = useState<SharedPosition | null>(null)
+  const [shareBackground, setShareBackground] = useState('gradient-1')
+  const [customShareBackground, setCustomShareBackground] = useState<string | null>(null)
   const [shareNotice, setShareNotice] = useState('')
   const [notice, setNotice] = useState('')
   const [orderWidth, setOrderWidth] = useState(342)
@@ -227,28 +251,82 @@ function TradingPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [notificationsOpen, riskOpen, sharePosition])
 
-  function tradeShareText(position: SharedPosition) {
-    return `${position.ticker} ${position.side} · ${position.pnl} (${position.change}) · ${position.leverage} leverage · Entry ${position.entry} · Mark ${position.mark}`
+  function chooseCustomShareBackground(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setCustomShareBackground(reader.result)
+        setShareBackground('custom-image')
+      }
+    }
+    reader.readAsDataURL(file)
+    event.currentTarget.value = ''
   }
 
-  async function copyTradeDetails() {
+  async function downloadTradeCard() {
     if (!sharePosition) return
-    try {
-      await navigator.clipboard.writeText(`${tradeShareText(sharePosition)}\n${window.location.origin}`)
-      setShareNotice('Trade details copied')
-    } catch {
-      setShareNotice('Could not copy trade details')
-    }
-  }
+    const canvas = document.createElement('canvas')
+    canvas.width = 1600
+    canvas.height = 900
+    const context = canvas.getContext('2d')
+    if (!context) { setShareNotice('Could not create trade card'); return }
 
-  async function shareTrade() {
-    if (!sharePosition) return
-    if (!navigator.share) { await copyTradeDetails(); return }
-    try {
-      await navigator.share({ title: `${sharePosition.ticker} ${sharePosition.side} trade`, text: tradeShareText(sharePosition), url: window.location.origin })
-    } catch (error) {
-      if (error instanceof Error && error.name !== 'AbortError') setShareNotice('Could not open sharing options')
+    const backgrounds = ['#102b48', '#452d71', '#155a45', '#72452c']
+    const backgroundOption = shareBackgrounds.find(option => option.id === shareBackground)
+    const imageSource = shareBackground === 'custom-image' ? customShareBackground : backgroundOption?.image
+    if (imageSource) {
+      try {
+        const image = await loadCanvasImage(imageSource)
+        const scale = Math.max(canvas.width / image.width, canvas.height / image.height)
+        const width = image.width * scale
+        const height = image.height * scale
+        context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height)
+      } catch { context.fillStyle = '#111923'; context.fillRect(0, 0, canvas.width, canvas.height) }
+      context.fillStyle = '#080d16a8'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+    } else {
+      context.fillStyle = '#0c121b'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      const glow = context.createRadialGradient(1400, 40, 10, 1400, 40, 900)
+      glow.addColorStop(0, backgrounds[Number(shareBackground.slice(-1)) - 1] ?? backgrounds[0])
+      glow.addColorStop(1, '#0c121b')
+      context.fillStyle = glow
+      context.fillRect(0, 0, canvas.width, canvas.height)
     }
+
+    context.fillStyle = '#f1f5f9'
+    context.font = '600 38px system-ui, sans-serif'
+    context.fillText('Afterbell', 90, 112)
+    context.fillStyle = sharePosition.side === 'Long' ? '#123b30' : '#3b2028'
+    context.beginPath(); context.roundRect(1370, 63, 140, 58, 18); context.fill()
+    context.fillStyle = sharePosition.side === 'Long' ? '#72e3b4' : '#ffabb3'
+    context.font = '600 25px system-ui, sans-serif'
+    context.fillText(sharePosition.side, 1400, 101)
+    context.fillStyle = '#f4f7fb'
+    context.font = '650 76px system-ui, sans-serif'
+    context.fillText(sharePosition.ticker, 90, 340)
+    context.fillStyle = '#54dfa4'
+    context.font = '650 96px system-ui, sans-serif'
+    context.fillText(sharePosition.pnl, 90, 505)
+    context.fillStyle = '#9de8c7'
+    context.font = '500 34px system-ui, sans-serif'
+    context.fillText(sharePosition.change, 90 + context.measureText(sharePosition.pnl).width + 24, 501)
+    context.strokeStyle = '#ffffff38'; context.lineWidth = 2
+    context.beginPath(); context.moveTo(90, 590); context.lineTo(1510, 590); context.stroke()
+    const details = [['Position size', sharePosition.size], ['Leverage', sharePosition.leverage], ['Entry price', sharePosition.entry], ['Mark price', sharePosition.mark]]
+    details.forEach(([label, value], index) => {
+      const x = 90 + index * 355
+      context.fillStyle = '#a2afbe'; context.font = '500 23px system-ui, sans-serif'; context.fillText(label, x, 665)
+      context.fillStyle = '#f1f5f9'; context.font = '600 31px system-ui, sans-serif'; context.fillText(value, x, 715)
+    })
+    context.fillStyle = '#b5d7fb'; context.font = '500 23px system-ui, sans-serif'; context.fillText('afterbellfx.xyz', 1290, 835)
+    const link = document.createElement('a')
+    link.download = `${sharePosition.ticker.toLowerCase()}-${sharePosition.side.toLowerCase()}-trade.png`
+    link.href = canvas.toDataURL('image/png')
+    link.click()
+    setShareNotice('Trade card downloaded')
   }
 
   function startResize(axis: 'x' | 'y', event: ReactPointerEvent<HTMLButtonElement>, initial: number) {
@@ -323,6 +401,6 @@ function TradingPage() {
     {notificationsOpen && <><button className="drawer-backdrop" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}/><aside className="notification-drawer" aria-label="Notifications"><div className="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button className="drawer-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div><div className="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={notifications.length === 0} onClick={() => setNotifications([])}>Clear all</button></div><div className="notification-list">{notifications.map(item => <article className="notification-item" key={item.id}><div className="notification-body"><div className="notification-title-row"><h3>{item.title}</h3><time>{item.time}</time></div><p>{item.message}</p></div><button className="notification-delete" aria-label="Delete notification" title="Delete notification" onClick={() => setNotifications(current => current.filter(notification => notification.id !== item.id))}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></button></article>)}{notifications.length === 0 && <div className="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>}</div></aside></>}
 
     {riskOpen && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRiskOpen(false) }}><section className="risk-modal" role="dialog" aria-modal="true" aria-labelledby="risk-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">PLEASE READ BEFORE TRADING</span><h2 id="risk-title">Risk disclosure</h2><p>Understand the product and its risks before you trade.</p></div><button className="drawer-close" aria-label="Close risk disclosure" onClick={() => setRiskOpen(false)}>×</button></header><div className="risk-modal-content">{riskDisclosureSections.map(section => <section key={section.title}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div><footer className="risk-modal-footer"><span>Questions? Visit our documentation.</span><button onClick={() => setRiskOpen(false)}>I understand</button></footer></section></div>}
-    {sharePosition && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) { setSharePosition(null); setShareNotice('') } }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">TRADE CARD</span><h2 id="share-title">Share your trade</h2><p>A snapshot of this position, ready to share.</p></div><button className="drawer-close" aria-label="Close share trade dialog" onClick={() => { setSharePosition(null); setShareNotice('') }}>×</button></header><div className="share-modal-content"><article className="share-trade-card"><div className="share-card-brand"><img src={logo} alt=""/><span>Afterbell</span><span className={`share-card-side ${sharePosition.side.toLowerCase()}`}>{sharePosition.side}</span></div><div className="share-card-market"><span className="stock-avatar"><TickerIcon ticker={sharePosition.ticker} size={20}/></span><div><b>{sharePosition.ticker}</b><small>US equity</small></div></div><div className="share-card-profit"><strong>{sharePosition.pnl}</strong><span>{sharePosition.change}</span></div><div className="share-card-details"><div><span>Position size</span><b>{sharePosition.size}</b></div><div><span>Leverage</span><b>{sharePosition.leverage}</b></div><div><span>Entry price</span><b>{sharePosition.entry}</b></div><div><span>Mark price</span><b>{sharePosition.mark}</b></div></div><div className="share-card-footer">afterbellfx.xyz <span>Perpetual equity exposure</span></div></article>{shareNotice && <p className="share-notice" role="status">{shareNotice}</p>}</div><footer className="share-modal-footer"><button className="share-copy-button" onClick={() => void copyTradeDetails()}>Copy details</button><button className="share-action-button" onClick={() => void shareTrade()}>Share trade</button></footer></section></div>}
+    {sharePosition && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) { setSharePosition(null); setShareNotice('') } }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><header className="risk-modal-header"><div><h2 id="share-title">Share your trade</h2><p>A snapshot of this position, ready to share.</p></div><button className="drawer-close" aria-label="Close share trade dialog" onClick={() => { setSharePosition(null); setShareNotice('') }}>×</button></header><div className="share-modal-content"><article className={`share-trade-card ${shareBackground}`} style={shareBackground.startsWith('image-') || shareBackground === 'custom-image' ? { backgroundImage: `linear-gradient(90deg, #0b111ad9, #0b111a9c), url(${shareBackground === 'custom-image' ? customShareBackground : shareBackgrounds.find(option => option.id === shareBackground)?.image})` } : undefined}><div className="share-card-brand"><img src={logo} alt=""/><span>Afterbell</span><span className={`share-card-side ${sharePosition.side.toLowerCase()}`}>{sharePosition.side}</span></div><div className="share-card-main"><div className="share-card-market"><span className="stock-avatar"><TickerIcon ticker={sharePosition.ticker} size={20}/></span><div><b>{sharePosition.ticker}</b></div></div><div className="share-card-profit"><strong>{sharePosition.pnl}</strong><span>{sharePosition.change}</span></div></div><div className="share-card-details"><div><span>Position size</span><b>{sharePosition.size}</b></div><div><span>Leverage</span><b>{sharePosition.leverage}</b></div><div><span>Entry price</span><b>{sharePosition.entry}</b></div><div><span>Mark price</span><b>{sharePosition.mark}</b></div></div><div className="share-card-footer">afterbellfx.xyz</div></article><div className="share-background-picker"><div className="share-background-heading">Background</div><div className="share-background-options">{shareBackgrounds.map(option => <button key={option.id} className={`share-background-option ${option.id} ${shareBackground === option.id ? 'selected' : ''}`} aria-label={option.label} aria-pressed={shareBackground === option.id} title={option.label} style={option.kind === 'image' ? { backgroundImage: `linear-gradient(#080c1280, #080c1280), url(${option.image})` } : undefined} onClick={() => setShareBackground(option.id)} />)}<label className={`share-background-option custom-image ${shareBackground === 'custom-image' ? 'selected' : ''}`} title="Upload custom image" aria-label="Upload custom image" style={customShareBackground ? { backgroundImage: `linear-gradient(#080c1280, #080c1280), url(${customShareBackground})` } : undefined}><input type="file" accept="image/*" onChange={chooseCustomShareBackground}/><span>+</span></label></div></div>{shareNotice && <p className="share-notice" role="status">{shareNotice}</p>}</div><footer className="share-modal-footer"><button className="share-action-button" onClick={() => void downloadTradeCard()}>Download</button></footer></section></div>}
   </main>
 }
