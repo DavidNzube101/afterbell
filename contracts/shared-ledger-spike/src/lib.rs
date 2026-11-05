@@ -606,6 +606,7 @@ impl SharedLedger {
             observed_at_ms: attestation.observed_at_ms,
             sequence: attestation.sequence,
         };
+        let storage_before = env::storage_usage();
 
         // A >20% move is held for a second signed observation. The confirming
         // attestation must agree with the staged candidate before the mark
@@ -622,6 +623,7 @@ impl SharedLedger {
                 write_market_price(&next_price);
                 write_oracle_health(&attestation.market_id, &health);
                 env::storage_remove(&pending_jump_key);
+                settle_storage_credit("protocol:market_prices", storage_before);
                 return;
             }
         }
@@ -640,12 +642,14 @@ impl SharedLedger {
                     ..previous.clone()
                 });
                 write_json_storage(&pending_jump_key, &next_price);
+                settle_storage_credit("protocol:market_prices", storage_before);
                 return;
             }
         }
         write_market_price(&next_price);
         write_oracle_health(&attestation.market_id, &health);
         env::storage_remove(&pending_jump_key);
+        settle_storage_credit("protocol:market_prices", storage_before);
     }
 
     pub fn perp_total_margin(&self) -> U128 {
@@ -701,6 +705,7 @@ impl SharedLedger {
         assert!(balance >= amount.0, "insufficient free USDC");
         let vault_id = SHARED_VAULT_RECORD_ID.to_string();
         let vault = self.balances.get(&vault_id).unwrap_or_default();
+        let storage_before = env::storage_usage();
         self.balances.insert(&account_id, &(balance - amount.0));
         self.balances.insert(
             &vault_id,
@@ -708,6 +713,7 @@ impl SharedLedger {
         );
         write_u128_storage(PERP_BAD_DEBT_KEY, debt - amount.0);
         write_user_perp_nonce(&account_id, nonce);
+        settle_storage_credit(&account_id, storage_before);
         U128(amount.0)
     }
 
@@ -949,6 +955,7 @@ impl SharedLedger {
         };
         let balance = self.balances.get(&source).unwrap_or_default();
         assert!(balance >= amount.0, "insufficient free USDC");
+        let storage_before = env::storage_usage();
         position.margin_usdc = U128(
             position
                 .margin_usdc
@@ -981,6 +988,7 @@ impl SharedLedger {
         );
         write_perp_position(&account_id, &position_id, &position);
         write_user_perp_nonce(&owner_record, nonce);
+        settle_storage_credit(&owner_record, storage_before);
         U128(amount.0)
     }
 
@@ -1012,6 +1020,7 @@ impl SharedLedger {
             verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
             "invalid margin authorization"
         );
+        let storage_before = env::storage_usage();
         settle_position_funding(&mut position, &mut self.balances);
         let mark = require_healthy_market_price(&position.market_id);
         let market = read_perp_market(&position.market_id).expect("market not listed");
@@ -1059,6 +1068,7 @@ impl SharedLedger {
             );
         }
         write_user_perp_nonce(&owner_record, nonce);
+        settle_storage_credit(&owner_record, storage_before);
         U128(amount.0)
     }
 
@@ -6531,6 +6541,7 @@ mod tests {
     }
 
     fn configure_test_perp(contract: &mut SharedLedger, quote_key: &SigningKey) {
+        fund_test_storage_credit("protocol:market_prices");
         let config = PerpMarketConfig {
             market_id: "NVDA".to_string(),
             enabled: true,
