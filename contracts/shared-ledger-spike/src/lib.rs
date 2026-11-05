@@ -42,6 +42,7 @@ const PERP_MARKET_IDS_KEY: &[u8] = b"afterbell:a1:perp:market_ids";
 const PERP_POSITION_PREFIX: &[u8] = b"afterbell:a1:perp:position:";
 const PERP_MARKET_POSITION_INDEX_PREFIX: &[u8] = b"afterbell:a1:perp:market_positions:";
 const PERP_POSITION_MARKET_INDEX_PREFIX: &[u8] = b"afterbell:a1:perp:position_market_index:";
+const PERP_POSITION_BASE_UNITS_PREFIX: &[u8] = b"afterbell:a1:perp:position_base_units:";
 const PERP_POSITION_INDEXED_OI_KEY: &[u8] = b"afterbell:a1:perp:indexed_oi";
 const PERP_EXPOSURE_PREFIX: &[u8] = b"afterbell:a1:perp:exposure:";
 const PERP_QUOTE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:quote_signer";
@@ -1589,6 +1590,13 @@ impl SharedLedger {
             );
         }
         let exposure = read_perp_exposure(&position.market_id);
+        let remaining_notional = position.notional_usdc.0 - reduce_notional.0;
+        let position_base_units = read_perp_position_base_units(&account_id, &position_id)
+            .unwrap_or_else(|| perp_base_units(position.notional_usdc.0, position.entry_price.0));
+        let remaining_base_units = perp_base_units(remaining_notional, position.entry_price.0);
+        let reduced_base_units = position_base_units
+            .checked_sub(remaining_base_units)
+            .expect("position base exposure invariant");
         position.funding_remainder = position.funding_remainder.saturating_mul(
             i128::try_from(position.notional_usdc.0 - reduce_notional.0)
                 .expect("position size overflow"),
@@ -1607,7 +1615,7 @@ impl SharedLedger {
             next.long_base_units = U128(
                 next.long_base_units
                     .0
-                    .checked_sub(perp_base_units(reduce_notional.0, position.entry_price.0))
+                    .checked_sub(reduced_base_units)
                     .expect("long base exposure invariant"),
             );
             write_perp_exposure(&next, &position.market_id);
@@ -1624,11 +1632,12 @@ impl SharedLedger {
             next.short_base_units = U128(
                 next.short_base_units
                     .0
-                    .checked_sub(perp_base_units(reduce_notional.0, position.entry_price.0))
+                    .checked_sub(reduced_base_units)
                     .expect("short base exposure invariant"),
             );
             write_perp_exposure(&next, &position.market_id);
         }
+        write_perp_position_base_units(&account_id, &position_id, remaining_base_units);
         if credit > 0 {
             let balance = self.balances.get(&credit_record_id).unwrap_or_default();
             self.balances.insert(
@@ -1875,7 +1884,8 @@ impl SharedLedger {
             );
         }
         let exposure = read_perp_exposure(&position.market_id);
-        let base_units = perp_base_units(position.notional_usdc.0, position.entry_price.0);
+        let base_units = read_perp_position_base_units(&account_id, &position_id)
+            .unwrap_or_else(|| perp_base_units(position.notional_usdc.0, position.entry_price.0));
         let mut next_exposure = exposure;
         if position.is_long {
             next_exposure.long_notional_usdc = U128(
@@ -2126,7 +2136,8 @@ impl SharedLedger {
             );
         }
         let mut exposure = read_perp_exposure(&position.market_id);
-        let base_units = perp_base_units(position.notional_usdc.0, position.entry_price.0);
+        let base_units = read_perp_position_base_units(&account_id, &position_id)
+            .unwrap_or_else(|| perp_base_units(position.notional_usdc.0, position.entry_price.0));
         if position.is_long {
             exposure.long_notional_usdc = U128(
                 exposure
@@ -2541,6 +2552,7 @@ impl SharedLedger {
                 funding_remainder: 0,
             },
         );
+        write_perp_position_base_units(&account_id, &position_id, base_units);
         write_perp_open_notional(&account_id, trader_oi);
         write_perp_position_count(
             &account_id,
@@ -4209,10 +4221,24 @@ fn delete_perp_position(account_id: &str, position_id: &str) {
         PERP_UNPAID_FUNDING_REBATE_PREFIX,
         &[account_id, position_id],
     ));
+    env::storage_remove(&raw_key(
+        PERP_POSITION_BASE_UNITS_PREFIX,
+        &[account_id, position_id],
+    ));
     env::storage_remove(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]));
 }
 fn perp_position_index_entry(account_id: &str, position_id: &str) -> String {
     format!("{account_id}\n{position_id}")
+}
+fn read_perp_position_base_units(account_id: &str, position_id: &str) -> Option<u128> {
+    let key = raw_key(PERP_POSITION_BASE_UNITS_PREFIX, &[account_id, position_id]);
+    env::storage_read(&key).map(|_| read_u128_storage(&key))
+}
+fn write_perp_position_base_units(account_id: &str, position_id: &str, base_units: u128) {
+    write_u128_storage(
+        &raw_key(PERP_POSITION_BASE_UNITS_PREFIX, &[account_id, position_id]),
+        base_units,
+    );
 }
 fn perp_market_position_count_key(market_id: &str) -> Vec<u8> {
     raw_key(PERP_MARKET_POSITION_INDEX_PREFIX, &[market_id, "count"])
@@ -7529,6 +7555,10 @@ mod tests {
             .unwrap();
         assert_eq!(reduced_position.notional_usdc, U128(300_000));
         assert_eq!(reduced_position.margin_usdc, U128(150_000));
+        assert_eq!(
+            contract.perp_exposure("NVDA".to_string()).long_base_units,
+            U128(perp_base_units(300_000, 10_000_000_000))
+        );
         let close_expiry = NOW_MS + 30_000;
         let close_message = contract.close_perp_position_message(
             USER.to_string(),
@@ -7564,6 +7594,10 @@ mod tests {
             contract
                 .perp_exposure("NVDA".to_string())
                 .long_notional_usdc,
+            U128(0)
+        );
+        assert_eq!(
+            contract.perp_exposure("NVDA".to_string()).long_base_units,
             U128(0)
         );
         assert_eq!(contract.balance_of(USER.to_string()), U128(2_049_400));
