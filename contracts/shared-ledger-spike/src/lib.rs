@@ -5410,19 +5410,6 @@ impl FungibleTokenReceiver for SharedLedger {
 
         let current_balance = self.balances.get(&deposit.account_id);
         let current = current_balance.unwrap_or_default();
-        if deposit.account_id == SHARED_VAULT_RECORD_ID {
-            let cap = if read_u128_storage(PERP_BETA_CAP_KEY) == 0 {
-                PERP_DEFAULT_BETA_CAP_USDC
-            } else {
-                read_u128_storage(PERP_BETA_CAP_KEY)
-            };
-            if current
-                .checked_add(amount.0)
-                .is_none_or(|total| total > cap)
-            {
-                return PromiseOrValue::Value(amount);
-            }
-        }
         let Some(updated) = current.checked_add(amount.0) else {
             return PromiseOrValue::Value(amount);
         };
