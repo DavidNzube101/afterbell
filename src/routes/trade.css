@@ -54,17 +54,18 @@
 .stock-avatar { --stock-color: #0065d2; width: 36px; height: 36px; display: grid; flex: 0 0 auto; place-items: center; border: 1px solid color-mix(in srgb, var(--stock-color), transparent 65%); border-radius: 50%; background: color-mix(in srgb, var(--stock-color), #0d141d 83%); color: var(--stock-color); font-size: 16px; font-weight: 700; }
 .stock-avatar.small { width: 30px; height: 30px; font-size: 13px; }
 .stock-avatar.tiny { width: 23px; height: 23px; font-size: 11px; }
-.market-menu { position: absolute; top: calc(100% + 8px); left: 0; width: 310px; overflow: hidden; padding: 7px; border: 1px solid #273444; border-radius: 12px; background: #121a24; box-shadow: 0 14px 40px #0008; transform-origin: top left; animation: market-menu-in 160ms cubic-bezier(.2,.8,.2,1) both; }
+.market-menu { position: absolute; top: calc(100% + 8px); left: 0; width: 250px; overflow: hidden; padding: 6px; border: 1px solid #273444; border-radius: 12px; background: #121a24; box-shadow: 0 14px 40px #0008; transform-origin: top left; animation: market-menu-in 160ms cubic-bezier(.2,.8,.2,1) both; }
 @keyframes market-menu-in { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .market-search { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border: 1px solid #273544; border-radius: 8px; background: #0c1219; color: #748292; }
 .market-search > svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .market-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #e8edf3; font: inherit; font-size: 11px; }
 .market-search input::placeholder { color: #697786; }
 .market-menu-list { max-height: 310px; overflow: auto; padding-top: 5px; }
-.market-menu button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px; border: 0; border-radius: 8px; background: transparent; text-align: left; }
+.market-menu button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 5px 7px; border: 0; border-radius: 7px; background: transparent; text-align: left; }
 .market-menu button:hover, .market-menu button.selected { background: #1a2634; }
-.market-menu button > span:nth-child(2) { display: grid; gap: 3px; }
-.market-menu button small { color: var(--trade-muted); font-size: 10px; }
+.market-menu button > span:nth-child(2) { display: grid; gap: 2px; }
+.market-menu button .stock-avatar.small { width: 24px; height: 24px; }
+.market-menu button small { color: var(--trade-muted); font-size: 9px; }
 .market-menu button strong { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
 .market-empty { margin: 0; padding: 18px 10px; color: #8794a2; font-size: 11px; text-align: center; }
 .overview-price, .overview-metric { display: grid; gap: 5px; }
