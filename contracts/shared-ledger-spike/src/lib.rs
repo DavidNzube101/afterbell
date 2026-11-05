@@ -716,11 +716,19 @@ impl SharedLedger {
                     sequence: attestation.sequence,
                     ..previous.clone()
                 });
+                let continues_same_jump = read_json_storage::<PendingOracleJump>(&pending_jump_key)
+                    .filter(|pending| {
+                        (pending.price.price.0 >= previous.price.0)
+                            == (next_price.price.0 >= previous.price.0)
+                    });
                 write_json_storage(
                     &pending_jump_key,
                     &PendingOracleJump {
                         price: next_price,
-                        staged_at_ms: now,
+                        // Track a moving candidate in the same direction
+                        // without restarting the confirmation window.
+                        staged_at_ms: continues_same_jump
+                            .map_or(now, |pending| pending.staged_at_ms),
                         source_round: attestation.source_round,
                     },
                 );
@@ -7645,23 +7653,39 @@ mod tests {
 
         publish(&mut contract, 13_000_000_000, 3, "jump-2", NOW_MS);
         assert!(contract.oracle_health("NVDA".to_string()).circuit_broken);
+        let drifted_at_ms = NOW_MS + 60_000;
         let mut context = VMContextBuilder::new();
         context
             .current_account_id("a1.near".parse().unwrap())
             .predecessor_account_id(TOKEN.parse().unwrap())
-            .block_timestamp((NOW_MS + PERP_ORACLE_JUMP_CONFIRM_DELAY_MS) * 1_000_000);
+            .block_timestamp(drifted_at_ms * 1_000_000);
         testing_env!(context.build());
         publish(
             &mut contract,
-            13_000_000_000,
+            13_200_000_000,
             4,
-            "confirm-4",
-            NOW_MS + PERP_ORACLE_JUMP_CONFIRM_DELAY_MS,
+            "jump-continued",
+            drifted_at_ms,
+        );
+
+        let confirmation_at_ms = NOW_MS + PERP_ORACLE_JUMP_CONFIRM_DELAY_MS;
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(confirmation_at_ms * 1_000_000);
+        testing_env!(context.build());
+        publish(
+            &mut contract,
+            13_200_000_000,
+            5,
+            "confirm-5",
+            confirmation_at_ms,
         );
         assert!(!contract.oracle_health("NVDA".to_string()).circuit_broken);
         assert_eq!(
             read_market_price("NVDA").unwrap().price,
-            U128(13_000_000_000)
+            U128(13_200_000_000)
         );
     }
 
