@@ -306,20 +306,25 @@ function TradingPage() {
     context.fillText(sharePosition.side, 1400, 101)
     context.fillStyle = '#f4f7fb'
     context.font = '650 76px system-ui, sans-serif'
-    context.fillText(sharePosition.ticker, 90, 340)
-    context.fillStyle = '#54dfa4'
-    context.font = '650 96px system-ui, sans-serif'
-    context.fillText(sharePosition.pnl, 90, 505)
+    context.fillText(sharePosition.ticker, 90, 375)
+    context.font = '650 78px system-ui, sans-serif'
+    const pnlWidth = context.measureText(sharePosition.pnl).width
     context.fillStyle = '#9de8c7'
     context.font = '500 34px system-ui, sans-serif'
-    context.fillText(sharePosition.change, 90 + context.measureText(sharePosition.pnl).width + 24, 501)
-    context.strokeStyle = '#ffffff38'; context.lineWidth = 2
-    context.beginPath(); context.moveTo(90, 590); context.lineTo(1510, 590); context.stroke()
+    const changeWidth = context.measureText(sharePosition.change).width
+    const pnlX = 1510 - pnlWidth - changeWidth - 18
+    context.fillStyle = '#54dfa4'
+    context.font = '650 78px system-ui, sans-serif'
+    context.fillText(sharePosition.pnl, pnlX, 375)
+    context.fillStyle = '#9de8c7'
+    context.font = '500 34px system-ui, sans-serif'
+    context.fillText(sharePosition.change, pnlX + pnlWidth + 18, 371)
     const details = [['Position size', sharePosition.size], ['Leverage', sharePosition.leverage], ['Entry price', sharePosition.entry], ['Mark price', sharePosition.mark]]
     details.forEach(([label, value], index) => {
-      const x = 90 + index * 355
-      context.fillStyle = '#a2afbe'; context.font = '500 23px system-ui, sans-serif'; context.fillText(label, x, 665)
-      context.fillStyle = '#f1f5f9'; context.font = '600 31px system-ui, sans-serif'; context.fillText(value, x, 715)
+      const x = index % 2 === 0 ? 90 : 800
+      const y = index < 2 ? 545 : 695
+      context.fillStyle = '#a2afbe'; context.font = '500 25px system-ui, sans-serif'; context.fillText(label, x, y)
+      context.fillStyle = '#f1f5f9'; context.font = '700 34px system-ui, sans-serif'; context.fillText(value, x, y + 48)
     })
     context.fillStyle = '#b5d7fb'; context.font = '500 23px system-ui, sans-serif'; context.fillText('afterbellfx.xyz', 1290, 835)
     const link = document.createElement('a')
