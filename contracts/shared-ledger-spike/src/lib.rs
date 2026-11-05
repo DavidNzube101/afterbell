@@ -1190,8 +1190,11 @@ impl SharedLedger {
         )
         .expect("PnL overflow");
         let next_margin = position.margin_usdc.0 - amount.0;
-        let base_units = perp_base_units(position.notional_usdc.0, position.entry_price.0);
-        let current_notional = revalue_exposure(base_units, mark.price.0);
+        let current_notional = current_perp_notional(
+            position.notional_usdc.0,
+            position.entry_price.0,
+            mark.price.0,
+        );
         assert!(
             !crate::engine_math::is_liquidatable(
                 next_margin,
@@ -2011,8 +2014,11 @@ impl SharedLedger {
             position.is_long,
         )
         .expect("PnL overflow");
-        let current_notional =
-            position.notional_usdc.0.saturating_mul(mark.price.0) / position.entry_price.0;
+        let current_notional = current_perp_notional(
+            position.notional_usdc.0,
+            position.entry_price.0,
+            mark.price.0,
+        );
         let expired = env::block_timestamp() / 1_000_000
             >= position
                 .opened_at_ms
@@ -4107,6 +4113,14 @@ fn perp_base_units(notional: u128, entry_price: u128) -> u128 {
         .expect("base exposure overflow")
         / entry_price
 }
+
+fn current_perp_notional(notional: u128, entry_price: u128, mark_price: u128) -> u128 {
+    assert!(entry_price > 0, "position entry price must be positive");
+    notional
+        .checked_mul(mark_price)
+        .expect("current notional overflow")
+        / entry_price
+}
 fn legacy_base_units(notional: u128, entry_value: u128) -> u128 {
     let average_entry = entry_value / notional;
     if average_entry == 0 {
@@ -5797,6 +5811,12 @@ mod tests {
         assert_eq!(perp_settlement_components(100, -120, 10), (100, 0, 0));
         assert_eq!(perp_settlement_components(100, 20, 150), (0, 100, 0));
         assert_eq!(perp_settlement_components(100, -40, 30), (40, 30, 30));
+    }
+
+    #[test]
+    fn current_notional_uses_one_shared_price_conversion() {
+        assert_eq!(current_perp_notional(1, 3, 3), 1);
+        assert_eq!(revalue_exposure(perp_base_units(1, 3), 3), 0);
     }
 
     #[test]
