@@ -798,8 +798,9 @@ impl SharedLedger {
         let available_after_insurance =
             vault_cash.saturating_sub(read_u128_storage(PERP_INSURANCE_KEY));
         assert!(
-            read_u128_storage(PERP_DEFERRED_TOTAL_KEY) > available_after_insurance,
-            "vault has no deferred-profit funding deficit"
+            vault_nav(&self.balances) == 0
+                || read_u128_storage(PERP_DEFERRED_TOTAL_KEY) > available_after_insurance,
+            "vault has no recapitalization deficit"
         );
         let expected_nonce = read_user_perp_nonce(&account_id)
             .checked_add(1)
@@ -8583,6 +8584,37 @@ mod tests {
         assert_eq!(contract.vault_balance(), U128(300));
         assert_eq!(contract.balance_of(USER.to_string()), U128(800));
         assert_eq!(contract.vault_nav_usdc(), U128(100));
+        assert_eq!(read_u128_storage(LP_TOTAL_SHARES_KEY), 1);
+    }
+
+    #[test]
+    fn owner_can_recapitalize_zero_nav_without_deferred_claims() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[146; 32]);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        fund_record(&mut contract, USER, 100, "zero-nav-recapitalization-user");
+        write_lp_shares(USER, 1);
+        write_u128_storage(LP_TOTAL_SHARES_KEY, 1);
+        assert_eq!(contract.vault_nav_usdc(), U128(0));
+
+        let expiry = NOW_MS + 30_000;
+        let message = contract.vault_recapitalization_message(
+            USER.to_string(),
+            U128(10),
+            1,
+            expiry,
+        );
+        let signature = owner_key.sign(message.as_bytes());
+        contract.recapitalize_perp_vault(
+            USER.to_string(),
+            U128(10),
+            1,
+            expiry,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
+
+        assert_eq!(contract.balance_of(USER.to_string()), U128(90));
+        assert_eq!(contract.vault_nav_usdc(), U128(10));
         assert_eq!(read_u128_storage(LP_TOTAL_SHARES_KEY), 1);
     }
 
