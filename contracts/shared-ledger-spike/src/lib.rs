@@ -1451,10 +1451,15 @@ impl SharedLedger {
         }
         let vault_id = SHARED_VAULT_RECORD_ID.to_string();
         let vault_cash = self.balances.get(&vault_id).unwrap_or_default();
-        let beneficiary_id = agent_config
+        let deferred_beneficiary_id = agent_config
             .as_ref()
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
+        let credit_record_id = agent_config
+            .as_ref()
+            .filter(|config| config.enabled)
+            .map(|_| account_id.clone())
+            .unwrap_or_else(|| deferred_beneficiary_id.clone());
         let mut credit = margin_credit;
         if realized_pnl > 0 {
             let free = vault_cash
@@ -1466,8 +1471,8 @@ impl SharedLedger {
             let unpaid = (realized_pnl as u128).saturating_sub(paid);
             if unpaid > 0 {
                 write_perp_deferred(
-                    &beneficiary_id,
-                    read_perp_deferred(&beneficiary_id)
+                    &deferred_beneficiary_id,
+                    read_perp_deferred(&deferred_beneficiary_id)
                         .checked_add(unpaid)
                         .expect("claim overflow"),
                 );
@@ -1545,9 +1550,9 @@ impl SharedLedger {
             write_perp_exposure(&next, &position.market_id);
         }
         if credit > 0 {
-            let balance = self.balances.get(&beneficiary_id).unwrap_or_default();
+            let balance = self.balances.get(&credit_record_id).unwrap_or_default();
             self.balances.insert(
-                &beneficiary_id,
+                &credit_record_id,
                 &balance.checked_add(credit).expect("balance overflow"),
             );
         }
@@ -1718,10 +1723,15 @@ impl SharedLedger {
         }
         let vault_id = SHARED_VAULT_RECORD_ID.to_string();
         let vault_balance = self.balances.get(&vault_id).unwrap_or_default();
-        let beneficiary_id = agent_config
+        let deferred_beneficiary_id = agent_config
             .as_ref()
             .map(|config| config.user_record_id.clone())
             .unwrap_or_else(|| account_id.clone());
+        let credit_record_id = agent_config
+            .as_ref()
+            .filter(|config| config.enabled)
+            .map(|_| account_id.clone())
+            .unwrap_or_else(|| deferred_beneficiary_id.clone());
         let mut user_credit = margin_credit;
         if pnl > 0 {
             let free = vault_balance
@@ -1739,8 +1749,8 @@ impl SharedLedger {
             let unpaid = (pnl as u128).saturating_sub(paid);
             if unpaid != 0 {
                 write_perp_deferred(
-                    &beneficiary_id,
-                    read_perp_deferred(&beneficiary_id)
+                    &deferred_beneficiary_id,
+                    read_perp_deferred(&deferred_beneficiary_id)
                         .checked_add(unpaid)
                         .expect("claim overflow"),
                 );
@@ -1778,9 +1788,9 @@ impl SharedLedger {
             );
         }
         if user_credit != 0 {
-            let balance = self.balances.get(&beneficiary_id).unwrap_or_default();
+            let balance = self.balances.get(&credit_record_id).unwrap_or_default();
             self.balances.insert(
-                &beneficiary_id,
+                &credit_record_id,
                 &balance.checked_add(user_credit).expect("balance overflow"),
             );
         }
@@ -7328,6 +7338,94 @@ mod tests {
         assert_eq!(contract.agent_reserved_margin(agent_id.clone()), U128(0));
         assert_eq!(contract.agent_daily_loss(agent_id), U128(600));
         assert_eq!(contract.balance_of(USER.to_string()), U128(999_400));
+    }
+
+    #[test]
+    fn active_agent_perp_close_returns_collateral_to_agent_record() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[141; 32]);
+        let agent_key = SigningKey::from_bytes(&[142; 32]);
+        let quote_key = SigningKey::from_bytes(&[143; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        let agent_id = setup_agent(&mut contract, &owner_key, &agent_key);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        fund_record(&mut contract, USER, 1_000_000, "active-agent-owner");
+        fund_test_agent(&mut contract, &owner_key, &agent_id, 1_000_000);
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "active-agent-vault",
+        );
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+
+        let expiry = NOW_MS + 30_000;
+        let open_message = contract.trade_quote_message(
+            agent_id.clone(),
+            "active-agent-position".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            6,
+            1,
+            expiry,
+        );
+        let open_signature = agent_key.sign(open_message.as_bytes());
+        let open_quote_signature = quote_key.sign(open_message.as_bytes());
+        contract.open_perp_position(
+            agent_id.clone(),
+            "active-agent-position".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            100,
+            1,
+            6,
+            1,
+            expiry,
+            Base64VecU8::from(open_signature.to_bytes().to_vec()),
+            Base64VecU8::from(open_quote_signature.to_bytes().to_vec()),
+        );
+        assert_eq!(contract.balance_of(agent_id.clone()), U128(749_700));
+
+        let close_message = contract.close_perp_position_message(
+            agent_id.clone(),
+            "active-agent-position".to_string(),
+            U128(10_000_000_000),
+            0,
+            1,
+            6,
+            2,
+            expiry,
+        );
+        let close_signature = agent_key.sign(close_message.as_bytes());
+        let close_quote_signature = quote_key.sign(close_message.as_bytes());
+        contract.close_perp_position(
+            agent_id.clone(),
+            "active-agent-position".to_string(),
+            U128(10_000_000_000),
+            0,
+            1,
+            6,
+            2,
+            expiry,
+            Base64VecU8::from(close_signature.to_bytes().to_vec()),
+            Base64VecU8::from(close_quote_signature.to_bytes().to_vec()),
+        );
+
+        assert_eq!(contract.balance_of(agent_id), U128(999_400));
+        assert_eq!(contract.balance_of(USER.to_string()), U128(0));
     }
 
     #[test]
