@@ -231,6 +231,21 @@ pub struct PerpPosition {
 }
 
 #[near(serializers = [json])]
+pub struct PerpPositionView {
+    pub account_id: String,
+    pub position_id: String,
+    pub market_id: String,
+    pub is_long: bool,
+    pub notional_usdc: U128,
+    pub margin_usdc: U128,
+    pub entry_price: U128,
+    pub opened_at_ms: u64,
+    /// Signed fixed-point funding index, encoded as a decimal string.
+    pub funding_index: String,
+    pub funding_remainder: String,
+}
+
+#[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PerpExposure {
     pub long_notional_usdc: U128,
@@ -246,6 +261,19 @@ pub struct PerpExposure {
     pub short_base_units: U128,
     pub long_funding_index: U128,
     pub short_funding_index: U128,
+    pub funding_updated_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+pub struct PerpExposureView {
+    pub long_notional_usdc: U128,
+    pub short_notional_usdc: U128,
+    pub long_entry_value: U128,
+    pub short_entry_value: U128,
+    pub long_base_units: U128,
+    pub short_base_units: U128,
+    pub long_funding_index: String,
+    pub short_funding_index: String,
     pub funding_updated_at_ms: u64,
 }
 
@@ -487,12 +515,38 @@ impl SharedLedger {
         })
     }
 
-    pub fn perp_position(&self, account_id: String, position_id: String) -> Option<PerpPosition> {
-        read_perp_position(&account_id, &position_id)
+    pub fn perp_position(
+        &self,
+        account_id: String,
+        position_id: String,
+    ) -> Option<PerpPositionView> {
+        read_perp_position(&account_id, &position_id).map(|position| PerpPositionView {
+            account_id: position.account_id,
+            position_id: position.position_id,
+            market_id: position.market_id,
+            is_long: position.is_long,
+            notional_usdc: position.notional_usdc,
+            margin_usdc: position.margin_usdc,
+            entry_price: position.entry_price,
+            opened_at_ms: position.opened_at_ms,
+            funding_index: (position.funding_index.0 as i128).to_string(),
+            funding_remainder: position.funding_remainder.to_string(),
+        })
     }
 
-    pub fn perp_exposure(&self, market_id: String) -> PerpExposure {
-        read_perp_exposure(&market_id)
+    pub fn perp_exposure(&self, market_id: String) -> PerpExposureView {
+        let exposure = read_perp_exposure(&market_id);
+        PerpExposureView {
+            long_notional_usdc: exposure.long_notional_usdc,
+            short_notional_usdc: exposure.short_notional_usdc,
+            long_entry_value: exposure.long_entry_value,
+            short_entry_value: exposure.short_entry_value,
+            long_base_units: exposure.long_base_units,
+            short_base_units: exposure.short_base_units,
+            long_funding_index: (exposure.long_funding_index.0 as i128).to_string(),
+            short_funding_index: (exposure.short_funding_index.0 as i128).to_string(),
+            funding_updated_at_ms: exposure.funding_updated_at_ms,
+        }
     }
 
     pub fn perp_funding_rate_bps_per_hour(&self, market_id: String) -> u16 {
@@ -5552,6 +5606,43 @@ mod tests {
             exposure_pnl(100, first_base, 200, true) + exposure_pnl(100, second_base, 200, true),
             100
         );
+    }
+
+    #[test]
+    fn perp_json_views_expose_signed_funding_indices_as_strings() {
+        let contract = setup("a1.near");
+        write_perp_exposure(
+            &PerpExposure {
+                long_funding_index: U128((-123_i128) as u128),
+                short_funding_index: U128(456),
+                ..PerpExposure::default()
+            },
+            "NVDA",
+        );
+        let exposure = contract.perp_exposure("NVDA".to_string());
+        assert_eq!(exposure.long_funding_index, "-123");
+        assert_eq!(exposure.short_funding_index, "456");
+        write_perp_position(
+            USER,
+            "signed-funding",
+            &PerpPosition {
+                account_id: USER.to_string(),
+                position_id: "signed-funding".to_string(),
+                market_id: "NVDA".to_string(),
+                is_long: true,
+                notional_usdc: U128(1),
+                margin_usdc: U128(1),
+                entry_price: U128(1),
+                opened_at_ms: NOW_MS,
+                funding_index: U128((-9_i128) as u128),
+                funding_remainder: 0,
+            },
+        );
+        let position = contract
+            .perp_position(USER.to_string(), "signed-funding".to_string())
+            .unwrap();
+        assert_eq!(position.funding_index, "-9");
+        assert_eq!(position.funding_remainder, "0");
     }
 
     #[test]
