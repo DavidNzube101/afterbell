@@ -2994,6 +2994,16 @@ impl SharedLedger {
                 0,
                 "close agent positions before replacing the agent"
             );
+            assert_eq!(
+                read_perp_position_count(&existing_agent),
+                0,
+                "close agent perp positions before replacing the agent"
+            );
+            assert_eq!(
+                self.balances.get(&existing_agent).unwrap_or_default(),
+                0,
+                "reclaim agent balance before replacing the agent"
+            );
         }
         assert!(
             read_owner(&agent_record_id).is_none() && read_agent_config(&agent_record_id).is_none(),
@@ -9336,6 +9346,56 @@ mod tests {
             U128(1_000_000),
             expiry,
             2,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "close agent perp positions before replacing the agent")]
+    fn cannot_replace_revoked_agent_with_open_perp_positions() {
+        let mut contract = setup(TOKEN);
+        let owner_key = SigningKey::from_bytes(&[90; 32]);
+        let old_agent_key = SigningKey::from_bytes(&[89; 32]);
+        let new_agent_key = SigningKey::from_bytes(&[88; 32]);
+        let old_agent = setup_agent(&mut contract, &owner_key, &old_agent_key);
+        let mut old_config = read_agent_config(&old_agent).unwrap();
+        old_config.enabled = false;
+        write_agent_config(&old_agent, &old_config);
+        write_perp_position_count(&old_agent, 1);
+
+        let new_agent = format!("agent:{USER}:replacement");
+        let key = OwnerKey::SolanaEd25519 {
+            public_key: new_agent_key.verifying_key().to_bytes(),
+        };
+        let markets = vec!["NVDA".to_string()];
+        let expiry = NOW_MS + 24 * 60 * 60 * 1000;
+        let nonce = read_agent_admin_nonce(USER) + 1;
+        let message = agent_setup_message(
+            USER,
+            &new_agent,
+            &key,
+            &markets,
+            U128(1_000),
+            U128(1_000),
+            10_000,
+            U128(1_000),
+            U128(1_000),
+            nonce,
+            expiry,
+        );
+        let signature = owner_key.sign(message.as_bytes());
+        contract.create_agent_record(
+            USER.to_string(),
+            new_agent,
+            key,
+            markets,
+            U128(1_000),
+            U128(1_000),
+            10_000,
+            U128(1_000),
+            U128(1_000),
+            expiry,
+            nonce,
             Base64VecU8::from(signature.to_bytes().to_vec()),
         );
     }
