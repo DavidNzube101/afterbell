@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { siRobinhood } from 'simple-icons'
 import logo from '../assets/afterbell-logo.png'
 import { TickerIcon } from '../components/TickerIcon'
-import { markets } from '../data/markets'
+import { useMarketRegistry } from '../lib/api'
 import './trade.css'
 import './markets.css'
 
@@ -11,6 +11,7 @@ export const Route = createFileRoute('/markets')({ component: MarketsPage })
 
 function MarketsPage() {
   const [query, setQuery] = useState('')
+  const { markets, error } = useMarketRegistry()
   const filteredMarkets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return markets.filter(market => `${market.ticker} ${market.name} us equity robinhood chain`.toLowerCase().includes(normalizedQuery))
@@ -25,7 +26,7 @@ function MarketsPage() {
 
     <main className="markets-content">
       <div className="markets-title-row">
-        <div><h1>Markets</h1><p>Explore the US equity markets available on Afterbell.</p></div>
+        <div><h1>Markets</h1><p>Explore the US equity markets available on Afterbell.</p>{error && <p className="markets-api-error">Market data is temporarily unavailable. Showing the configured market list.</p>}</div>
       </div>
 
       <section className="markets-directory" aria-label="Markets">
@@ -35,7 +36,7 @@ function MarketsPage() {
         <div className="markets-table-head"><span>Market</span><span>Type</span><span>Network</span><span/></div>
         <div className="markets-rows">{filteredMarkets.map(market => <article className="supported-market-row" key={market.ticker}>
           <div className="supported-market-name"><span className="market-brand-icon"><TickerIcon ticker={market.ticker} size={20}/></span><span><b>{market.ticker}</b><small>{market.name}</small></span></div>
-          <span className="market-type">US equity</span>
+          <span className="market-type">{market.ticker}-USDC</span>
           <span className="market-network"><span className="robinhood-icon" role="img" aria-label="Robinhood Chain"><svg viewBox="0 0 24 24" aria-hidden="true"><path d={siRobinhood.path}/></svg></span>Robinhood Chain</span>
           <div className="market-actions"><Link className="market-open-link long" to="/trade" search={{ market: market.ticker, side: 'long' }}>Long</Link><Link className="market-open-link short" to="/trade" search={{ market: market.ticker, side: 'short' }}>Short</Link></div>
         </article>)}{filteredMarkets.length === 0 && <div className="markets-no-results">No supported markets match “{query}”.</div>}</div>

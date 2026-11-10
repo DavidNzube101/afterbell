@@ -1,6 +1,6 @@
 # Afterbell
 
-Afterbell is the open source trading dapp monorepo. The public landing page remains in `../landing`; it calls the separate landing server documented in [`openapi.yaml`](./openapi.yaml). The trading frontend will live at this repository root, with C++ workers in `backend/` and NEAR contracts in `contracts/`.
+Afterbell is the open source trading dapp monorepo. The public landing page remains in `../landing`; it calls the separate landing server documented in [`openapi.yaml`](./openapi.yaml). The trading frontend lives at this repository root, with C++ workers in `backend/` and NEAR contracts in `contracts/`.
 
 ## Repository layout
 
@@ -11,6 +11,26 @@ app/
 ├── openapi.yaml   # Public HTTP API contract
 └── README.md
 ```
+
+## Dapp frontend
+
+The TanStack React dapp is served from this repository root. Its API requests use
+`/api` paths: Vite proxies them to `VITE_API_PROXY_TARGET` during local
+development, while Vercel forwards them to `https://api.afterbellfx.xyz`. This
+keeps browser requests same-origin and avoids requiring cross-origin API access.
+
+For local frontend development, run the API on port `8080`, then:
+
+```sh
+bun install
+bun run dev
+```
+
+To point the local dapp at the deployed API instead, copy `.env.example` to
+`.env.local` and set `VITE_API_PROXY_TARGET=https://api.afterbellfx.xyz`.
+Production Vercel settings use the repository root, `bun run build`, and `dist`
+as the output directory. Add `testnet.afterbellfx.xyz` to the Vercel project's
+Domains and configure the DNS record Vercel provides.
 
 ## C++ API and workers
 

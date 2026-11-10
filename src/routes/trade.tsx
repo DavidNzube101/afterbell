@@ -5,7 +5,8 @@ import shareImage1 from '../assets/share-images/1.png'
 import shareImage2 from '../assets/share-images/2.png'
 import shareImage3 from '../assets/share-images/3.png'
 import { TickerIcon } from '../components/TickerIcon'
-import { markets } from '../data/markets'
+import { markets, type Market } from '../data/markets'
+import { useMarketRegistry } from '../lib/api'
 import './trade.css'
 
 export const Route = createFileRoute('/trade')({
@@ -113,7 +114,7 @@ function loadAdvancedChartWidget() {
   return advancedChartWidget
 }
 
-function PriceChart({ market }: { market: (typeof markets)[number] }) {
+function PriceChart({ market }: { market: Market }) {
   const symbol = `NASDAQ:${market.ticker}`
   const chartRef = useRef<HTMLDivElement>(null)
 
@@ -225,7 +226,8 @@ const shareBackgrounds = [
 
 function TradingPage() {
   const { market: selectedTicker, side: initialSide } = Route.useSearch()
-  const [marketIndex, setMarketIndex] = useState(() => Math.max(0, markets.findIndex(item => item.ticker === selectedTicker)))
+  const [selectedMarket, setSelectedMarket] = useState(selectedTicker ?? markets[0].ticker)
+  const { markets: availableMarkets } = useMarketRegistry()
   const [side, setSide] = useState<'long' | 'short'>(initialSide ?? 'long')
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
   const [leverage, setLeverage] = useState(3)
@@ -247,8 +249,8 @@ function TradingPage() {
   const [chartHeight, setChartHeight] = useState(485)
   const marketMenuRef = useRef<HTMLDivElement>(null)
   const dragState = useRef<{ axis: 'x' | 'y'; start: number; initial: number } | null>(null)
-  const market = markets[marketIndex]
-  const filteredMarkets = markets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase()))
+  const market = availableMarkets.find(item => item.ticker === selectedMarket) ?? availableMarkets[0]
+  const filteredMarkets = availableMarkets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase()))
   const positionValue = Number(payment || 0) * leverage
 
   useEffect(() => {
@@ -398,7 +400,7 @@ function TradingPage() {
       <section className="market-overview">
         <div className="market-selector-wrap" ref={marketMenuRef}>
           <button className="market-selector" aria-expanded={marketMenu} onClick={() => { setMarketMenu(open => !open); setMarketSearch('') }}><span className="stock-avatar"><TickerIcon ticker={market.ticker} size={20}/></span><span className="market-selector-text"><b>{market.ticker}</b></span><Icon name="chevron"/></button>
-          {marketMenu && <div className="market-menu"><label className="market-search"><Icon name="search"/><input autoFocus value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search stocks" aria-label="Search stocks"/></label><div className="market-menu-list">{filteredMarkets.map((item) => { const i = markets.indexOf(item); return <button key={item.ticker} className={i === marketIndex ? 'selected' : ''} onClick={() => { setMarketIndex(i); setMarketMenu(false); setMarketSearch('') }}><span className="stock-avatar small"><TickerIcon ticker={item.ticker} size={17}/></span><span><b>{item.ticker}</b><small>{item.name} / US equity</small></span></button> })}{filteredMarkets.length === 0 && <p className="market-empty">No stocks found.</p>}</div></div>}
+          {marketMenu && <div className="market-menu"><label className="market-search"><Icon name="search"/><input autoFocus value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search stocks" aria-label="Search stocks"/></label><div className="market-menu-list">{filteredMarkets.map(item => <button key={item.ticker} className={item.ticker === market.ticker ? 'selected' : ''} onClick={() => { setSelectedMarket(item.ticker); setMarketMenu(false); setMarketSearch('') }}><span className="stock-avatar small"><TickerIcon ticker={item.ticker} size={17}/></span><span><b>{item.ticker}</b><small>{item.name} / US equity</small></span></button>)}{filteredMarkets.length === 0 && <p className="market-empty">No stocks found.</p>}</div></div>}
         </div>
         <div className="overview-price"><small className="metric-label" tabIndex={0} aria-describedby="tip-mark-price">Perp mark price<span className="metric-tooltip" id="tip-mark-price" role="tooltip">The reference price used to value open positions and help determine liquidations. It can differ from the price available to trade.</span></small><strong>Unavailable</strong><span>Awaiting market feed</span></div>
         <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-volume">24h volume<span className="metric-tooltip" id="tip-volume" role="tooltip">The total value of trades recorded in this market over the past 24 hours.</span></small><strong>Unavailable</strong></div>
