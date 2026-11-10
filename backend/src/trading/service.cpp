@@ -218,8 +218,14 @@ Json::Value relayCall(const Config &config, const std::string &method, const Jso
     tx.push_back(0); tx.insert(tx.end(), signature.begin(), signature.end());
     Json::Value params(Json::arrayValue); params.append(afterbell::oracle::base64Encode(tx.data(), tx.size()));
     const auto result = txRpc.call("broadcast_tx_commit", params);
-    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE")
-        throw std::runtime_error("A1 rejected the " + method + " transaction");
+    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE") {
+        const auto executionError = result["status"]["Failure"]["ActionError"]["kind"]["FunctionCallError"]["ExecutionError"];
+        const auto transactionHash = result["transaction"]["hash"].asString();
+        auto message = "A1 rejected the " + method + " transaction";
+        if (executionError.isString() && !executionError.asString().empty()) message += ": " + executionError.asString();
+        if (!transactionHash.empty()) message += " (transaction " + transactionHash + ")";
+        throw std::runtime_error(message);
+    }
     Json::Value response; response["status"] = "finalized";
     response["transaction_hash"] = result["transaction"]["hash"];
     return response;
@@ -355,13 +361,15 @@ Json::Value Service::ownerRegistrationPayload(const Json::Value &request) const 
     if (accountId.empty() || accountId.size() > 128 || accountId.rfind("protocol:", 0) == 0 || accountId.rfind("agent:", 0) == 0)
         throw std::invalid_argument("invalid or reserved account_id");
     validateAccountOwnerBinding(accountId, request["owner"]);
-    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
-    Json::Value args; args["account_id"] = accountId; args["owner"] = request["owner"];
-    args["expires_at_ms"] = Json::UInt64(expiry);
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
     if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
+    constexpr std::uint64_t ownerRegistrationTtlMs = 4 * 60 * 1000;
+    const auto expiry = blockTimeMs(rpc) + ownerRegistrationTtlMs;
+    Json::Value args; args["account_id"] = accountId; args["owner"] = request["owner"];
+    args["expires_at_ms"] = Json::UInt64(expiry);
     const auto value = viewCall(rpc, config_.contractId, "owner_registration_signing_payload", args);
     Json::Value response; response["payload"] = value; response["account_id"] = accountId;
+    response["expires_at_ms"] = Json::UInt64(expiry);
     return response;
 }
 

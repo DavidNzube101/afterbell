@@ -82,11 +82,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [account_id, owner, expires_at_ms]
+              required: [account_id, owner]
               properties:
                 account_id: { type: string, maxLength: 128 }
                 owner: { $ref: '#/components/schemas/A1OwnerKey' }
-                expires_at_ms: { type: integer, format: int64 }
       responses:
         '200':
           description: A1 signature payload
@@ -94,9 +93,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [account_id, payload]
+                required: [account_id, payload, expires_at_ms]
                 properties:
                   account_id: { type: string }
+                  expires_at_ms: { type: integer, format: int64 }
                   payload:
                     type: object
                     required: [message, nonce, recipient]

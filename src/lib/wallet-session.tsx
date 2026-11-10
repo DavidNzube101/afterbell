@@ -187,10 +187,9 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
     return { session: { chain, walletName, address, accountId }, firstTime: false }
   }
 
-  const expiresAt = Date.now() + 5 * 60_000
-  const challenge = await post<{ payload: Payload }>('/v1/account/owner/payload', { account_id: accountId, owner, expires_at_ms: expiresAt })
+  const challenge = await post<{ payload: Payload; expires_at_ms: number }>('/v1/account/owner/payload', { account_id: accountId, owner })
   const signature = await sign(challenge.payload)
-  await post('/v1/account/owner/register', { account_id: accountId, owner, expires_at_ms: expiresAt, signature: bytesBase64(signature) })
+  await post('/v1/account/owner/register', { account_id: accountId, owner, expires_at_ms: challenge.expires_at_ms, signature: bytesBase64(signature) })
   cleanupCurrentWallet?.()
   cleanupCurrentWallet = watchWallet(() => { localStorage.removeItem(SESSION_KEY); window.location.assign('/') })
   return { session: { chain, walletName, address, accountId }, firstTime: true }
