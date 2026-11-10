@@ -78,6 +78,17 @@ networks:
         transaction_id: GN8Yqu2TEmR9icRi9tyG3M6ekRnP5KSCgVuPCN78kk4N
         result: successful; protocol_admin_account view verified
         executed_at_utc: null
+    protocol_configuration:
+      oracle_signer:
+        active_address: 0x2a26ad7368fcd62197bb50df298657ee8d48dc0c
+        verified_by_view: true
+        history:
+          - action: initial_configuration_superseded
+            transaction_id: FDvJtrbSHL9H1nfXMELoGWkj3rmAtkmR2zLW9EEiY1mA
+          - action: configure_rotation
+            transaction_id: jYFU918oPww9ShyQvkrdzCiqxH3ocAQEgMhyyaPBZfj
+            apply_transaction_id: DDaGRjU2Q2EUUyFoPTEkqpNW5y1cYGEvcw4Aam2KzogJ
+            result: correct signer active; oracle_signer view verified
 
   mainnet:
     network_id: mainnet
