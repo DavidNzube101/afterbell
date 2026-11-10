@@ -26,10 +26,26 @@ const nearNetwork = import.meta.env.VITE_NEAR_NETWORK === 'mainnet' ? 'mainnet' 
 const contractId = import.meta.env.VITE_A1_CONTRACT_ID || (nearNetwork === 'mainnet' ? 'a1.afterbell.near' : 'afterbellfx-dev-faucet.testnet')
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) })
-  const value = await response.json().catch(() => ({})) as { error?: { message?: string } }
-  if (!response.ok) throw new Error(value.error?.message || `Request failed (${response.status})`)
-  return value as T
+  let response: Response
+  try {
+    response = await fetch(`/api${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) })
+  } catch {
+    throw new Error('Could not reach the Afterbell API. Check your connection and try again.')
+  }
+  const text = await response.text()
+  let value: { error?: { message?: string } } = {}
+  try { value = JSON.parse(text) as typeof value } catch { /* Some proxy errors return HTML instead of JSON. */ }
+  if (!response.ok) {
+    if (response.status === 404 && path.startsWith('/v1/account/owner/')) {
+      throw new Error('Account setup is not available on the API deployment yet. Please redeploy the backend and try again.')
+    }
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      throw new Error('The Afterbell API is temporarily unavailable. Please try again shortly.')
+    }
+    throw new Error(value.error?.message || `Afterbell API request failed (${response.status}).`)
+  }
+  if (!text) return {} as T
+  try { return JSON.parse(text) as T } catch { throw new Error('The Afterbell API returned an unreadable response. Please try again.') }
 }
 
 function bytesHex(bytes: Uint8Array) { return `0x${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}` }

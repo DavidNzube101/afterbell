@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useWalletSession, type WalletChain as AdapterChain } from '../lib/wallet-session'
+import { useToasts } from '../lib/toasts'
 import logo from '../assets/afterbell-logo.png'
 import phantomIcon from '../assets/wallet-icons/phantom.jpeg'
 import solflareIcon from '../assets/wallet-icons/solflare.jpeg'
@@ -131,10 +132,10 @@ function Dots({ count }: { count: 2 | 3 }) {
 function AuthPage() {
   const navigate = useNavigate()
   const { session, connect, connecting } = useWalletSession()
+  const { showToast, dismissToast } = useToasts()
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [selectedChain, setSelectedChain] = useState<WalletChain | null>(null)
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward' | null>(null)
-  const [walletError, setWalletError] = useState<string | null>(null)
 
   useEffect(() => {
     if (session) void navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
@@ -177,16 +178,19 @@ function AuthPage() {
 
   const continueWithWallet = async (walletName: string) => {
     if (!selectedChain) return
-    setWalletError(null)
+    const pendingToast = showToast('waiting', 'Waiting for wallet approval and account setup…', 0)
     try {
       const chain = selectedChain === 'Solana' ? 'solana' : selectedChain === 'EVM' ? 'evm' : 'near'
       await connect(chain as AdapterChain, walletName)
+      dismissToast(pendingToast)
       closeWalletModal()
       const firstTime = sessionStorage.getItem('afterbell.first-time-setup') === 'true'
+      showToast('success', firstTime ? 'Wallet connected. Your account is ready to set up.' : 'Wallet connected.', 3500)
       if (firstTime) await navigate({ to: '/setting-up' })
       else await navigate({ to: '/trade', search: { market: undefined, side: undefined } })
     } catch (error) {
-      setWalletError(error instanceof Error ? error.message : 'Could not connect wallet')
+      dismissToast(pendingToast)
+      showToast('error', error instanceof Error ? error.message : 'Could not connect wallet. Please try again.')
     }
   }
 
@@ -269,8 +273,6 @@ function AuthPage() {
                   ))}
                 </div>
               )}
-              {connecting && <p className="wallet-feedback">Connect your wallet and approve the Afterbell owner signature.</p>}
-              {walletError && <p className="wallet-error" role="alert">{walletError}</p>}
             </div>
           </section>
         </div>
