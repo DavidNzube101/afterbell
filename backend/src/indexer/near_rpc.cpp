@@ -84,8 +84,26 @@ Json::Value NearRpc::call(const std::string &method, const Json::Value &params) 
     long status = 0;
     curl_easy_getinfo(client.get(), CURLINFO_RESPONSE_CODE, &status);
     if (status < 200 || status >= 300) {
+        std::string detail;
+        Json::CharReaderBuilder errorBuilder;
+        Json::Value errorResponse;
+        std::string parseErrors;
+        const auto errorReader = std::unique_ptr<Json::CharReader>(errorBuilder.newCharReader());
+        if (errorReader->parse(responseBody.data(), responseBody.data() + responseBody.size(),
+                                &errorResponse, &parseErrors) && errorResponse["error"].isObject()) {
+            const auto &rpcError = errorResponse["error"];
+            if (rpcError["code"].isNumeric()) {
+                detail = " (code " + std::to_string(rpcError["code"].asInt64());
+                if (rpcError["message"].isString()) detail += ": " + rpcError["message"].asString();
+                detail += ")";
+            } else if (rpcError["message"].isString()) {
+                detail = " (" + rpcError["message"].asString() + ")";
+            }
+            constexpr std::size_t maxDetailLength = 320;
+            if (detail.size() > maxDetailLength) detail.resize(maxDetailLength);
+        }
         throw std::runtime_error("NEAR RPC returned HTTP " + std::to_string(status) +
-                                 " for method " + method);
+                                 " for method " + method + detail);
     }
 
     Json::CharReaderBuilder builder;
