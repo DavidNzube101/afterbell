@@ -148,6 +148,8 @@ button, a { font: inherit; }
 .wallet-option:focus-visible { outline: 2px solid #4a9cff; outline-offset: 2px; }
 
 .wallet-modal-content { overflow-y: auto; max-height: calc(min(690px, 100dvh - 40px) - 54px); padding: 3px 25px 25px; }
+.wallet-modal-content-forward { animation: wallet-content-wipe-forward 280ms cubic-bezier(.2, .75, .25, 1) both; }
+.wallet-modal-content-backward { animation: wallet-content-wipe-backward 280ms cubic-bezier(.2, .75, .25, 1) both; }
 .wallet-modal-content h2 { margin: 0; color: #f4f6f8; font-size: 22px; font-weight: 600; letter-spacing: -.04em; }
 .wallet-modal-description { margin: 7px 0 21px; color: #909ba8; font-size: 13px; line-height: 1.5; }
 .chain-options,
@@ -193,6 +195,14 @@ button, a { font: inherit; }
 
 @keyframes wallet-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes wallet-modal-rise-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes wallet-content-wipe-forward {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes wallet-content-wipe-backward {
+  from { clip-path: inset(0 0 0 100%); }
+  to { clip-path: inset(0 0 0 0); }
+}
 
 .art-panel {
   position: relative;
@@ -267,5 +277,6 @@ button, a { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
   .wallet-modal-backdrop, .wallet-modal { animation: none; }
+  .wallet-modal-content-forward, .wallet-modal-content-backward { animation: none; }
   .art-tile:hover .art-tile-shape { transform: none; }
 }

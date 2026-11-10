@@ -131,6 +131,7 @@ function AuthPage() {
   const navigate = useNavigate()
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [selectedChain, setSelectedChain] = useState<WalletChain | null>(null)
+  const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward' | null>(null)
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -150,6 +151,17 @@ function AuthPage() {
 
   const closeWalletModal = () => {
     setWalletModalOpen(false)
+    setSelectedChain(null)
+    setTransitionDirection(null)
+  }
+
+  const showWallets = (chain: WalletChain) => {
+    setTransitionDirection('forward')
+    setSelectedChain(chain)
+  }
+
+  const showNetworks = () => {
+    setTransitionDirection('backward')
     setSelectedChain(null)
   }
 
@@ -194,7 +206,7 @@ function AuthPage() {
           <section className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title">
             <header className="wallet-modal-header">
               {selectedChain ? (
-                <button className="wallet-modal-back" type="button" onClick={() => setSelectedChain(null)} aria-label="Back to wallet networks">
+                <button className="wallet-modal-back" type="button" onClick={showNetworks} aria-label="Back to wallet networks">
                   <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
               ) : <span className="wallet-modal-header-spacer" />}
@@ -203,7 +215,10 @@ function AuthPage() {
               </button>
             </header>
 
-            <div className="wallet-modal-content">
+            <div
+              key={selectedChain ?? 'networks'}
+              className={`wallet-modal-content${transitionDirection ? ` wallet-modal-content-${transitionDirection}` : ''}`}
+            >
               <h2 id="wallet-modal-title">{selectedChain ? `${selectedChain} wallets` : 'Choose your network'}</h2>
               <p className="wallet-modal-description">
                 {selectedChain ? chainDescriptions[selectedChain] : 'Choose the network you want to connect with.'}
@@ -222,7 +237,7 @@ function AuthPage() {
               ) : (
                 <div className="chain-options">
                   {(Object.keys(walletCatalog) as WalletChain[]).map((chain) => (
-                    <button className="chain-option" key={chain} type="button" onClick={() => setSelectedChain(chain)}>
+                    <button className="chain-option" key={chain} type="button" onClick={() => showWallets(chain)}>
                       <img
                         className="chain-option-icon"
                         src={chain === 'Solana' ? solanaChainIcon : chain === 'EVM' ? ethereumChainIcon : nearChainIcon}
