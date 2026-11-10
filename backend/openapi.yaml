@@ -2,13 +2,14 @@ openapi: 3.1.0
 info:
   title: Afterbell Trading API
   version: 0.1.0
-  description: Initial read-only API surface for service health and configured markets.
+  description: Health, market data, oracle publication, and owner-authorized A1 trade execution.
 servers:
   - url: http://localhost:8080
     description: Local development
 tags:
   - name: Health
   - name: Markets
+  - name: Trading
 paths:
   /health/live:
     get:
@@ -114,8 +115,88 @@ paths:
                         tokenAddress: { type: string }
                         status: { type: string, const: development }
                         tradingEnabled: { type: boolean, const: false }
+  /v1/trade/quote:
+    post:
+      tags: [Trading]
+      operationId: createPerpOpenQuote
+      summary: Create an A1-signed market-open quote
+      description: Returns the exact A1 authorization message for the owner wallet to sign, along with the configured quote signer signature. Amounts are raw USDC units (6 decimals). The quote expires quickly and is bound to the current oracle sequence and trading nonce.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id, market_id, side, notional_usdc, leverage_bps, max_slippage_bps]
+              properties:
+                account_id: { type: string }
+                market_id: { type: string, example: NVDA }
+                side: { type: string, enum: [long, short] }
+                notional_usdc: { type: string, pattern: '^[0-9]+$', example: '10000000' }
+                leverage_bps: { type: integer, minimum: 10000, example: 20000 }
+                max_slippage_bps: { type: integer, minimum: 0, maximum: 1000, example: 50 }
+      responses:
+        '200':
+          description: Quote and owner-signing message
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TradeQuote' }
+        '422':
+          description: Market, oracle, account, balance, or request validation failed
+  /v1/trade/open:
+    post:
+      tags: [Trading]
+      operationId: submitPerpOpen
+      summary: Relay an owner-authorized A1 market order
+      description: Send the quote fields returned by /v1/trade/quote plus the owner's base64 wallet signature. The backend checks that the quote is still current, applies the configured quote signer signature, and relays open_perp_position to A1. A1 remains authoritative for signature verification and settlement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/TradeQuote'
+                - type: object
+                  required: [owner_signature]
+                  properties:
+                    owner_signature: { type: string, contentEncoding: base64 }
+      responses:
+        '200':
+          description: NEAR transaction finalized
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, transaction_hash, position_id]
+                properties:
+                  status: { type: string, const: finalized }
+                  transaction_hash: { type: string }
+                  position_id: { type: string }
+        '422': { description: Quote expired or A1 rejected the trade }
+        '503': { description: Trade routes are disabled }
 components:
   schemas:
+    TradeQuote:
+      type: object
+      required: [account_id, position_id, market_id, side, notional_usdc, leverage_bps, reference_price, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms, message, quote_signature]
+      properties:
+        account_id: { type: string }
+        position_id: { type: string }
+        market_id: { type: string }
+        side: { type: string, enum: [long, short] }
+        notional_usdc: { type: string }
+        leverage_bps: { type: integer }
+        reference_price: { type: string, description: Raw price with 8 decimals }
+        max_slippage_bps: { type: integer }
+        price_sequence: { type: integer, format: uint64 }
+        fee_bps: { type: integer }
+        nonce: { type: integer, format: uint64 }
+        expires_at_ms: { type: integer, format: uint64 }
+        message: { type: string }
+        quote_signature: { type: string, contentEncoding: base64 }
+        required_margin_usdc: { type: string }
+        fee_usdc: { type: string }
+        free_balance_usdc: { type: string }
     IndexerStatus:
       type: object
       required: [enabled, status, lastIndexedBlock]

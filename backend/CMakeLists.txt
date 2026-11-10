@@ -28,6 +28,7 @@ add_library(afterbell-indexer-core
     src/oracle/near_publisher.cpp
     src/oracle/robinhood_pools.cpp
     src/oracle/worker.cpp
+    src/trading/service.cpp
 )
 target_include_directories(afterbell-indexer-core PUBLIC src)
 target_link_libraries(afterbell-indexer-core

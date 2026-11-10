@@ -3,6 +3,7 @@
 #include "http/request_logger.hpp"
 #include "indexer/worker.hpp"
 #include "oracle/worker.hpp"
+#include "trading/service.hpp"
 
 #include <libpq-fe.h>
 
@@ -71,6 +72,13 @@ bool oracleEnabled() {
     if (value == "true" || value == "1" || value == "yes") return true;
     if (value == "false" || value == "0" || value == "no") return false;
     throw std::runtime_error("ORACLE_ENABLED must be true or false");
+}
+
+bool perpTradingEnabled() {
+    const auto value = env("PERP_TRADING_ENABLED").value_or("false");
+    if (value == "true" || value == "1" || value == "yes") return true;
+    if (value == "false" || value == "0" || value == "no") return false;
+    throw std::runtime_error("PERP_TRADING_ENABLED must be true or false");
 }
 
 void loadEnvFile(const std::string &path) {
@@ -179,6 +187,7 @@ Json::Value oracleStatus(const std::shared_ptr<afterbell::oracle::Worker> &worke
 
 void logStartup(unsigned short port, const std::string &network,
                 bool isIndexerEnabled, bool isOracleEnabled,
+                bool isPerpTradingEnabled,
                 Json::ArrayIndex marketCount) {
     const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
@@ -191,6 +200,7 @@ void logStartup(unsigned short port, const std::string &network,
     event["network"] = network;
     event["indexer_enabled"] = isIndexerEnabled;
     event["oracle_enabled"] = isOracleEnabled;
+        event["perp_trading_enabled"] = isPerpTradingEnabled;
     event["market_count"] = marketCount;
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -224,7 +234,8 @@ int main() {
 
         const bool runIndexer = indexerEnabled();
         const bool runOracle = oracleEnabled();
-        const auto nearRpcUrl = (runIndexer || runOracle)
+        const bool runTrading = perpTradingEnabled();
+        const auto nearRpcUrl = (runIndexer || runOracle || runTrading)
                                     ? nearRpcUrlForNetwork(*network)
                                     : std::string{};
         std::shared_ptr<afterbell::oracle::Worker> oracleWorker;
@@ -272,6 +283,22 @@ int main() {
                 requiredEnv("INDEXER_TX_API_URL"), *databaseUrl,
                 uintEnvOr("INDEXER_POLL_INTERVAL_MS", 5000));
             indexerWorker->start();
+        }
+        std::shared_ptr<afterbell::trading::Service> tradingService;
+        if (runTrading) {
+            const auto tradeFeeBps = uintEnvOr("PERP_TRADE_FEE_BPS", 10);
+            if (tradeFeeBps > 100) throw std::runtime_error("PERP_TRADE_FEE_BPS must be between 0 and 100");
+            tradingService = std::make_shared<afterbell::trading::Service>(
+                afterbell::trading::Config{
+                    *network,
+                    nearRpcUrl,
+                    nearTransactionRpcUrlForNetwork(*network, nearRpcUrl),
+                    *contractId,
+                    requiredEnv("ORACLE_RELAYER_ACCOUNT_ID"),
+                    requiredEnv("ORACLE_RELAYER_PRIVATE_KEY"),
+                    requiredEnv("PERP_QUOTE_SIGNER_PRIVATE_KEY"),
+                    static_cast<std::uint16_t>(tradeFeeBps),
+                });
         }
 
         drogon::app().setThreadNum(4);
@@ -337,9 +364,57 @@ int main() {
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/trade/quote",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trade quoting is not enabled on this service");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable);
+                    callback(response);
+                    return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    auto body = tradingService->createOpenQuote(*input);
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("quote_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity);
+                    callback(response);
+                }
+            },
+            {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/trade/open",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trade execution is not enabled on this service");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable);
+                    callback(response);
+                    return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    auto body = tradingService->submitOpen(*input);
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("trade_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity);
+                    callback(response);
+                }
+            },
+            {drogon::Post});
 
         const auto port = portFromEnv();
-        logStartup(port, *network, runIndexer, runOracle, markets.size());
+        logStartup(port, *network, runIndexer, runOracle, runTrading, markets.size());
         std::cerr << "afterbell-api listening on port " << port << " (" << *network
                   << ", indexer " << (runIndexer ? "enabled" : "disabled") << ")\n";
         drogon::app().addListener("0.0.0.0", port).run();

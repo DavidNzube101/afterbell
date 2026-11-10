@@ -2,6 +2,7 @@
 
 #include "indexer/near_rpc.hpp"
 #include "oracle/crypto.hpp"
+#include "oracle/near_tx_lock.hpp"
 
 #include <openssl/evp.h>
 
@@ -137,7 +138,7 @@ bool NearPublisher::verifyContractOracleSigner() const {
 }
 
 std::string NearPublisher::publish(const PriceAttestation &price) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(nearTransactionMutex());
     afterbell::indexer::NearRpc rpc(rpcUrl_);
     Json::Value queryArgs; queryArgs["market_id"] = price.marketId;
     const auto old=viewCall(rpc,contractId_,"market_price",queryArgs);
