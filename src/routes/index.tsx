@@ -227,7 +227,7 @@ function AuthPage() {
             if (event.target === event.currentTarget) closeWalletModal()
           }}
         >
-          <section className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title">
+          <section className={`wallet-modal${selectedChain ? ' wallet-modal-wallets' : ''}`} role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title">
             <header className="wallet-modal-header">
               {selectedChain ? (
                 <button className="wallet-modal-back" type="button" onClick={showNetworks} aria-label="Back to wallet networks">

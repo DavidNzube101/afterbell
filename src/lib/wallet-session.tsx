@@ -39,8 +39,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     if (response.status === 404 && path.startsWith('/v1/account/owner/')) {
       throw new Error('Account setup is not available on the API deployment yet. Please redeploy the backend and try again.')
     }
-    if (response.status === 502 || response.status === 503 || response.status === 504) {
-      throw new Error('The Afterbell API is temporarily unavailable. Please try again shortly.')
+    if (response.status >= 500) {
+      const operation = path.split('/').filter(Boolean).slice(-2).join('/')
+      const serverMessage = value.error?.message
+      throw new Error(serverMessage
+        ? `${serverMessage} (HTTP ${response.status}, ${operation}).`
+        : `The Afterbell API returned HTTP ${response.status} during ${operation}. Please try again shortly.`)
     }
     throw new Error(value.error?.message || `Afterbell API request failed (${response.status}).`)
   }

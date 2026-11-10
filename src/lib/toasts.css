@@ -1,5 +1,5 @@
 .toast-stack { position: fixed; z-index: 10000; top: max(16px, env(safe-area-inset-top)); left: 50%; display: grid; width: min(440px, calc(100vw - 28px)); gap: 9px; transform: translateX(-50%); pointer-events: none; }
-.app-toast { min-height: 54px; display: flex; align-items: center; gap: 11px; padding: 10px 11px 10px 14px; border: 1px solid #27313d; border-radius: 12px; background: #141b24; color: #e8edf3; box-shadow: 0 16px 44px #0008; animation: toast-enter .22s cubic-bezier(.2,.8,.2,1) both; pointer-events: auto; }
+.app-toast { min-height: 54px; display: flex; align-items: center; gap: 11px; padding: 10px 11px 10px 14px; border: 1px solid #141b24; border-radius: 12px; background: #141b24; color: #e8edf3; box-shadow: 0 16px 44px #0008; animation: toast-enter .22s cubic-bezier(.2,.8,.2,1) both; pointer-events: auto; }
 .app-toast-icon { width: 23px; height: 23px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; }
 .app-toast-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .app-toast-error .app-toast-icon { background: #e5484d1c; color: #ff7277; }
