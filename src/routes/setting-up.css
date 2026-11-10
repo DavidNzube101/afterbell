@@ -58,7 +58,7 @@
 .agent-slide .onboarding-note { margin-top: 18px; padding-top: 13px; }
 .onboarding-controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-top: 18px; }
 .onboarding-controls button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 14px; border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; transition: .18s ease; }
-.onboarding-back { justify-self: start; border: 1px solid #242e3a; background: #111720; color: #d2d9e1; }
+.onboarding-back { justify-self: start; border: 1px solid #111720; background: #111720; color: #d2d9e1; }
 .onboarding-back:disabled { opacity: 0; pointer-events: none; }
 .onboarding-next { justify-self: end; border: 1px solid #0065d2; background: #0065d2; color: white; }
 .onboarding-next:hover:not(:disabled) { background: #0874e8; }
