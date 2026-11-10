@@ -23,6 +23,18 @@ std::size_t appendResponse(char *data, std::size_t size, std::size_t count, void
 std::string jsonText(const Json::Value &value) {
     Json::StreamWriterBuilder writer; writer["indentation"]=""; return Json::writeString(writer,value);
 }
+std::string rpcErrorText(const Json::Value &error) {
+    std::string message;
+    if (error["code"].isInt()) message="code "+std::to_string(error["code"].asInt());
+    if (error["message"].isString()) {
+        if (!message.empty()) message += ": ";
+        message += error["message"].asString();
+    }
+    if (message.empty()) message="unspecified JSON-RPC error";
+    constexpr std::size_t maxMessageLength=300;
+    if (message.size()>maxMessageLength) message.resize(maxMessageLength);
+    return message;
+}
 std::string lower(std::string value) {
     std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));}); return value;
 }
@@ -96,12 +108,24 @@ class EvmRpc {
         const auto rc=curl_easy_perform(client.get());if(rc!=CURLE_OK)throw std::runtime_error(std::string("Robinhood RPC transport failed: ")+curl_easy_strerror(rc));
         long status=0;curl_easy_getinfo(client.get(),CURLINFO_RESPONSE_CODE,&status);if(status<200||status>=300)throw std::runtime_error("Robinhood RPC returned HTTP "+std::to_string(status));
         Json::CharReaderBuilder builder;Json::Value parsed;std::string errors;auto reader=std::unique_ptr<Json::CharReader>(builder.newCharReader());
-        if(!reader->parse(response.data(),response.data()+response.size(),&parsed,&errors)||parsed.isMember("error")||!parsed.isMember("result"))throw std::runtime_error("Robinhood RPC returned an error for "+method);
+        if(!reader->parse(response.data(),response.data()+response.size(),&parsed,&errors))
+            throw std::runtime_error("Robinhood RPC returned invalid JSON for "+method);
+        if(parsed.isMember("error"))
+            throw std::runtime_error("Robinhood RPC "+method+" failed: "+rpcErrorText(parsed["error"]));
+        if(!parsed.isMember("result"))
+            throw std::runtime_error("Robinhood RPC response omitted result for "+method);
         return parsed["result"];
     }
     std::string ethCall(const std::string &to,const std::string &data) const {
         Json::Value args(Json::arrayValue);Json::Value call;call["to"]=to;call["data"]=data;args.append(call);args.append("latest");
-        const auto result=this->call("eth_call",args);if(!result.isString())throw std::runtime_error("Robinhood RPC eth_call returned invalid data");return result.asString();
+        Json::Value result;
+        try {
+            result=this->call("eth_call",args);
+        } catch(const std::exception &error) {
+            const auto selector=data.size()>=10?data.substr(0,10):std::string("unknown");
+            throw std::runtime_error("Robinhood eth_call to "+to+" (selector "+selector+") failed: "+error.what());
+        }
+        if(!result.isString())throw std::runtime_error("Robinhood RPC eth_call returned invalid data");return result.asString();
     }
   private: std::string endpoint_;
 };
