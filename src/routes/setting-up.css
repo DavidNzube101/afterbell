@@ -70,7 +70,7 @@
 .onboarding-step-footnote { margin: 14px 0 0; text-align: center; color: #65717f; font-size: 10px; }
 .onboarding-wallet-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: #03070bd1; animation: onboarding-wallet-fade 140ms ease-out both; }
 .onboarding-wallet-modal { width: min(100%, 430px); padding: 22px; border: 1px solid #111720; border-radius: 15px; background: #111720; box-shadow: 0 24px 80px #0008; animation: onboarding-wallet-rise 180ms cubic-bezier(.2,.8,.2,1) both; }
-.onboarding-wallet-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.onboarding-wallet-modal header { min-height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
 .onboarding-wallet-chain { color: #80b9ff; font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
 .onboarding-wallet-modal h2 { margin: 5px 0 0; font-size: 19px; font-weight: 600; letter-spacing: -.03em; }
 .onboarding-wallet-close { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #111720; border-radius: 7px; background: #111720; color: #9aa4b0; font-size: 21px; line-height: 1; cursor: pointer; }
@@ -78,6 +78,8 @@
 .onboarding-wallet-modal dl > div { display: grid; gap: 5px; }
 .onboarding-wallet-modal dt { color: #778392; font-size: 11px; }
 .onboarding-wallet-modal dd { margin: 0; color: #e8edf3; font-size: 13px; }
+.onboarding-wallet-value { display: flex; align-items: center; gap: 8px; }
+.onboarding-wallet-value img { width: 20px; height: 20px; flex: 0 0 auto; border-radius: 5px; object-fit: cover; }
 .onboarding-wallet-address { overflow-wrap: anywhere; font-size: 11px !important; line-height: 1.5; }
 .onboarding-wallet-modal footer { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .onboarding-wallet-modal footer button { min-height: 40px; border: 1px solid #0065d2; border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; }
