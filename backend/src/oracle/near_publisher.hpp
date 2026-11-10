@@ -17,7 +17,8 @@ struct PriceAttestation {
 
 class NearPublisher {
   public:
-    NearPublisher(std::string rpcUrl, std::string contractId,
+    NearPublisher(std::string rpcUrl, std::string transactionRpcUrl,
+                  std::string contractId,
                   std::string accountId, std::string privateKey,
                   std::string oracleSignerAddress,
                   std::string oracleSignerPrivateKey,
@@ -32,6 +33,7 @@ class NearPublisher {
 
   private:
     std::string rpcUrl_;
+    std::string transactionRpcUrl_;
     std::string contractId_;
     std::string accountId_;
     std::string privateKey_;

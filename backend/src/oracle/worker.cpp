@@ -27,7 +27,7 @@ Worker::Worker(WorkerConfig config):config_(std::move(config)) {
     if(config_.twapWindowSeconds<60||config_.twapWindowSeconds>3600)throw std::invalid_argument("ORACLE_TWAP_WINDOW_SECONDS must be between 60 and 3600");
     sampler_=std::make_unique<RobinhoodPoolSampler>(config_.robinhoodRpcUrl,config_.marketRegistryPath,config_.poolRegistryPath,config_.twapWindowSeconds);
     const auto signer=ethereumAddress(config_.evmSignerPrivateKey);
-    publisher_=std::make_unique<NearPublisher>(config_.nearRpcUrl,config_.contractId,config_.relayerAccountId,config_.relayerPrivateKey,signer,config_.evmSignerPrivateKey,config_.network);
+    publisher_=std::make_unique<NearPublisher>(config_.nearRpcUrl,config_.nearTransactionRpcUrl,config_.contractId,config_.relayerAccountId,config_.relayerPrivateKey,signer,config_.evmSignerPrivateKey,config_.network);
     status_["enabled"]=true;status_["status"]="starting";status_["sourceChain"]="robinhood";status_["sourceChainId"]=4663;status_["twapWindowSeconds"]=config_.twapWindowSeconds;
     status_["relayerAccountId"]=config_.relayerAccountId;status_["markets"]=Json::arrayValue;
     status_["lastSampleAtMs"]=Json::nullValue;status_["lastPublishedAtMs"]=Json::nullValue;

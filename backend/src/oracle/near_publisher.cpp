@@ -103,17 +103,19 @@ Json::Value viewCall(afterbell::indexer::NearRpc &rpc, const std::string &accoun
 
 } // namespace
 
-NearPublisher::NearPublisher(std::string rpcUrl, std::string contractId,
+NearPublisher::NearPublisher(std::string rpcUrl, std::string transactionRpcUrl,
+                             std::string contractId,
                              std::string accountId, std::string privateKey,
                              std::string oracleSignerAddress,
                              std::string oracleSignerPrivateKey,
                              std::string expectedNetwork)
-    : rpcUrl_(std::move(rpcUrl)), contractId_(std::move(contractId)),
+    : rpcUrl_(std::move(rpcUrl)), transactionRpcUrl_(std::move(transactionRpcUrl)),
+      contractId_(std::move(contractId)),
       accountId_(std::move(accountId)), privateKey_(std::move(privateKey)),
       oracleSignerAddress_(std::move(oracleSignerAddress)),
       oracleSignerPrivateKey_(std::move(oracleSignerPrivateKey)),
       expectedNetwork_(std::move(expectedNetwork)) {
-    if (rpcUrl_.empty() || contractId_.empty() || accountId_.empty()) throw std::invalid_argument("oracle NEAR RPC, contract, and relayer account are required");
+    if (rpcUrl_.empty() || transactionRpcUrl_.empty() || contractId_.empty() || accountId_.empty()) throw std::invalid_argument("oracle NEAR RPC, transaction RPC, contract, and relayer account are required");
     const auto key=parseEd25519Key(privateKey_);
     const auto pub=ed25519Public(key);
     if (!std::equal(pub.begin(),pub.end(),key.begin()+32)) throw std::invalid_argument("NEAR relayer keypair public key does not match its seed");
@@ -199,7 +201,8 @@ std::string NearPublisher::publish(const PriceAttestation &price) {
     std::vector<std::uint8_t> signedTx=tx;
     signedTx.push_back(0); signedTx.insert(signedTx.end(),nearSignature.begin(),nearSignature.end());
     Json::Value params(Json::arrayValue); params.append(base64Encode(signedTx.data(),signedTx.size()));
-    const auto receipt=rpc.call("broadcast_tx_commit",params);
+    afterbell::indexer::NearRpc transactionRpc(transactionRpcUrl_);
+    const auto receipt=transactionRpc.call("broadcast_tx_commit",params);
     if (receipt["status"].isMember("Failure") || receipt["final_execution_status"]=="FAILURE") throw std::runtime_error("A1 rejected oracle publication");
     const auto &hash=receipt["transaction"]["hash"];
     return hash.isString()?hash.asString():std::string("submitted");

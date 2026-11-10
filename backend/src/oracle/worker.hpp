@@ -18,6 +18,7 @@ class NearPublisher;
 struct WorkerConfig {
     std::string robinhoodRpcUrl;
     std::string nearRpcUrl;
+    std::string nearTransactionRpcUrl;
     std::string contractId;
     std::string network;
     std::string relayerAccountId;

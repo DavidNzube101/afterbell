@@ -38,6 +38,12 @@ std::string nearRpcUrlForNetwork(const std::string &network) {
     throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
 }
 
+std::string nearTransactionRpcUrlForNetwork(const std::string &network,
+                                            const std::string &fallback) {
+    const char *name = network == "testnet" ? "NEAR_TESTNET_TX_RPC_URL" : "NEAR_TX_RPC_URL";
+    return env(name).value_or(fallback);
+}
+
 std::optional<std::uint64_t> optionalUintEnv(const char *name) {
     const auto value = env(name);
     if (!value) return std::nullopt;
@@ -232,6 +238,7 @@ int main() {
             afterbell::oracle::WorkerConfig oracleConfig{
                 requiredEnv("ROBINHOOD_RPC_URL"),
                 nearRpcUrl,
+                nearTransactionRpcUrlForNetwork(*network, nearRpcUrl),
                 *contractId,
                 *network,
                 requiredEnv("ORACLE_RELAYER_ACCOUNT_ID"),
