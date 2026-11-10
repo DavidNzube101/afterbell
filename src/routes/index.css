@@ -108,7 +108,7 @@ button, a { font: inherit; }
   width: min(100%, 430px);
   max-height: min(690px, calc(100dvh - 40px));
   overflow: hidden;
-  border: 1px solid #1a212a;
+  border: 1px solid #0f141b;
   border-radius: 18px;
   background: #0f141b;
   box-shadow: 0 28px 100px #0009;
@@ -169,8 +169,8 @@ button, a { font: inherit; }
   transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
 }
 .chain-option {
-  border-color: #1a222c;
-  background: #11171f;
+  border-color: #0f141b;
+  background: #0f141b;
 }
 .chain-option:hover,
 .wallet-option:hover { transform: translateY(-1px); border-color: #34475c; background: #1a2531; }
