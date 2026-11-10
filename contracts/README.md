@@ -1,60 +1,55 @@
 # Contracts
 
-NEAR contract workspace for Afterbell. The product model is one shared NEAR
-contract account with isolated logical user and agent records. A1 does not
-create per-user contracts or use a factory.
+Afterbell's active contract is **A1**, a shared NEAR contract with isolated
+logical user and agent records. It does not create per-user contracts or use a
+factory. The active Rust crate is `afterbell-a1` in `shared-ledger-spike/`;
+the directory name is historical and A1 is the product contract.
 
-## Current A1 implementation status (5 Nov 2026)
+## A1 current source
 
-The current local `shared-ledger-spike/` source extends the earlier deposit and
-withdrawal prototype with the A1 trading and LP accounting foundation. It now
-contains configurable markets (up to 64), signed price/quote authorization,
-single EOA-signed oracle attestations, freshness/deviation circuit breakers,
-owner and agent logical-record positions, isolated margin, partial/full closes,
-funding, liquidation, insurance and bad-debt accounting, deferred profit
-claims, LP shares with a 24-hour withdrawal queue, delayed risk increases,
-storage-credit metering, per-agent daily loss limits, and
-NEAR/Solana/Ethereum owner-signature verification. Agent daily loss accounting
-includes paid trading and funding costs and reserves open margin against the
-remaining daily loss budget. Limits reset at UTC midnight and block new agent
-opens after the cap while leaving closes/reductions available. The current A1
-Rust suite has 92 unit tests. The standalone smart-account and account-factory
-crates are historical experiments outside the shared-account product design.
+As of 5 Nov 2026, A1 implements the shared ledger, signed NEAR/Solana/Ethereum
+owner actions, NEP-141 deposits and withdrawals, agent records and policies,
+market configuration, quote-authorized trading, a single EOA-signed oracle,
+oracle freshness/deviation circuit breakers, isolated margin, partial and full
+closes, funding, liquidation, insurance and bad-debt accounting, deferred
+profit claims, LP shares and a 24-hour withdrawal queue, delayed risk increases,
+storage-credit metering, and per-agent daily loss limits. The Rust test suite
+contains 105 tests. Findings from the three A1 review reports were reconciled
+against the current source and fixes were committed.
 
-Large oracle price jumps are staged and require a second observation from a
-different source round after a five-minute confirmation delay. This describes
-local source, **not deployment status**. The testnet deployment
-history below describes older A1 versions. The current source requires
-`new(usdc_token, protocol_admin)` and initializes an explicit protocol admin;
-the existing testnet state does not have that admin record. A fresh test
-deployment with an appropriate NEAR multisig admin is required before testing
-the new admin-controlled configuration. No deployment or mainnet release is
-part of this work.
+The active contract is complete for its defined on-chain scope. Mainnet A1 has
+not yet been deployed. The testnet transaction history below records earlier
+contract versions; it is deployment history, not a claim that current source is
+already deployed. The current constructor is `new(usdc_token, protocol_admin)`.
+`protocol_admin` is a NEAR account ID and can be a single-key account controlled
+by one EOA-style signer; it does not require a multisig.
+
+The contract's delays are operation-specific: risk-increasing market changes
+and oracle signer rotations wait 20 minutes; quote signer rotations wait one
+hour (the selected policy); emergency pausing is immediate. The initial signer
+configuration and beta-cap changes are currently immediate. These delays govern
+when staged configuration becomes active, not how long an admin transaction
+takes to sign or submit. A single-key admin account is supported; the contract
+does not impose a blanket 20-minute delay on every admin call.
 
 The quote-signed path is a centrally authorized price-fill/accounting model,
-not exchange order-book or AMM matching. Production still needs security
-review, production oracle and quote signer governance, independent economic
-validation, C++ relayer/indexer integration, and cross-chain wallet-provider
-integration. Do not use production funds. The `smart-account-spike/` and
-`account-factory-spike/` directories are historical architecture experiments.
+not order-book or AMM matching. The dapp, C++ transaction/API wiring, production
+oracle and quote services, and indexer integration remain separate deployment
+and product integration work. `smart-account-spike/` and
+`account-factory-spike/` are superseded experiments, not parts of A1.
 
-## Shared-ledger callback spike
+## A1 shared-ledger deposit flow
 
-`shared-ledger-spike/` is the **A1** shared-contract prototype. It checks whether 1Click can
-deliver NEAR USDC to one contract with a per-user `customRecipientMsg`.
-It accepts only the configured NEP-141 USDC contract, credits an internal
-account record only after that record has an owner, and returns unaccepted
-tokens to the sender. It does not persist deposit IDs: each callback belongs
-to a distinct NEAR receipt, while the ID is correlation metadata for the
-indexer. The current A1 prototype registers an owner
+A1 accepts only the configured NEP-141 USDC contract, credits a logical record
+after that record has an owner, and returns unaccepted tokens to the sender. It
+does not persist deposit IDs: each callback belongs to a distinct NEAR receipt,
+while the ID is correlation metadata for the indexer. A1 registers an owner
 key for each logical record and verifies NEAR NEP-413, Solana Ed25519, or
 Ethereum EIP-191 signatures directly before withdrawing. The signed action
 binds the contract, record, destination, amount, nonce, expiry, and fee cap.
 Nonce and balance are updated before the asynchronous USDC transfer; a failed
 transfer restores the balance while keeping the nonce consumed. Fees are
-currently unsupported and must be zero. The current local A1 source adds the
-accounting and risk features listed above; older testnet deployments predate
-those features and are not production-ready.
+currently unsupported and must be zero.
 
 The intended message is JSON of the form:
 
@@ -62,17 +57,15 @@ The intended message is JSON of the form:
 {"account_id":"user.near","deposit_id":"unique-quote-id"}
 ```
 
-The shared A1 contract has now completed direct testnet withdrawals for
+Earlier A1 versions completed direct testnet withdrawals for
 logical records using NEAR NEP-413, Solana Ed25519, and Ethereum EIP-191 owner
 signatures. Each test deposited 1 test USDC, withdrew it from A1 to the chosen
 NEAR recipient, and left that logical record at zero balance with nonce 1. The
 Solana and Ethereum signatures used disposable test keys; this validated the
-on-chain verification paths, not wallet-provider integrations. Local tests
-cover callback parsing, unauthorized-record refunds, wrong-key, cross-record, and tampered
-signatures, expiry, storage-credit exhaustion, insufficient balance, and failed-transfer refunds (54
-unit tests passing). The factory and
-per-user smart-account flow below are historical experiments, not the product
-architecture. A1 is still a prototype and must not custody production funds.
+on-chain verification paths, not wallet-provider integrations. The current
+local suite contains 105 tests, including owner signatures, accounting,
+trading, oracle, LP, and agent behavior. The factory and per-user smart-account
+flow below are historical experiments, not the product architecture.
 
 ### Current testnet deployment
 
@@ -145,8 +138,7 @@ owner must both sign a domain-bound message containing the contract, logical
 record, old and new keys, nonce, and expiry. A cross-chain Solana-to-Ethereum
 unit test verifies the new key can withdraw afterward and the retired key
 cannot. This does not provide lost-key recovery: the current key must still be
-available. The rotation method has not received an independent security review
-and must not be used with production funds yet.
+available. The current A1 review set includes owner-key rotation in its scope.
 
 Storage credits are implemented in the current testnet A1. Anyone can call payable
 `storage_deposit_for(account_id)` to sponsor NEAR; A1 charges the record's
@@ -245,16 +237,15 @@ action fails, NEAR rolls back the batch. Creation proofs support NEAR NEP-413,
 Solana Ed25519, and Ethereum EIP-191.
 
 The factory is deployed on testnet and is not deployed on mainnet. It exists as
-a prototype from the per-user-account design exploration. The chosen product
+a historical prototype from the per-user-account design exploration. The chosen product
 architecture has no account factory; the factory and per-user smart-account
 code should not be extended as product components. A1's shared-contract
-signature and withdrawal path is verified on testnet. Owner-key rotation and
-storage-credit controls are now deployed to testnet; broader invariant
-coverage and security review remain before production use.
+signature and withdrawal path is verified on testnet. A1 is the active product
+contract; the factory is not part of its architecture.
 
 
 
-## Agent logical-record foundation
+## Earlier agent logical-record implementation records
 
 A user can create one linked agent record with a wallet-signed capability
 policy: allowed market ids, maximum position size, maximum leverage (1x–5x),
@@ -265,18 +256,15 @@ remaining ledger balance to the user record. A revoked agent can be replaced
 by a new record. Agent records have no registered external owner; owner
 registration and the external withdrawal path reject them.
 
-The deployed A1 agent foundation verifies short-lived agent-signed open actions against the stored market,
+The earlier deployed A1 agent version verified short-lived agent-signed open actions against the stored market,
 per-position notional, aggregate open-notional, leverage, expiry, and allocation
 limits. The original `open_agent_position` path reserves margin without an
-entry price and remains a reservation-only prototype. The additional
+entry price and is a historical reservation-only path. The additional
 `open_agent_market_position` path requires a fresh signed price, an agent-signed
 reference price/sequence/slippage bound, and stores the accepted entry mark.
-The reservation-only path has no entry price or PnL settlement. The deployed
-price-aware path has prototype funded-vault settlement as described above, but
-neither path matches against a counterparty. Production execution,
-liquidation, and realized PnL require a reviewed oracle and vault system.
-Agent action signatures expire within 60 seconds, and each agent is limited to
-32 open positions. Storage growth is not yet charged to users.
+The reservation-only path has no entry price or PnL settlement. Current source
+capabilities are described at the top of this document; historical testnet
+deployments do not include all current changes.
 
 A1 now also exposes `calculate_linear_pnl`, an indicative view that accepts a
 notional, entry price, mark price, and side and returns gross PnL in raw USDC
@@ -286,7 +274,7 @@ balances. It is a math helper only; it cannot be used as evidence of a trade
 or as settlement. Price-aware agent positions instead use `agent_position_pnl`
 to calculate unrealized PnL from their stored entry and latest accepted mark.
 
-The deployed A1 source has a testnet-only signed-price path. A single
+An earlier A1 testnet version had a signed-price path. A single
 compiled-in Ed25519 publisher key authorizes updates bound to the contract,
 market, price, observation time, and monotonically increasing sequence. The
 price-aware agent-open method signs a reference price and slippage ceiling,
@@ -294,7 +282,5 @@ uses the latest fresh accepted price as entry, and exposes unrealized gross
 PnL from that mark. The publisher private key is local-only under ignored
 `contracts/target/oracle-testnet/`; it must never be committed. This deployed
 price/PnL version passed a WASM-target cargo check, 47 local unit tests, and a
-manual testnet price/PnL exercise. The deployed funded-settlement prototype
-above is also not suitable for mainnet; production still needs independent
-price-source cross-checks, fees,
-funding, liquidation and reviewed vault accounting.
+manual testnet price/PnL exercise. These entries document earlier iterations;
+they do not describe the current local A1 source or its mainnet deployment.

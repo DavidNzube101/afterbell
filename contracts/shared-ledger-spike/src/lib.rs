@@ -353,6 +353,22 @@ impl SharedLedger {
         read_json_storage(PROTOCOL_ADMIN_KEY).expect("protocol admin is not initialized")
     }
 
+    /// One-time migration for A1 deployments created before the protocol admin
+    /// was persisted. Only a transaction signed by this contract account can
+    /// initialize the missing value, and it can never replace an existing one.
+    pub fn initialize_protocol_admin(&mut self, protocol_admin: AccountId) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "contract account required"
+        );
+        assert!(
+            read_json_storage::<AccountId>(PROTOCOL_ADMIN_KEY).is_none(),
+            "protocol admin already initialized"
+        );
+        write_json_storage(PROTOCOL_ADMIN_KEY, &protocol_admin);
+    }
+
     pub fn balance_of(&self, account_id: String) -> U128 {
         U128(self.balances.get(&account_id).unwrap_or_default())
     }
@@ -5876,6 +5892,32 @@ mod tests {
             .block_timestamp(NOW_MS * 1_000_000);
         testing_env!(context.build());
         SharedLedger::new(TOKEN.parse().unwrap(), "a1.near".parse().unwrap())
+    }
+
+    #[test]
+    fn legacy_deployment_can_initialize_missing_protocol_admin_once() {
+        let mut contract = setup("a1.near");
+        env::storage_remove(PROTOCOL_ADMIN_KEY);
+
+        contract.initialize_protocol_admin("admin.near".parse().unwrap());
+
+        assert_eq!(contract.protocol_admin_account().as_str(), "admin.near");
+    }
+
+    #[test]
+    #[should_panic(expected = "contract account required")]
+    fn only_the_contract_account_can_initialize_missing_protocol_admin() {
+        let mut contract = setup("attacker.near");
+        env::storage_remove(PROTOCOL_ADMIN_KEY);
+
+        contract.initialize_protocol_admin("attacker.near".parse().unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "protocol admin already initialized")]
+    fn protocol_admin_migration_cannot_replace_an_existing_admin() {
+        let mut contract = setup("a1.near");
+        contract.initialize_protocol_admin("attacker.near".parse().unwrap());
     }
 
     #[test]
