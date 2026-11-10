@@ -2,6 +2,7 @@
 
 #include "http/request_logger.hpp"
 #include "indexer/worker.hpp"
+#include "oracle/worker.hpp"
 
 #include <libpq-fe.h>
 
@@ -31,6 +32,12 @@ std::string requiredEnv(const char *name) {
     return *value;
 }
 
+std::string nearRpcUrlForNetwork(const std::string &network) {
+    if (network == "testnet") return requiredEnv("NEAR_TESTNET_RPC_URL");
+    if (network == "mainnet") return requiredEnv("NEAR_RPC_URL");
+    throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
+}
+
 std::optional<std::uint64_t> optionalUintEnv(const char *name) {
     const auto value = env(name);
     if (!value) return std::nullopt;
@@ -51,6 +58,13 @@ bool indexerEnabled() {
     if (value == "true" || value == "1" || value == "yes") return true;
     if (value == "false" || value == "0" || value == "no") return false;
     throw std::runtime_error("INDEXER_ENABLED must be true or false");
+}
+
+bool oracleEnabled() {
+    const auto value = env("ORACLE_ENABLED").value_or("false");
+    if (value == "true" || value == "1" || value == "yes") return true;
+    if (value == "false" || value == "0" || value == "no") return false;
+    throw std::runtime_error("ORACLE_ENABLED must be true or false");
 }
 
 void loadEnvFile(const std::string &path) {
@@ -147,8 +161,19 @@ Json::Value indexerStatus(
     return body;
 }
 
+Json::Value oracleStatus(const std::shared_ptr<afterbell::oracle::Worker> &worker) {
+    if (!worker) {
+        Json::Value body;
+        body["enabled"] = false;
+        body["status"] = "disabled";
+        return body;
+    }
+    return worker->status();
+}
+
 void logStartup(unsigned short port, const std::string &network,
-                bool isIndexerEnabled, Json::ArrayIndex marketCount) {
+                bool isIndexerEnabled, bool isOracleEnabled,
+                Json::ArrayIndex marketCount) {
     const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
                                .count();
@@ -159,6 +184,7 @@ void logStartup(unsigned short port, const std::string &network,
     event["port"] = port;
     event["network"] = network;
     event["indexer_enabled"] = isIndexerEnabled;
+    event["oracle_enabled"] = isOracleEnabled;
     event["market_count"] = marketCount;
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -191,6 +217,37 @@ int main() {
         const auto markets = loadMarkets(*registryPath);
 
         const bool runIndexer = indexerEnabled();
+        const bool runOracle = oracleEnabled();
+        const auto nearRpcUrl = (runIndexer || runOracle)
+                                    ? nearRpcUrlForNetwork(*network)
+                                    : std::string{};
+        std::shared_ptr<afterbell::oracle::Worker> oracleWorker;
+        if (runOracle) {
+            auto poolRegistryPath = env("ROBINHOOD_POOL_REGISTRY_PATH");
+            if (!poolRegistryPath) {
+                std::ifstream fromRepoRoot("backend/rh_uniswap_pools.json");
+                poolRegistryPath = fromRepoRoot ? "backend/rh_uniswap_pools.json"
+                                                 : "rh_uniswap_pools.json";
+            }
+            afterbell::oracle::WorkerConfig oracleConfig{
+                requiredEnv("ROBINHOOD_RPC_URL"),
+                nearRpcUrl,
+                *contractId,
+                *network,
+                requiredEnv("ORACLE_RELAYER_ACCOUNT_ID"),
+                requiredEnv("ORACLE_RELAYER_PRIVATE_KEY"),
+                requiredEnv("ORACLE_SIGNER_PRIVATE_KEY"),
+                *registryPath,
+                *poolRegistryPath,
+            };
+            oracleConfig.pollIntervalMs = static_cast<std::uint32_t>(
+                uintEnvOr("ORACLE_POLL_INTERVAL_MS", 15'000));
+            oracleConfig.twapWindowSeconds = static_cast<std::uint32_t>(
+                uintEnvOr("ORACLE_TWAP_WINDOW_SECONDS", 300));
+            oracleWorker = std::make_shared<afterbell::oracle::Worker>(
+                std::move(oracleConfig));
+            oracleWorker->start();
+        }
         std::shared_ptr<afterbell::indexer::Worker> indexerWorker;
         if (runIndexer) {
             afterbell::indexer::IndexerConfig indexerConfig{
@@ -204,7 +261,7 @@ int main() {
             indexerConfig.rescanOverlapBlocks =
                 uintEnvOr("INDEXER_RESCAN_OVERLAP_BLOCKS", 10000);
             indexerWorker = std::make_shared<afterbell::indexer::Worker>(
-                std::move(indexerConfig), requiredEnv("INDEXER_NEAR_RPC_URL"),
+                std::move(indexerConfig), nearRpcUrl,
                 requiredEnv("INDEXER_TX_API_URL"), *databaseUrl,
                 uintEnvOr("INDEXER_POLL_INTERVAL_MS", 5000));
             indexerWorker->start();
@@ -223,7 +280,7 @@ int main() {
             {drogon::Get});
         drogon::app().registerHandler(
             "/health/ready",
-            [databaseUrl = *databaseUrl, indexerWorker](
+            [databaseUrl = *databaseUrl, indexerWorker, oracleWorker](
                 const drogon::HttpRequestPtr &,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!databaseReady(databaseUrl)) {
@@ -231,6 +288,7 @@ int main() {
                     body["status"] = "unavailable";
                     body["database"] = "unavailable";
                     body["indexer"] = indexerStatus(indexerWorker);
+                    body["oracle"] = oracleStatus(oracleWorker);
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
                     response->setStatusCode(drogon::k503ServiceUnavailable);
                     callback(response);
@@ -240,12 +298,13 @@ int main() {
                 body["status"] = "ready";
                 body["database"] = "ready";
                 body["indexer"] = indexerStatus(indexerWorker);
+                body["oracle"] = oracleStatus(oracleWorker);
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});
         drogon::app().registerHandler(
             "/health/status",
-            [databaseUrl = *databaseUrl, indexerWorker](
+            [databaseUrl = *databaseUrl, indexerWorker, oracleWorker](
                 const drogon::HttpRequestPtr &,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 const bool databaseIsReady = databaseReady(databaseUrl);
@@ -254,6 +313,7 @@ int main() {
                 body["api"] = "running";
                 body["database"] = databaseIsReady ? "ready" : "unavailable";
                 body["indexer"] = indexerStatus(indexerWorker);
+                body["oracle"] = oracleStatus(oracleWorker);
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});
@@ -272,11 +332,12 @@ int main() {
             {drogon::Get});
 
         const auto port = portFromEnv();
-        logStartup(port, *network, runIndexer, markets.size());
+        logStartup(port, *network, runIndexer, runOracle, markets.size());
         std::cerr << "afterbell-api listening on port " << port << " (" << *network
                   << ", indexer " << (runIndexer ? "enabled" : "disabled") << ")\n";
         drogon::app().addListener("0.0.0.0", port).run();
         if (indexerWorker) indexerWorker->stop();
+        if (oracleWorker) oracleWorker->stop();
     } catch (const std::exception &error) {
         std::cerr << "afterbell-api: " << error.what() << "\n";
         return 1;

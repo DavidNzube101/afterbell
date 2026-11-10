@@ -48,6 +48,12 @@ std::string requiredEnv(const char *name) {
     return value;
 }
 
+std::string nearRpcUrlForNetwork(const std::string &network) {
+    if (network == "testnet") return requiredEnv("NEAR_TESTNET_RPC_URL");
+    if (network == "mainnet") return requiredEnv("NEAR_RPC_URL");
+    throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
+}
+
 std::optional<std::uint64_t> optionalUintEnv(const char *name) {
     const auto *value = std::getenv(name);
     if (value == nullptr || *value == '\0') return std::nullopt;
@@ -79,10 +85,10 @@ int main() {
             requiredEnv("NEAR_USDC_TOKEN_ID"),
             optionalUintEnv("INDEXER_START_BLOCK"),
         };
-        afterbell::indexer::NearRpc rpc(requiredEnv("INDEXER_NEAR_RPC_URL"));
+        afterbell::indexer::NearRpc rpc(nearRpcUrlForNetwork(network));
         const auto chainId = rpc.chainId();
         if (chainId != network) {
-            throw std::runtime_error("NEAR_RPC_URL is connected to " + chainId +
+            throw std::runtime_error("Selected NEAR RPC is connected to " + chainId +
                                      " but NEAR_NETWORK is " + network);
         }
         afterbell::indexer::FastNearClient fastNear(requiredEnv("INDEXER_TX_API_URL"));

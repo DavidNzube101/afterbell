@@ -44,12 +44,12 @@ Domains and configure the DNS record Vercel provides.
 
 ## C++ API and workers
 
-The backend provides a read-only HTTP API and a NEAR deposit indexer. The API currently exposes health checks and the Robinhood Chain market registry; markets are explicitly marked development-only and cannot be traded yet. Set `INDEXER_ENABLED=true` to run the indexer on a managed background thread inside the API process, allowing both to run in one Render service. The indexer also remains available as a standalone executable for local development and operations.
+The backend provides a read-only HTTP API, a NEAR deposit indexer, and an optional Robinhood Chain price publisher. Markets are explicitly marked development-only and cannot be traded yet. Set `INDEXER_ENABLED=true` to run the indexer and `ORACLE_ENABLED=true` to run the price publisher as managed background threads inside the API process, allowing the API and workers to share one Render service. The indexer also remains available as a standalone executable for local development and operations.
 
 On macOS, install the build dependencies with Homebrew:
 
 ```sh
-brew install cmake pkg-config postgresql@17 curl jsoncpp drogon
+brew install cmake pkg-config postgresql@17 curl jsoncpp drogon openssl@3
 ```
 
 Keep `backend/.env` private. From the `app/` root, build and run the existing indexer tests, then start either service:
@@ -68,7 +68,15 @@ make indexer
 
 `backend/` includes a C++ A1 deposit indexer. It asks FastNear's indexed account API for transactions associated with A1, fetches their receipt outcomes in batches, filters NEAR USDC `ft_transfer_call` transactions, and stores successful A1 `deposit_credited` logs. This avoids downloading every historical block from an archival RPC. Each event is keyed by `(network, receipt_id, log_index)`, so a repeated `deposit_id` in a later token transfer is recorded as a separate deposit. Event inserts and the scanned-height cursor commit in one PostgreSQL transaction; a restart resumes from the cursor with a configurable overlap to catch indexing delays. A1 remains the source of truth for balances; FastNear is only the off-chain event discovery source.
 
-Copy `backend/.env.example` to `backend/.env` or set these variables in the process environment. Keep the existing `.env` private. `NEAR_NETWORK`, `INDEXER_NEAR_RPC_URL`, `INDEXER_TX_API_URL`, `A1_CONTRACT_ID`, `NEAR_USDC_TOKEN_ID`, and `DATABASE_URL` are required. `INDEXER_START_BLOCK` defaults to A1's testnet deployment block (`274456124`) for the first run; subsequent runs use the database cursor. Change it for another deployment/network or to backfill from a later point. The worker checks RPC `chain_id` against `NEAR_NETWORK` before opening its database connection. `INDEXER_FINALITY_LAG_BLOCKS` controls how far behind the finalized head to query; `INDEXER_RESCAN_OVERLAP_BLOCKS` rechecks recent history to tolerate FastNear indexing delay. `INDEXER_POLL_INTERVAL_MS` controls polling frequency.
+Copy `backend/.env.example` to `backend/.env` or set these variables in the process environment. Keep the existing `.env` private. `NEAR_NETWORK`, its matching RPC URL (`NEAR_TESTNET_RPC_URL` for testnet or `NEAR_RPC_URL` for mainnet), `INDEXER_TX_API_URL`, `A1_CONTRACT_ID`, `NEAR_USDC_TOKEN_ID`, and `DATABASE_URL` are required when the indexer runs. Both the API's background workers and standalone indexer select the endpoint from `NEAR_NETWORK` and verify the RPC chain ID. `INDEXER_START_BLOCK` defaults to A1's testnet deployment block (`274456124`) for the first run; subsequent runs use the database cursor. Change it for another deployment/network or to backfill from a later point. `INDEXER_FINALITY_LAG_BLOCKS` controls how far behind the finalized head to query; `INDEXER_RESCAN_OVERLAP_BLOCKS` rechecks recent history to tolerate FastNear indexing delay. `INDEXER_POLL_INTERVAL_MS` controls polling frequency.
+
+### Robinhood oracle publisher
+
+The optional publisher reads each listed stock's Uniswap V3 stock/USDG pool on Robinhood Chain (chain ID `4663`), computes a 5-minute `observe()` TWAP and current spot tick, signs A1's EIP-191 `OracleAttestation` with `ORACLE_SIGNER_PRIVATE_KEY`, and submits it to A1 using the NEAR account in `ORACLE_RELAYER_ACCOUNT_ID`. Its signer address must already be configured in A1 with `configure_oracle_signer`. The publisher checks the NEAR RPC network, the configured A1 signer, each pool's factory registration and exact stock/USDG token pair, active liquidity, sample freshness, and A1's 50-bps spot/TWAP bound. It publishes on a 10-bps price move or a 45-second heartbeat, avoiding NEAR gas for unchanged prices.
+
+The verified pool list is in [`backend/rh_uniswap_pools.json`](backend/rh_uniswap_pools.json). Pools are selected from live factory lookups and ranked by USDG liquidity, cross-checked against Floatsheets' NVDA and TSLA markets. The quote token is Robinhood USDG, so this oracle assumes USDG remains worth one US dollar; that peg must be monitored before enabling real trading. The publisher does not send transactions or pay gas on Robinhood Chain. `ROBINHOOD_RPC_URL` is used for reads only; NEAR gas comes from the dedicated relayer account. Testnet currently uses `afterbellfx-oracle.testnet`, with its key in the ignored `contracts/oracle-publisher/` directory. The account was faucet-created with 10 NEAR for testing.
+
+Leave `ORACLE_ENABLED=false` until A1 has its EVM signer configured and the Render service has `ROBINHOOD_RPC_URL`, the matching network RPC URL (`NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`), `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `ORACLE_SIGNER_PRIVATE_KEY`. Never put either private key in Git. Oracle state and recent per-market sampling/publishing status are exposed at `GET /health/status` and `GET /health/ready`.
 
 Build and run from the `app/` directory:
 
@@ -88,6 +96,8 @@ Create one Render **Docker Web Service** from the GHCR image. The default comman
 
 | Service | Start command | Health check | Required environment |
 |---|---|---|---|
-| API and indexer | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json`, `INDEXER_ENABLED=true`, `NEAR_USDC_TOKEN_ID`, `INDEXER_NEAR_RPC_URL`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
+| API and indexer | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, matching `NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json`, `INDEXER_ENABLED=true`, `NEAR_USDC_TOKEN_ID`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
 
 Render supplies `PORT`. The indexer uses FastNear's testnet transaction API to discover A1 history without a full archival NEAR RPC scan. Configure `INDEXER_FINALITY_LAG_BLOCKS`, `INDEXER_RESCAN_OVERLAP_BLOCKS`, and `INDEXER_POLL_INTERVAL_MS` as needed. Do not set `INDEXER_START_BLOCK` earlier than the deployed A1 instance. The existing standalone `./afterbell-indexer` command is available if we later decide to run the worker as its own Render service.
+
+To enable price publishing later, also set `ORACLE_ENABLED=true`, `ROBINHOOD_RPC_URL`, the matching network RPC URL (`NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`), `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `ORACLE_SIGNER_PRIVATE_KEY` in Render. Do not turn it on until `oracle_signer()` on the target A1 contract returns the EVM address paired with the EVM private key.

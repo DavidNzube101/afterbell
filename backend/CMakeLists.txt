@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(PostgreSQL REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
@@ -23,10 +24,14 @@ add_library(afterbell-indexer-core
     src/indexer/database.cpp
     src/indexer/indexer.cpp
     src/indexer/worker.cpp
+    src/oracle/crypto.cpp
+    src/oracle/near_publisher.cpp
+    src/oracle/robinhood_pools.cpp
+    src/oracle/worker.cpp
 )
 target_include_directories(afterbell-indexer-core PUBLIC src)
 target_link_libraries(afterbell-indexer-core
-    PUBLIC PostgreSQL::PostgreSQL PkgConfig::CURL PkgConfig::JSONCPP
+    PUBLIC PostgreSQL::PostgreSQL PkgConfig::CURL PkgConfig::JSONCPP OpenSSL::Crypto
 )
 target_compile_options(afterbell-indexer-core PRIVATE -Wall -Wextra -Wpedantic)
 

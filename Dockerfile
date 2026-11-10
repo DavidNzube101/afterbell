@@ -2,7 +2,7 @@ FROM ubuntu:24.04 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake g++ make pkg-config libbrotli-dev libcurl4-openssl-dev libdrogon-dev libhiredis-dev libjsoncpp-dev libmariadb-dev libmariadb-dev-compat libpq-dev libsqlite3-dev libyaml-cpp-dev uuid-dev \
+    && apt-get install -y --no-install-recommends cmake g++ make pkg-config libbrotli-dev libcurl4-openssl-dev libdrogon-dev libhiredis-dev libjsoncpp-dev libmariadb-dev libmariadb-dev-compat libpq-dev libsqlite3-dev libssl-dev libyaml-cpp-dev uuid-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,7 +14,7 @@ FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libcurl4 libdrogon1t64 libjsoncpp25 libpq5 \
+    && apt-get install -y --no-install-recommends ca-certificates libcurl4 libdrogon1t64 libjsoncpp25 libpq5 libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --home-dir /app --shell /usr/sbin/nologin afterbell
 
@@ -22,6 +22,7 @@ WORKDIR /app
 COPY --from=build /app/build/afterbell-api ./afterbell-api
 COPY --from=build /app/build/afterbell-indexer ./afterbell-indexer
 COPY --from=build /app/backend/rh_stocks_addresses.json ./backend/rh_stocks_addresses.json
+COPY --from=build /app/backend/rh_uniswap_pools.json ./backend/rh_uniswap_pools.json
 USER afterbell
 ENV PORT=8080
 EXPOSE 8080
