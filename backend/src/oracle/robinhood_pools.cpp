@@ -195,7 +195,7 @@ std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
         if(liquidity==0)throw std::runtime_error("Uniswap V3 pool has no active liquidity for "+market.symbol);
         const auto slot=rpc.ethCall(market.pool,"0x3850c7bd");
         const auto spot=slotTick(slot);
-        const auto observeData="0x883bdbfd"+std::string(63,'0')+"20"+std::string(63,'0')+"2"+std::string(61,'0')+"12c"+std::string(64,'0');
+        const auto observeData="0x883bdbfd"+std::string(62,'0')+"20"+std::string(63,'0')+"2"+std::string(61,'0')+"12c"+std::string(64,'0');
         const auto observed=rpc.ethCall(market.pool,observeData);
         const auto firstOffset=wordU64(observed,0),secondOffset=wordU64(observed,1);
         if(firstOffset%32||secondOffset%32||firstOffset/32+2>=observed.size()/64||secondOffset/32>=observed.size()/64)throw std::runtime_error("Uniswap V3 observe returned malformed data");
