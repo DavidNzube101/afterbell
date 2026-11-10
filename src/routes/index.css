@@ -170,22 +170,14 @@ button, a { font: inherit; }
 }
 .chain-option:hover,
 .wallet-option:hover { transform: translateY(-1px); border-color: #34475c; background: #1a2531; }
-.chain-option-mark {
-  display: grid;
+.chain-option-icon {
+  display: block;
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
-  place-items: center;
-  border: 1px solid #34404c;
   border-radius: 11px;
-  background: #0d1218;
-  color: #eef2f7;
-  font-size: 23px;
-  font-weight: 500;
+  object-fit: cover;
 }
-.chain-option-mark-solana { color: #a68cff; }
-.chain-option-mark-evm { color: #82adff; }
-.chain-option-mark-near { color: #70dbb2; font-size: 20px; }
 .chain-option-copy { display: grid; flex: 1; gap: 4px; }
 .chain-option-copy strong { font-size: 14px; font-weight: 550; }
 .chain-option-copy small { color: #8995a2; font-size: 12px; }

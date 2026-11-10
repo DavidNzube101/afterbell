@@ -10,6 +10,9 @@ import hotIcon from '../assets/wallet-icons/hot-wallet.jpeg'
 import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
 import rainbowIcon from '../assets/wallet-icons/rainbow.png'
 import rabbyIcon from '../assets/wallet-icons/rabby.jpeg'
+import solanaChainIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
+import nearChainIcon from '../assets/wallet-icons/chain-icons/near.jpeg'
+import ethereumChainIcon from '../assets/wallet-icons/chain-icons/etheruem.jpeg'
 import './index.css'
 
 export const Route = createFileRoute('/')({ component: AuthPage })
@@ -220,9 +223,11 @@ function AuthPage() {
                 <div className="chain-options">
                   {(Object.keys(walletCatalog) as WalletChain[]).map((chain) => (
                     <button className="chain-option" key={chain} type="button" onClick={() => setSelectedChain(chain)}>
-                      <span className={`chain-option-mark chain-option-mark-${chain.toLowerCase()}`} aria-hidden="true">
-                        {chain === 'Solana' ? '◎' : chain === 'EVM' ? '◇' : 'Ⓝ'}
-                      </span>
+                      <img
+                        className="chain-option-icon"
+                        src={chain === 'Solana' ? solanaChainIcon : chain === 'EVM' ? ethereumChainIcon : nearChainIcon}
+                        alt=""
+                      />
                       <span className="chain-option-copy"><strong>{chain}</strong><small>{chainDescriptions[chain]}</small></span>
                       <svg className="wallet-option-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </button>
