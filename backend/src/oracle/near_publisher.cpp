@@ -175,13 +175,17 @@ std::string NearPublisher::publish(const PriceAttestation &price) {
     const auto key=parseEd25519Key(privateKey_);
     const auto pub=ed25519Public(key);
     const auto publicKeyText="ed25519:"+base58Encode(pub.data(),pub.size());
+    // Read the nonce and recent block from the same provider that will accept
+    // the broadcast. A separate read endpoint can lag and return an already
+    // consumed relayer nonce.
+    afterbell::indexer::NearRpc transactionRpc(transactionRpcUrl_);
     Json::Value accessArgs;
     accessArgs["request_type"]="view_access_key"; accessArgs["finality"]="final";
     accessArgs["account_id"]=accountId_; accessArgs["public_key"]=publicKeyText;
-    const auto access=rpc.call("query",accessArgs);
+    const auto access=transactionRpc.call("query",accessArgs);
     const auto nonce=asU64(access["nonce"],"relayer nonce")+1;
     Json::Value blockArgs; blockArgs["finality"]="final";
-    const auto block=rpc.call("block",blockArgs);
+    const auto block=transactionRpc.call("block",blockArgs);
     const auto blockHash=base58Decode(block["header"]["hash"].asString());
     if (blockHash.size()!=32) throw std::runtime_error("NEAR returned an invalid block hash");
 
@@ -201,7 +205,6 @@ std::string NearPublisher::publish(const PriceAttestation &price) {
     std::vector<std::uint8_t> signedTx=tx;
     signedTx.push_back(0); signedTx.insert(signedTx.end(),nearSignature.begin(),nearSignature.end());
     Json::Value params(Json::arrayValue); params.append(base64Encode(signedTx.data(),signedTx.size()));
-    afterbell::indexer::NearRpc transactionRpc(transactionRpcUrl_);
     const auto receipt=transactionRpc.call("broadcast_tx_commit",params);
     if (receipt["status"].isMember("Failure") || receipt["final_execution_status"]=="FAILURE") throw std::runtime_error("A1 rejected oracle publication");
     const auto &hash=receipt["transaction"]["hash"];

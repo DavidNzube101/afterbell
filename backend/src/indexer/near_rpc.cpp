@@ -115,12 +115,31 @@ Json::Value NearRpc::call(const std::string &method, const Json::Value &params) 
         throw std::runtime_error("NEAR RPC returned invalid JSON for method " + method);
     }
     if (response.isMember("error")) {
-        const auto &code = response["error"]["code"];
+        const auto &rpcError = response["error"];
+        const auto &code = rpcError["code"];
         const auto codeText = code.isString() ? code.asString()
                                               : code.isNumeric() ? std::to_string(code.asInt64())
                                                                  : std::string{};
+        std::string detail;
+        if (rpcError["message"].isString()) detail = rpcError["message"].asString();
+        const auto &data = rpcError["data"];
+        if (data.isString() && !data.asString().empty()) {
+            if (!detail.empty()) detail += ": ";
+            detail += data.asString();
+        } else if (data.isObject()) {
+            for (const auto *field : {"error_message", "message"}) {
+                if (data[field].isString() && !data[field].asString().empty()) {
+                    if (!detail.empty()) detail += ": ";
+                    detail += data[field].asString();
+                    break;
+                }
+            }
+        }
+        constexpr std::size_t maxDetailLength = 320;
+        if (detail.size() > maxDetailLength) detail.resize(maxDetailLength);
         throw std::runtime_error("NEAR RPC returned an error for method " + method +
-                                 (codeText.empty() ? std::string{} : " (code " + codeText + ")"));
+                                 (codeText.empty() ? std::string{} : " (code " + codeText + ")") +
+                                 (detail.empty() ? std::string{} : ": " + detail));
     }
     if (!response.isMember("result")) {
         throw std::runtime_error("NEAR RPC response omitted result for method " + method);
