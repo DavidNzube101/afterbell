@@ -92,6 +92,111 @@ button, a { font: inherit; }
 .wallet-note { margin: 17px 0 0; color: #737e8b; font-size: 12px; }
 .auth-footer { color: #697482; font-size: 12px; }
 
+.wallet-modal-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #03060ab8;
+  backdrop-filter: blur(8px);
+  animation: wallet-modal-fade-in 150ms ease-out;
+}
+
+.wallet-modal {
+  width: min(100%, 430px);
+  max-height: min(690px, calc(100dvh - 40px));
+  overflow: hidden;
+  border: 1px solid #252e38;
+  border-radius: 18px;
+  background: #11171f;
+  box-shadow: 0 28px 100px #0009;
+  animation: wallet-modal-rise-in 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.wallet-modal-header {
+  display: flex;
+  height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 15px;
+}
+
+.wallet-modal-header-spacer { width: 34px; height: 34px; }
+.wallet-modal-back,
+.wallet-modal-close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #9ca7b4;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.wallet-modal-back:hover,
+.wallet-modal-close:hover { background: #1b2530; color: #f4f6f8; }
+.wallet-modal-back svg,
+.wallet-modal-close svg { width: 19px; height: 19px; }
+.wallet-modal-back:focus-visible,
+.wallet-modal-close:focus-visible,
+.chain-option:focus-visible,
+.wallet-option:focus-visible { outline: 2px solid #4a9cff; outline-offset: 2px; }
+
+.wallet-modal-content { overflow-y: auto; max-height: calc(min(690px, 100dvh - 40px) - 54px); padding: 3px 25px 25px; }
+.wallet-modal-content h2 { margin: 0; color: #f4f6f8; font-size: 22px; font-weight: 600; letter-spacing: -.04em; }
+.wallet-modal-description { margin: 7px 0 21px; color: #909ba8; font-size: 13px; line-height: 1.5; }
+.chain-options,
+.wallet-options { display: grid; gap: 9px; }
+.chain-option,
+.wallet-option {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  align-items: center;
+  gap: 13px;
+  padding: 11px 13px;
+  border: 1px solid #29333e;
+  border-radius: 12px;
+  background: #151c25;
+  color: #f4f6f8;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.chain-option:hover,
+.wallet-option:hover { transform: translateY(-1px); border-color: #34475c; background: #1a2531; }
+.chain-option-mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border: 1px solid #34404c;
+  border-radius: 11px;
+  background: #0d1218;
+  color: #eef2f7;
+  font-size: 23px;
+  font-weight: 500;
+}
+.chain-option-mark-solana { color: #a68cff; }
+.chain-option-mark-evm { color: #82adff; }
+.chain-option-mark-near { color: #70dbb2; font-size: 20px; }
+.chain-option-copy { display: grid; flex: 1; gap: 4px; }
+.chain-option-copy strong { font-size: 14px; font-weight: 550; }
+.chain-option-copy small { color: #8995a2; font-size: 12px; }
+.wallet-option { min-height: 58px; }
+.wallet-option img { display: block; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; object-fit: cover; }
+.wallet-option > span { flex: 1; font-size: 13px; font-weight: 520; }
+.wallet-option-chevron { width: 17px; height: 17px; color: #75818f; }
+
+@keyframes wallet-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wallet-modal-rise-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
 .art-panel {
   position: relative;
   display: grid;
@@ -150,6 +255,9 @@ button, a { font: inherit; }
 @media (max-width: 390px) {
   .auth-layout { grid-template-rows: minmax(0, 1fr) clamp(100px, 23dvh, 190px); }
   .auth-panel { padding: 20px 16px; }
+  .wallet-modal-backdrop { padding: 12px; }
+  .wallet-modal { max-height: calc(100dvh - 24px); border-radius: 15px; }
+  .wallet-modal-content { max-height: calc(100dvh - 90px); padding: 2px 18px 20px; }
 }
 
 @media (max-height: 620px) {
@@ -161,5 +269,6 @@ button, a { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  .wallet-modal-backdrop, .wallet-modal { animation: none; }
   .art-tile:hover .art-tile-shape { transform: none; }
 }

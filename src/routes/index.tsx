@@ -1,6 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
+import phantomIcon from '../assets/wallet-icons/phantom.jpeg'
+import solflareIcon from '../assets/wallet-icons/solflare.jpeg'
+import metamaskIcon from '../assets/wallet-icons/metamask.jpeg'
+import coinbaseIcon from '../assets/wallet-icons/coinbase-wallet.png'
+import hotIcon from '../assets/wallet-icons/hot-wallet.jpeg'
+import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
+import rainbowIcon from '../assets/wallet-icons/rainbow.png'
+import rabbyIcon from '../assets/wallet-icons/rabby.jpeg'
 import './index.css'
 
 export const Route = createFileRoute('/')({ component: AuthPage })
@@ -13,6 +22,38 @@ function WalletIcon() {
       <circle cx="15.5" cy="13" r=".7" fill="currentColor" />
     </svg>
   )
+}
+
+const walletCatalog = {
+  Solana: [
+    { name: 'Phantom', icon: phantomIcon },
+    { name: 'Solflare', icon: solflareIcon },
+    { name: 'MetaMask', icon: metamaskIcon },
+    { name: 'Coinbase Wallet', icon: coinbaseIcon },
+    { name: 'HOT Wallet', icon: hotIcon },
+    { name: 'Nightly Wallet', icon: nightlyIcon },
+  ],
+  EVM: [
+    { name: 'Phantom', icon: phantomIcon },
+    { name: 'MetaMask', icon: metamaskIcon },
+    { name: 'Rainbow', icon: rainbowIcon },
+    { name: 'Rabby', icon: rabbyIcon },
+    { name: 'Coinbase Wallet', icon: coinbaseIcon },
+    { name: 'HOT Wallet', icon: hotIcon },
+    { name: 'Nightly Wallet', icon: nightlyIcon },
+  ],
+  NEAR: [
+    { name: 'HOT Wallet', icon: hotIcon },
+    { name: 'Nightly Wallet', icon: nightlyIcon },
+  ],
+} as const
+
+type WalletChain = keyof typeof walletCatalog
+
+const chainDescriptions: Record<WalletChain, string> = {
+  Solana: 'Connect with a Solana wallet',
+  EVM: 'Connect with an Ethereum-compatible wallet',
+  NEAR: 'Connect with a NEAR wallet',
 }
 
 const tiles = [
@@ -85,6 +126,34 @@ function Dots({ count }: { count: 2 | 3 }) {
 
 function AuthPage() {
   const navigate = useNavigate()
+  const [walletModalOpen, setWalletModalOpen] = useState(false)
+  const [selectedChain, setSelectedChain] = useState<WalletChain | null>(null)
+
+  useEffect(() => {
+    if (!walletModalOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setWalletModalOpen(false)
+        setSelectedChain(null)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = ''
+    }
+  }, [walletModalOpen])
+
+  const closeWalletModal = () => {
+    setWalletModalOpen(false)
+    setSelectedChain(null)
+  }
+
+  const continueWithWallet = () => {
+    closeWalletModal()
+    void navigate({ to: '/trade', search: { market: undefined, side: undefined } })
+  }
 
   return (
     <main className="auth-layout">
@@ -97,7 +166,7 @@ function AuthPage() {
         <div className="auth-content">
           <h1 id="auth-title">Welcome to Afterbell</h1>
           <p className="auth-subtitle">Connect your wallet to continue.</p>
-          <button className="connect-button" type="button" onClick={() => void navigate({ to: '/trade', search: { market: undefined, side: undefined } })}>
+          <button className="connect-button" type="button" onClick={() => setWalletModalOpen(true)}>
             <WalletIcon />
             <span>Connect wallet</span>
           </button>
@@ -111,6 +180,59 @@ function AuthPage() {
         <div className="art-glow" />
         <MarketArtwork />
       </aside>
+
+      {walletModalOpen && (
+        <div
+          className="wallet-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeWalletModal()
+          }}
+        >
+          <section className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title">
+            <header className="wallet-modal-header">
+              {selectedChain ? (
+                <button className="wallet-modal-back" type="button" onClick={() => setSelectedChain(null)} aria-label="Back to wallet networks">
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </button>
+              ) : <span className="wallet-modal-header-spacer" />}
+              <button className="wallet-modal-close" type="button" onClick={closeWalletModal} aria-label="Close wallet selection">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+              </button>
+            </header>
+
+            <div className="wallet-modal-content">
+              <h2 id="wallet-modal-title">{selectedChain ? `${selectedChain} wallets` : 'Choose your network'}</h2>
+              <p className="wallet-modal-description">
+                {selectedChain ? chainDescriptions[selectedChain] : 'Choose the network you want to connect with.'}
+              </p>
+
+              {selectedChain ? (
+                <div className="wallet-options" aria-label={`${selectedChain} wallets`}>
+                  {walletCatalog[selectedChain].map((wallet) => (
+                    <button className="wallet-option" key={wallet.name} type="button" onClick={continueWithWallet}>
+                      <img src={wallet.icon} alt="" />
+                      <span>{wallet.name}</span>
+                      <svg className="wallet-option-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="chain-options">
+                  {(Object.keys(walletCatalog) as WalletChain[]).map((chain) => (
+                    <button className="chain-option" key={chain} type="button" onClick={() => setSelectedChain(chain)}>
+                      <span className={`chain-option-mark chain-option-mark-${chain.toLowerCase()}`} aria-hidden="true">
+                        {chain === 'Solana' ? '◎' : chain === 'EVM' ? '◇' : 'Ⓝ'}
+                      </span>
+                      <span className="chain-option-copy"><strong>{chain}</strong><small>{chainDescriptions[chain]}</small></span>
+                      <svg className="wallet-option-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
