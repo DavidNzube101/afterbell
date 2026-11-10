@@ -44,7 +44,7 @@ Domains and configure the DNS record Vercel provides.
 
 ## C++ API and workers
 
-The backend provides a read-only HTTP API, a NEAR deposit indexer, and an optional Robinhood Chain price publisher. Markets are explicitly marked development-only and cannot be traded yet. Set `INDEXER_ENABLED=true` to run the indexer and `ORACLE_ENABLED=true` to run the price publisher as managed background threads inside the API process, allowing the API and workers to share one Render service. The indexer also remains available as a standalone executable for local development and operations.
+The backend provides the HTTP trading API, a NEAR deposit indexer, an optional Robinhood Chain price publisher, and a standing limit-order keeper. Set `PERP_TRADING_ENABLED=true` to enable trade routes; set `INDEXER_ENABLED=true` and `ORACLE_ENABLED=true` to run their workers as managed background threads inside the API process. The indexer also remains available as a standalone executable for local development and operations.
 
 On macOS, install the build dependencies with Homebrew:
 
@@ -63,6 +63,8 @@ make indexer
 ```
 
 `make api` and `make indexer` stay attached to their processes; stop either with Ctrl-C. The API listens on `PORT` (default `8080`) and needs `DATABASE_URL` for its readiness check. Its `GET /v1/markets` endpoint reads `backend/rh_stocks_addresses.json`. Set `INDEXER_ENABLED=true` to run indexing in the API process. Render logs include a structured startup event and one JSON record per HTTP request, with request ID, method, path, status, and duration; query values are omitted. The indexer uses libpq parameterized queries and explicit transactions, which work through a PostgreSQL transaction pooler without named prepared statements.
+
+Trading routes are available when `PERP_TRADING_ENABLED=true`, with `A1_CONTRACT_ID`, network-matched NEAR RPC settings, `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `PERP_QUOTE_SIGNER_PRIVATE_KEY` configured. `POST /v1/trade/quote` and `/open` create and execute owner-authorized market opens. `GET /v1/trade/positions?account_id=...` lists current positions; `POST /v1/trade/close/quote` and `/close` authorize and relay closes. For standing limits, call `POST /v1/trade/limits/quote`, have the wallet sign its message, then `POST /v1/trade/limits` with the signature. A1 stores that owner authorization, and the backend keeper attempts execution when the A1 mark reaches the limit. `GET /v1/trade/limits?account_id=...` lists orders; `/limits/cancel/quote` and `/limits/cancel` provide signed cancellation. Limit orders do not reserve margin; execution rechecks balance and all current A1 risk rules. Keep the quote signer key private and configure its matching public key in A1.
 
 ## NEAR deposit indexer
 
@@ -96,8 +98,10 @@ Create one Render **Docker Web Service** from the GHCR image. The default comman
 
 | Service | Start command | Health check | Required environment |
 |---|---|---|---|
-| API and indexer | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, matching `NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json`, `INDEXER_ENABLED=true`, `NEAR_USDC_TOKEN_ID`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
+| API, indexer, oracle, and trading keeper | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, matching `NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json`, `INDEXER_ENABLED=true`, `NEAR_USDC_TOKEN_ID`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
 
 Render supplies `PORT`. The indexer uses FastNear's testnet transaction API to discover A1 history without a full archival NEAR RPC scan. Configure `INDEXER_FINALITY_LAG_BLOCKS`, `INDEXER_RESCAN_OVERLAP_BLOCKS`, and `INDEXER_POLL_INTERVAL_MS` as needed. Do not set `INDEXER_START_BLOCK` earlier than the deployed A1 instance. The existing standalone `./afterbell-indexer` command is available if we later decide to run the worker as its own Render service.
 
 To enable price publishing later, also set `ORACLE_ENABLED=true`, `ROBINHOOD_RPC_URL`, the matching network RPC URL (`NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`), a transaction RPC (`NEAR_TESTNET_TX_RPC_URL` for this testnet deployment), `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `ORACLE_SIGNER_PRIVATE_KEY` in Render. Do not turn it on until `oracle_signer()` on the target A1 contract returns the EVM address paired with the EVM private key.
+
+To enable trading and the limit keeper, set `PERP_TRADING_ENABLED=true` and `PERP_QUOTE_SIGNER_PRIVATE_KEY` in Render. The quote signer's public key must already be configured in A1. The keeper runs in the API process and uses the shared NEAR relayer settings above; it does not require a separate Render service.

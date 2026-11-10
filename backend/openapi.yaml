@@ -174,8 +174,155 @@ paths:
                   position_id: { type: string }
         '422': { description: Quote expired or A1 rejected the trade }
         '503': { description: Trade routes are disabled }
+  /v1/trade/positions:
+    get:
+      tags: [Trading]
+      operationId: listPerpPositions
+      summary: List the current A1 positions for a logical account
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current positions, with indicative PnL when a market mark exists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account_id, positions]
+                properties:
+                  account_id: { type: string }
+                  positions: { type: array, items: { type: object } }
+  /v1/trade/close/quote:
+    post:
+      tags: [Trading]
+      operationId: createPerpCloseQuote
+      summary: Create an A1-signed position close quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id, position_id, max_slippage_bps]
+              properties:
+                account_id: { type: string }
+                position_id: { type: string }
+                max_slippage_bps: { type: integer, minimum: 0, maximum: 1000 }
+      responses:
+        '200':
+          description: Quote and owner-signing message
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloseQuote' }
+        '422': { description: Position or oracle validation failed }
+  /v1/trade/close:
+    post:
+      tags: [Trading]
+      operationId: submitPerpClose
+      summary: Relay an owner-authorized position close
+      description: Send the close quote plus the owner's base64 wallet signature. The backend rechecks current position, mark, sequence and nonce before relaying close_perp_position to A1.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CloseQuote'
+                - type: object
+                  required: [owner_signature]
+                  properties:
+                    owner_signature: { type: string, contentEncoding: base64 }
+      responses:
+        '200': { description: Close transaction finalized }
+        '422': { description: Quote expired or A1 rejected the close }
+        '503': { description: Trade routes are disabled }
+  /v1/trade/limits:
+    get:
+      tags: [Trading]
+      operationId: listPerpLimitOrders
+      summary: List standing limit orders for a logical account
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Standing orders recorded by A1
+          content:
+            application/json:
+              schema: { type: object, properties: { orders: { type: array, items: { type: object } } } }
+    post:
+      tags: [Trading]
+      operationId: submitPerpLimitOrder
+      summary: Place a wallet-authorized standing limit order
+      description: Submit the fields returned by /v1/trade/limits/quote and the owner's signature. A1 stores the authorization. A backend keeper submits it when the A1 mark reaches its limit. No margin is reserved while it waits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [account_id, order_id, market_id, side, notional_usdc, leverage_bps, limit_price, nonce, expires_at_ms, message, owner_signature] }
+      responses:
+        '200': { description: Limit order stored on A1 }
+        '422': { description: Invalid or stale authorization }
+  /v1/trade/limits/quote:
+    post:
+      tags: [Trading]
+      operationId: createPerpLimitOrderAuthorization
+      summary: Create the owner-signing message for a standing limit order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [account_id, order_id, market_id, side, notional_usdc, leverage_bps, limit_price, expires_at_ms] }
+      responses:
+        '200': { description: Canonical order fields and owner-signing message }
+        '422': { description: Invalid order terms }
+  /v1/trade/limits/cancel/quote:
+    post:
+      tags: [Trading]
+      operationId: createPerpLimitCancelAuthorization
+      summary: Create the owner-signing message to cancel a standing order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [account_id, order_id] }
+      responses:
+        '200': { description: Cancellation nonce, expiry, and signing message }
+  /v1/trade/limits/cancel:
+    post:
+      tags: [Trading]
+      operationId: cancelPerpLimitOrder
+      summary: Cancel an owner-authorized standing order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [account_id, order_id, nonce, expires_at_ms, message, owner_signature] }
+      responses:
+        '200': { description: Cancellation transaction finalized }
+        '422': { description: Invalid or stale owner authorization }
 components:
   schemas:
+    CloseQuote:
+      type: object
+      required: [account_id, position_id, market_id, reference_price, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms, message, quote_signature]
+      properties:
+        account_id: { type: string }
+        position_id: { type: string }
+        market_id: { type: string }
+        reference_price: { type: string }
+        max_slippage_bps: { type: integer }
+        price_sequence: { type: integer, format: uint64 }
+        fee_bps: { type: integer }
+        nonce: { type: integer, format: uint64 }
+        expires_at_ms: { type: integer, format: uint64 }
+        message: { type: string }
+        quote_signature: { type: string, contentEncoding: base64 }
     TradeQuote:
       type: object
       required: [account_id, position_id, market_id, side, notional_usdc, leverage_bps, reference_price, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms, message, quote_signature]

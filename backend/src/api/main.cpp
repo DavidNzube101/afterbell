@@ -299,6 +299,7 @@ int main() {
                     requiredEnv("PERP_QUOTE_SIGNER_PRIVATE_KEY"),
                     static_cast<std::uint16_t>(tradeFeeBps),
                 });
+            tradingService->startLimitWorker();
         }
 
         drogon::app().setThreadNum(4);
@@ -412,6 +413,162 @@ int main() {
                 }
             },
             {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/trade/positions",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable);
+                    callback(response);
+                    return;
+                }
+                try {
+                    const auto accountId = request->getParameter("account_id");
+                    Json::Value body;
+                    body["account_id"] = accountId;
+                    body["positions"] = tradingService->listPositions(accountId);
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("positions_unavailable", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity);
+                    callback(response);
+                }
+            },
+            {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/trade/close/quote",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable);
+                    callback(response);
+                    return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->createCloseQuote(*input)));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("close_quote_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity);
+                    callback(response);
+                }
+            },
+            {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/trade/close",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable);
+                    callback(response);
+                    return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->submitClose(*input)));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("close_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity);
+                    callback(response);
+                }
+            },
+            {drogon::Post});
+
+        drogon::app().registerHandler(
+            "/v1/trade/limits",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    if (request->method() == drogon::Get) {
+                        Json::Value body; body["orders"] = tradingService->listLimitOrders(request->getParameter("account_id"));
+                        callback(drogon::HttpResponse::newHttpJsonResponse(body)); return;
+                    }
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->submitLimitOrder(*input)));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("limit_order_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            },
+            {drogon::Get, drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/trade/limits/quote",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->createLimitOrderMessage(*input)));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("limit_quote_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            },
+            {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/trade/limits/cancel/quote",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->createLimitCancelMessage(*input)));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("limit_cancel_quote_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            },
+            {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/trade/limits/cancel",
+            [tradingService](const drogon::HttpRequestPtr &request,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!tradingService) {
+                    Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->cancelLimitOrder(*input)));
+                } catch (const std::exception &error) {
+                    Json::Value body = errorBody("limit_cancel_rejected", error.what());
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            },
+            {drogon::Post});
 
         const auto port = portFromEnv();
         logStartup(port, *network, runIndexer, runOracle, runTrading, markets.size());
@@ -420,6 +577,7 @@ int main() {
         drogon::app().addListener("0.0.0.0", port).run();
         if (indexerWorker) indexerWorker->stop();
         if (oracleWorker) oracleWorker->stop();
+        if (tradingService) tradingService->stopLimitWorker();
     } catch (const std::exception &error) {
         std::cerr << "afterbell-api: " << error.what() << "\n";
         return 1;

@@ -13,6 +13,7 @@
 #include <cctype>
 #include <limits>
 #include <memory>
+#include <iostream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -153,6 +154,38 @@ std::vector<std::uint8_t> nearSign(const std::vector<std::uint8_t> &key,
     return signature;
 }
 
+Json::Value relayCall(const Config &config, const std::string &method, const Json::Value &args) {
+    const auto key = nearKey(config.relayerPrivateKey);
+    const auto pub = nearPublic(key);
+    const auto publicKeyText = "ed25519:" + afterbell::oracle::base58Encode(pub.data(), pub.size());
+    afterbell::indexer::NearRpc txRpc(config.transactionRpcUrl);
+    if (txRpc.chainId() != config.network) throw std::runtime_error("trade transaction RPC is on the wrong NEAR network");
+    Json::Value accessArgs; accessArgs["request_type"] = "view_access_key"; accessArgs["finality"] = "final";
+    accessArgs["account_id"] = config.relayerAccountId; accessArgs["public_key"] = publicKeyText;
+    const auto nonce = u64(txRpc.call("query", accessArgs)["nonce"], "relayer nonce") + 1;
+    Json::Value blockArgs; blockArgs["finality"] = "final";
+    const auto block = txRpc.call("block", blockArgs);
+    const auto blockHash = afterbell::oracle::base58Decode(block["header"]["hash"].asString());
+    if (blockHash.size() != 32) throw std::runtime_error("NEAR returned an invalid block hash");
+    const auto argsText = compactJson(args);
+    std::vector<std::uint8_t> tx;
+    appendString(tx, config.relayerAccountId); tx.push_back(0); tx.insert(tx.end(), pub.begin(), pub.end());
+    appendU64(tx, nonce); appendString(tx, config.contractId); tx.insert(tx.end(), blockHash.begin(), blockHash.end());
+    appendU32(tx, 1); tx.push_back(2); appendString(tx, method);
+    appendBytes(tx, std::vector<std::uint8_t>(argsText.begin(), argsText.end()));
+    appendU64(tx, 180'000'000'000'000ULL); tx.insert(tx.end(), 16, 0);
+    const auto hash = afterbell::oracle::sha256(tx.data(), tx.size());
+    const auto signature = nearSign(key, hash.data(), hash.size());
+    tx.push_back(0); tx.insert(tx.end(), signature.begin(), signature.end());
+    Json::Value params(Json::arrayValue); params.append(afterbell::oracle::base64Encode(tx.data(), tx.size()));
+    const auto result = txRpc.call("broadcast_tx_commit", params);
+    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE")
+        throw std::runtime_error("A1 rejected the " + method + " transaction");
+    Json::Value response; response["status"] = "finalized";
+    response["transaction_hash"] = result["transaction"]["hash"];
+    return response;
+}
+
 Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
                          const Json::Value &input, bool create) {
     const auto account = input["account_id"].asString();
@@ -263,6 +296,8 @@ Service::Service(Config config) : config_(std::move(config)) {
     if (config_.feeBps > 100) throw std::invalid_argument("PERP_TRADE_FEE_BPS must be between 0 and 100");
 }
 
+Service::~Service() { stopLimitWorker(); }
+
 Json::Value Service::createOpenQuote(const Json::Value &request) const {
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
     if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
@@ -271,15 +306,27 @@ Json::Value Service::createOpenQuote(const Json::Value &request) const {
 
 Json::Value Service::submitOpen(const Json::Value &request) {
     std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    const bool limitExecution = request["is_limit_order"].asBool();
     if (!request["owner_signature"].isString()) throw std::invalid_argument("owner_signature is required");
     const auto ownerSignature = afterbell::oracle::base64Decode(request["owner_signature"].asString());
-    if (ownerSignature.size() != 64 && ownerSignature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
+    if ((!limitExecution && ownerSignature.size() != 64 && ownerSignature.size() != 65) ||
+        (limitExecution && !ownerSignature.empty())) throw std::invalid_argument("owner signature has an invalid length");
     auto quote = request;
     quote.removeMember("owner_signature"); quote.removeMember("quote_signature"); quote.removeMember("message");
     afterbell::indexer::NearRpc readRpc(config_.readRpcUrl);
     if (readRpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     const auto verified = checkedQuote(readRpc, config_, quote, false);
     if (verified["message"].asString() != request["message"].asString()) throw std::runtime_error("trade message does not match quote fields");
+
+    if (limitExecution) {
+        Json::Value orderArgs; orderArgs["account_id"] = request["account_id"]; orderArgs["order_id"] = request["position_id"];
+        const auto order = viewCall(readRpc, config_.contractId, "perp_limit_order", orderArgs);
+        if (order.isNull() || order["market_id"] != request["market_id"] ||
+            order["notional_usdc"] != request["notional_usdc"] ||
+            order["leverage_bps"] != request["leverage_bps"] ||
+            order["is_long"].asBool() != (request["side"].asString() == "long"))
+            throw std::runtime_error("standing limit order no longer matches the execution request");
+    }
 
     Json::Value args;
     args["account_id"] = request["account_id"]; args["position_id"] = request["position_id"];
@@ -321,6 +368,330 @@ Json::Value Service::submitOpen(const Json::Value &request) {
     response["transaction_hash"] = result["transaction"]["hash"];
     response["position_id"] = request["position_id"];
     return response;
+}
+
+Json::Value Service::listPositions(const std::string &accountId) const {
+    if (accountId.empty() || accountId.size() > 64) throw std::invalid_argument("invalid account_id");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    static constexpr char prefix[] = "afterbell:a1:perp:position:";
+    std::vector<std::uint8_t> key(prefix, prefix + sizeof(prefix) - 1);
+    const auto length = static_cast<std::uint32_t>(accountId.size());
+    for (unsigned i = 0; i < 4; ++i) key.push_back(static_cast<std::uint8_t>(length >> (8 * i)));
+    key.insert(key.end(), accountId.begin(), accountId.end());
+    Json::Value params;
+    params["request_type"] = "view_state"; params["finality"] = "final";
+    params["account_id"] = config_.contractId;
+    params["prefix_base64"] = afterbell::oracle::base64Encode(key.data(), key.size());
+    params["limit"] = 100;
+    const auto state = rpc.call("query", params);
+    Json::Value result(Json::arrayValue);
+    if (!state["values"].isArray()) return result;
+    for (const auto &entry : state["values"]) {
+        const auto bytes = afterbell::oracle::base64Decode(entry["value"].asString());
+        Json::CharReaderBuilder builder;
+        Json::Value position;
+        std::string errors;
+        auto reader = std::unique_ptr<Json::CharReader>(builder.newCharReader());
+        const std::string text(bytes.begin(), bytes.end());
+        if (!reader->parse(text.data(), text.data() + text.size(), &position, &errors) ||
+            position["account_id"].asString() != accountId) continue;
+        Json::Value marketArgs; marketArgs["market_id"] = position["market_id"];
+        const auto price = viewCall(rpc, config_.contractId, "market_price", marketArgs);
+        if (!price.isNull()) {
+            Json::Value pnlArgs;
+            pnlArgs["notional_usdc"] = position["notional_usdc"];
+            pnlArgs["entry_price"] = position["entry_price"];
+            pnlArgs["mark_price"] = price["price"];
+            pnlArgs["is_long"] = position["is_long"];
+            position["mark_price"] = price["price"];
+            position["mark_observed_at_ms"] = price["observed_at_ms"];
+            position["unrealized_pnl_usdc"] = viewCall(rpc, config_.contractId, "calculate_linear_pnl", pnlArgs);
+        }
+        result.append(std::move(position));
+    }
+    return result;
+}
+
+Json::Value Service::createCloseQuote(const Json::Value &request) const {
+    const auto account = request["account_id"].asString();
+    const auto positionId = request["position_id"].asString();
+    const auto slippageRaw = u64(request["max_slippage_bps"], "max_slippage_bps");
+    if (account.empty() || account.size() > 64 || positionId.empty() || positionId.size() > 64 || slippageRaw > 1'000)
+        throw std::invalid_argument("invalid account, position, or slippage");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = account; args["position_id"] = positionId;
+    const auto position = viewCall(rpc, config_.contractId, "perp_position", args);
+    if (position.isNull()) throw std::invalid_argument("position does not exist");
+    args.clear(); args["account_id"] = account;
+    if (viewCall(rpc, config_.contractId, "owner_of", args).isNull()) throw std::invalid_argument("account has no registered owner");
+    const auto marketId = position["market_id"].asString();
+    args.clear(); args["market_id"] = marketId;
+    const auto price = viewCall(rpc, config_.contractId, "market_price", args);
+    const auto health = viewCall(rpc, config_.contractId, "oracle_health", args);
+    if (price.isNull()) throw std::runtime_error("market oracle price is unavailable");
+    const auto now = blockTimeMs(rpc);
+    const auto observed = u64(price["observed_at_ms"], "oracle timestamp");
+    if (observed > now || now - observed > 60'000 || health["circuit_broken"].asBool()) throw std::runtime_error("market oracle is stale or unsafe");
+    const auto sequence = u64(price["sequence"], "oracle sequence");
+    const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
+    const auto expiry = now + 30'000;
+    Json::Value messageArgs;
+    messageArgs["account_id"] = account; messageArgs["position_id"] = positionId;
+    messageArgs["reference_price"] = price["price"];
+    messageArgs["max_slippage_bps"] = static_cast<Json::UInt>(slippageRaw);
+    messageArgs["price_sequence"] = Json::UInt64(sequence); messageArgs["fee_bps"] = config_.feeBps;
+    messageArgs["nonce"] = Json::UInt64(nonce); messageArgs["expires_at_ms"] = Json::UInt64(expiry);
+    const auto message = viewCall(rpc, config_.contractId, "close_perp_position_message", messageArgs);
+    if (!message.isString()) throw std::runtime_error("A1 did not return a close authorization message");
+    const auto signer = viewCall(rpc, config_.contractId, "perp_quote_signer", Json::Value(Json::objectValue));
+    const auto &addressBytes = signer["Ethereum"]["address"];
+    if (!addressBytes.isArray() || addressBytes.size() != 20) throw std::runtime_error("A1 quote signer is not configured as the backend EVM signer");
+    const auto expectedAddress = afterbell::oracle::ethereumAddress(config_.quoteSignerPrivateKey);
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string actualAddress = "0x";
+    for (const auto &b : addressBytes) {
+        if (!b.isUInt() || b.asUInt() > 255) throw std::runtime_error("A1 quote signer configuration is malformed");
+        actualAddress.push_back(hex[b.asUInt() >> 4]); actualAddress.push_back(hex[b.asUInt() & 15]);
+    }
+    std::string normalized = expectedAddress;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (actualAddress != normalized) throw std::runtime_error("A1 quote signer does not match PERP_QUOTE_SIGNER_PRIVATE_KEY");
+    const auto signature = afterbell::oracle::eip191Sign(message.asString(), config_.quoteSignerPrivateKey);
+    Json::Value quote;
+    quote["account_id"] = account; quote["position_id"] = positionId;
+    quote["market_id"] = marketId; quote["reference_price"] = price["price"];
+    quote["max_slippage_bps"] = static_cast<Json::UInt>(slippageRaw);
+    quote["price_sequence"] = Json::UInt64(sequence); quote["fee_bps"] = config_.feeBps;
+    quote["nonce"] = Json::UInt64(nonce); quote["expires_at_ms"] = Json::UInt64(expiry);
+    quote["message"] = message; quote["quote_signature"] = afterbell::oracle::base64Encode(signature.data(), signature.size());
+    return quote;
+}
+
+Json::Value Service::submitClose(const Json::Value &request) {
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    if (!request["owner_signature"].isString()) throw std::invalid_argument("owner_signature is required");
+    const auto ownerSignature = afterbell::oracle::base64Decode(request["owner_signature"].asString());
+    if (ownerSignature.size() != 64 && ownerSignature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
+    const auto account = request["account_id"].asString();
+    const auto positionId = request["position_id"].asString();
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = account; args["position_id"] = positionId;
+    const auto position = viewCall(rpc, config_.contractId, "perp_position", args);
+    if (position.isNull()) throw std::invalid_argument("position does not exist");
+    const auto marketId = position["market_id"].asString();
+    args.clear(); args["market_id"] = marketId;
+    const auto price = viewCall(rpc, config_.contractId, "market_price", args);
+    const auto health = viewCall(rpc, config_.contractId, "oracle_health", args);
+    const auto now = blockTimeMs(rpc);
+    if (price.isNull() || health["circuit_broken"].asBool()) throw std::runtime_error("market oracle is unavailable or unsafe");
+    const auto sequence = u64(price["sequence"], "oracle sequence");
+    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
+    if (u64(price["observed_at_ms"], "oracle timestamp") > now || now - u64(price["observed_at_ms"], "oracle timestamp") > 60'000 ||
+        u64(request["price_sequence"], "price_sequence") != sequence || u128(request["reference_price"], "reference_price") != u128(price["price"], "price") ||
+        u64(request["nonce"], "nonce") != nonce || expiry <= now || expiry > now + 60'000 ||
+        u64(request["fee_bps"], "fee_bps") != config_.feeBps ||
+        u64(request["max_slippage_bps"], "max_slippage_bps") > 1'000) throw std::runtime_error("close quote is stale or altered; request a fresh quote");
+    args.clear(); args["account_id"] = account; args["position_id"] = positionId;
+    args["reference_price"] = request["reference_price"]; args["max_slippage_bps"] = request["max_slippage_bps"];
+    args["price_sequence"] = request["price_sequence"]; args["fee_bps"] = request["fee_bps"];
+    args["nonce"] = request["nonce"]; args["expires_at_ms"] = request["expires_at_ms"];
+    const auto message = viewCall(rpc, config_.contractId, "close_perp_position_message", args);
+    if (!message.isString() || message != request["message"]) throw std::runtime_error("close message does not match current position");
+    const auto quoteSignature = afterbell::oracle::eip191Sign(message.asString(), config_.quoteSignerPrivateKey);
+    Json::Value callArgs;
+    callArgs["account_id"] = account; callArgs["position_id"] = positionId;
+    callArgs["reference_price"] = request["reference_price"]; callArgs["max_slippage_bps"] = request["max_slippage_bps"];
+    callArgs["price_sequence"] = request["price_sequence"]; callArgs["fee_bps"] = request["fee_bps"];
+    callArgs["nonce"] = request["nonce"]; callArgs["expires_at_ms"] = request["expires_at_ms"];
+    callArgs["owner_signature"] = request["owner_signature"];
+    callArgs["quote_signature"] = afterbell::oracle::base64Encode(quoteSignature.data(), quoteSignature.size());
+    const auto argsText = compactJson(callArgs);
+    const auto key = nearKey(config_.relayerPrivateKey); const auto pub = nearPublic(key);
+    const auto publicKeyText = "ed25519:" + afterbell::oracle::base58Encode(pub.data(), pub.size());
+    afterbell::indexer::NearRpc txRpc(config_.transactionRpcUrl);
+    if (txRpc.chainId() != config_.network) throw std::runtime_error("trade transaction RPC is on the wrong NEAR network");
+    Json::Value accessArgs; accessArgs["request_type"] = "view_access_key"; accessArgs["finality"] = "final";
+    accessArgs["account_id"] = config_.relayerAccountId; accessArgs["public_key"] = publicKeyText;
+    const auto nonceTx = u64(txRpc.call("query", accessArgs)["nonce"], "relayer nonce") + 1;
+    Json::Value blockArgs; blockArgs["finality"] = "final";
+    const auto block = txRpc.call("block", blockArgs);
+    const auto blockHash = afterbell::oracle::base58Decode(block["header"]["hash"].asString());
+    if (blockHash.size() != 32) throw std::runtime_error("NEAR returned an invalid block hash");
+    std::vector<std::uint8_t> tx; appendString(tx, config_.relayerAccountId); tx.push_back(0);
+    tx.insert(tx.end(), pub.begin(), pub.end()); appendU64(tx, nonceTx); appendString(tx, config_.contractId);
+    tx.insert(tx.end(), blockHash.begin(), blockHash.end()); appendU32(tx, 1); tx.push_back(2);
+    appendString(tx, "close_perp_position"); appendBytes(tx, std::vector<std::uint8_t>(argsText.begin(), argsText.end()));
+    appendU64(tx, 180'000'000'000'000ULL); tx.insert(tx.end(), 16, 0);
+    const auto txHash = afterbell::oracle::sha256(tx.data(), tx.size());
+    const auto txSignature = nearSign(key, txHash.data(), txHash.size()); tx.push_back(0);
+    tx.insert(tx.end(), txSignature.begin(), txSignature.end());
+    Json::Value txParams(Json::arrayValue); txParams.append(afterbell::oracle::base64Encode(tx.data(), tx.size()));
+    const auto result = txRpc.call("broadcast_tx_commit", txParams);
+    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE") throw std::runtime_error("A1 rejected the close transaction");
+    Json::Value response; response["status"] = "finalized";
+    response["transaction_hash"] = result["transaction"]["hash"]; response["position_id"] = positionId;
+    return response;
+}
+
+Json::Value Service::listLimitOrders(const std::string &accountId) const {
+    if (accountId.empty() || accountId.size() > 64) throw std::invalid_argument("invalid account_id");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    const auto ids = viewCall(rpc, config_.contractId, "perp_limit_order_ids", Json::Value(Json::objectValue));
+    Json::Value output(Json::arrayValue);
+    if (!ids.isArray()) throw std::runtime_error("A1 returned invalid limit order ids");
+    for (const auto &id : ids) {
+        if (!id.isString()) continue;
+        const auto separator = id.asString().find('\n');
+        if (separator == std::string::npos || id.asString().substr(0, separator) != accountId) continue;
+        Json::Value args; args["account_id"] = accountId; args["order_id"] = id.asString().substr(separator + 1);
+        auto order = viewCall(rpc, config_.contractId, "perp_limit_order", args);
+        if (!order.isNull()) output.append(std::move(order));
+    }
+    return output;
+}
+
+Json::Value Service::createLimitOrderMessage(const Json::Value &request) const {
+    const auto account = request["account_id"].asString();
+    const auto orderId = request["order_id"].asString();
+    const auto market = request["market_id"].asString();
+    const auto side = request["side"].asString();
+    const auto notional = u128(request["notional_usdc"], "notional_usdc");
+    const auto leverage = u64(request["leverage_bps"], "leverage_bps");
+    const auto limitPrice = u128(request["limit_price"], "limit_price");
+    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    if (account.empty() || account.size() > 64 || orderId.empty() || orderId.size() > 64 ||
+        market.empty() || market.size() > 16 || (side != "long" && side != "short") ||
+        leverage > std::numeric_limits<std::uint32_t>::max() || !notional || !limitPrice)
+        throw std::invalid_argument("invalid limit order fields");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
+    Json::Value args;
+    args["account_id"] = account; args["order_id"] = orderId; args["market_id"] = market;
+    args["is_long"] = side == "long"; args["notional"] = decimal(notional);
+    args["leverage_bps"] = static_cast<Json::UInt>(leverage); args["limit_price"] = decimal(limitPrice);
+    args["nonce"] = Json::UInt64(nonce); args["expires_at_ms"] = Json::UInt64(expiry);
+    const auto message = viewCall(rpc, config_.contractId, "create_perp_limit_order_message", args);
+    if (!message.isString()) throw std::runtime_error("A1 did not return a limit order signing message");
+    Json::Value result = args;
+    result.removeMember("is_long"); result["side"] = side;
+    result["notional_usdc"] = decimal(notional); result.removeMember("notional");
+    result["limit_price"] = decimal(limitPrice); result["message"] = message;
+    return result;
+}
+
+Json::Value Service::submitLimitOrder(const Json::Value &request) {
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    if (!request["owner_signature"].isString()) throw std::invalid_argument("owner_signature is required");
+    const auto signature = afterbell::oracle::base64Decode(request["owner_signature"].asString());
+    if (signature.size() != 64 && signature.size() != 65)
+        throw std::invalid_argument("owner signature has an invalid length");
+    Json::Value canonical = createLimitOrderMessage(request);
+    if (canonical["message"] != request["message"] || canonical["nonce"] != request["nonce"])
+        throw std::runtime_error("limit order authorization is stale or altered");
+    Json::Value args;
+    args["account_id"] = canonical["account_id"]; args["order_id"] = canonical["order_id"];
+    args["market_id"] = canonical["market_id"]; args["is_long"] = canonical["side"].asString() == "long";
+    args["notional"] = canonical["notional_usdc"]; args["leverage_bps"] = canonical["leverage_bps"];
+    args["limit_price"] = canonical["limit_price"]; args["nonce"] = canonical["nonce"];
+    args["expires_at_ms"] = canonical["expires_at_ms"]; args["owner_signature"] = request["owner_signature"];
+    auto result = relayCall(config_, "create_perp_limit_order", args);
+    result["order_id"] = canonical["order_id"];
+    return result;
+}
+
+Json::Value Service::createLimitCancelMessage(const Json::Value &request) const {
+    const auto account = request["account_id"].asString();
+    const auto orderId = request["order_id"].asString();
+    if (account.empty() || account.size() > 64 || orderId.empty() || orderId.size() > 64)
+        throw std::invalid_argument("invalid account_id or order_id");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
+    const auto expiry = blockTimeMs(rpc) + 30'000;
+    Json::Value args; args["account_id"] = account; args["order_id"] = orderId;
+    args["nonce"] = Json::UInt64(request.isMember("nonce") ? u64(request["nonce"], "nonce") : nonce);
+    args["expires_at_ms"] = Json::UInt64(request.isMember("expires_at_ms") ? u64(request["expires_at_ms"], "expires_at_ms") : expiry);
+    const auto message = viewCall(rpc, config_.contractId, "cancel_perp_limit_order_message", args);
+    Json::Value result = args; result["message"] = message;
+    return result;
+}
+
+Json::Value Service::cancelLimitOrder(const Json::Value &request) {
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    auto canonical = createLimitCancelMessage(request);
+    if (!request["owner_signature"].isString() || canonical["message"] != request["message"] || canonical["nonce"] != request["nonce"])
+        throw std::runtime_error("limit cancellation authorization is stale or altered");
+    Json::Value args; args["account_id"] = canonical["account_id"]; args["order_id"] = canonical["order_id"];
+    args["nonce"] = canonical["nonce"]; args["expires_at_ms"] = canonical["expires_at_ms"];
+    args["owner_signature"] = request["owner_signature"];
+    auto result = relayCall(config_, "cancel_perp_limit_order", args);
+    result["order_id"] = canonical["order_id"];
+    return result;
+}
+
+void Service::startLimitWorker() {
+    bool expected = false;
+    if (!limitWorkerRunning_.compare_exchange_strong(expected, true)) return;
+    limitWorker_ = std::thread([this] {
+        while (limitWorkerRunning_.load()) {
+            try {
+                afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+                if (rpc.chainId() == config_.network) {
+                    const auto ids = viewCall(rpc, config_.contractId, "perp_limit_order_ids", Json::Value(Json::objectValue));
+                    if (ids.isArray()) for (const auto &id : ids) {
+                        if (!limitWorkerRunning_.load() || !id.isString()) break;
+                        const auto split = id.asString().find('\n');
+                        if (split == std::string::npos) continue;
+                        const auto account = id.asString().substr(0, split);
+                        const auto orderId = id.asString().substr(split + 1);
+                        Json::Value args; args["account_id"] = account; args["order_id"] = orderId;
+                        const auto order = viewCall(rpc, config_.contractId, "perp_limit_order", args);
+                        if (order.isNull()) continue;
+                        if (u64(order["expires_at_ms"], "order expiry") < blockTimeMs(rpc)) {
+                            Json::Value cleanup; cleanup["account_id"] = account; cleanup["order_id"] = orderId;
+                            std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+                            relayCall(config_, "expire_perp_limit_order", cleanup);
+                            continue;
+                        }
+                        Json::Value marketArgs; marketArgs["market_id"] = order["market_id"];
+                        const auto price = viewCall(rpc, config_.contractId, "market_price", marketArgs);
+                        if (price.isNull()) continue;
+                        const auto mark = u128(price["price"], "mark price");
+                        const auto limit = u128(order["limit_price"], "limit price");
+                        const bool isLong = order["is_long"].asBool();
+                        if ((isLong && mark > limit) || (!isLong && mark < limit)) continue;
+                        Json::Value trade; trade["account_id"] = account; trade["position_id"] = orderId;
+                        trade["market_id"] = order["market_id"]; trade["side"] = isLong ? "long" : "short";
+                        trade["notional_usdc"] = order["notional_usdc"];
+                        trade["leverage_bps"] = order["leverage_bps"]; trade["max_slippage_bps"] = 0;
+                        trade["owner_signature"] = ""; trade["is_limit_order"] = true;
+                        try {
+                            auto quote = createOpenQuote(trade);
+                            quote["owner_signature"] = "";
+                            quote["is_limit_order"] = true;
+                            submitOpen(quote);
+                        }
+                        catch (const std::exception &error) { std::cerr << "limit order execution deferred: " << error.what() << '\n'; }
+                    }
+                }
+            } catch (const std::exception &error) {
+                std::cerr << "limit order worker cycle failed: " << error.what() << '\n';
+            }
+            for (unsigned i = 0; i < 100 && limitWorkerRunning_.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    });
+}
+
+void Service::stopLimitWorker() {
+    limitWorkerRunning_.store(false);
+    if (limitWorker_.joinable()) limitWorker_.join();
 }
 
 } // namespace afterbell::trading

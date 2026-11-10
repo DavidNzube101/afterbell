@@ -40,6 +40,9 @@ const PERP_PENDING_MARKET_PREFIX: &[u8] = b"afterbell:a1:perp:pending_market:";
 const PERP_PENDING_MARKET_AT_PREFIX: &[u8] = b"afterbell:a1:perp:pending_market_at:";
 const PERP_MARKET_IDS_KEY: &[u8] = b"afterbell:a1:perp:market_ids";
 const PERP_POSITION_PREFIX: &[u8] = b"afterbell:a1:perp:position:";
+const PERP_LIMIT_ORDER_PREFIX: &[u8] = b"afterbell:a1:perp:limit_order:";
+const PERP_LIMIT_ORDER_IDS_KEY: &[u8] = b"afterbell:a1:perp:limit_order_ids";
+const MAX_PERP_LIMIT_ORDERS: usize = 256;
 const PERP_MARKET_POSITION_INDEX_PREFIX: &[u8] = b"afterbell:a1:perp:market_positions:";
 const PERP_POSITION_MARKET_INDEX_PREFIX: &[u8] = b"afterbell:a1:perp:position_market_index:";
 const PERP_POSITION_BASE_UNITS_PREFIX: &[u8] = b"afterbell:a1:perp:position_base_units:";
@@ -248,6 +251,22 @@ pub struct PerpPositionView {
     /// Signed fixed-point funding index, encoded as a decimal string.
     pub funding_index: String,
     pub funding_remainder: String,
+}
+
+/// Owner-authorized standing limit order. It carries no funds reservation;
+/// execution rechecks the account's free balance and all live market risk.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerpLimitOrder {
+    pub account_id: String,
+    pub order_id: String,
+    pub market_id: String,
+    pub is_long: bool,
+    pub notional_usdc: U128,
+    pub leverage_bps: u32,
+    pub limit_price: U128,
+    pub created_at_ms: u64,
+    pub expires_at_ms: u64,
 }
 
 #[near(serializers = [json])]
@@ -2280,6 +2299,182 @@ impl SharedLedger {
         )
     }
 
+    pub fn perp_limit_order_ids(&self) -> Vec<String> {
+        read_perp_limit_order_ids()
+    }
+
+    pub fn perp_limit_order(&self, account_id: String, order_id: String) -> Option<PerpLimitOrder> {
+        read_perp_limit_order(&account_id, &order_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_perp_limit_order_message(
+        &self,
+        account_id: String,
+        order_id: String,
+        market_id: String,
+        is_long: bool,
+        notional: U128,
+        leverage_bps: u32,
+        limit_price: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        perp_limit_order_message(
+            &account_id,
+            &order_id,
+            &market_id,
+            is_long,
+            notional,
+            leverage_bps,
+            limit_price,
+            nonce,
+            expires_at_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_perp_limit_order(
+        &mut self,
+        account_id: String,
+        order_id: String,
+        market_id: String,
+        is_long: bool,
+        notional: U128,
+        leverage_bps: u32,
+        limit_price: U128,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+    ) -> bool {
+        assert!(!self.perp_paused(), "perps paused");
+        let market = read_perp_market(&market_id).expect("market not listed");
+        assert!(
+            market.enabled && !market.close_only,
+            "market is not accepting opens"
+        );
+        assert!(
+            notional.0 > 0 && notional.0 <= market.max_position_usdc.0,
+            "position cap exceeded"
+        );
+        assert!(
+            leverage_bps >= 10_000 && leverage_bps <= market.max_leverage_bps,
+            "leverage limit exceeded"
+        );
+        assert!(limit_price.0 > 0, "limit price must be positive");
+        assert_valid_record_id(&order_id);
+        assert!(read_owner(&account_id).is_some(), "owner is not registered");
+        assert!(
+            read_perp_limit_order(&account_id, &order_id).is_none(),
+            "limit order id already exists"
+        );
+        assert!(
+            read_perp_position(&account_id, &order_id).is_none(),
+            "position id already exists"
+        );
+        let mut ids = read_perp_limit_order_ids();
+        assert!(
+            ids.len() < MAX_PERP_LIMIT_ORDERS,
+            "active limit order capacity reached"
+        );
+        let now = env::block_timestamp() / 1_000_000;
+        assert!(
+            expires_at_ms > now && expires_at_ms <= now.saturating_add(7 * 24 * 60 * 60 * 1000),
+            "limit order expiry is invalid"
+        );
+        let nonce_expected = read_user_perp_nonce(&account_id)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        assert_eq!(nonce, nonce_expected, "invalid trading nonce");
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        let message = perp_limit_order_message(
+            &account_id,
+            &order_id,
+            &market_id,
+            is_long,
+            notional,
+            leverage_bps,
+            limit_price,
+            nonce,
+            expires_at_ms,
+        );
+        assert!(
+            verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+            "invalid limit order owner signature"
+        );
+        let storage_before = env::storage_usage();
+        let order = PerpLimitOrder {
+            account_id: account_id.clone(),
+            order_id: order_id.clone(),
+            market_id,
+            is_long,
+            notional_usdc: notional,
+            leverage_bps,
+            limit_price,
+            created_at_ms: now,
+            expires_at_ms,
+        };
+        write_perp_limit_order(&account_id, &order_id, &order);
+        ids.push(format!("{}\n{}", account_id, order_id));
+        write_perp_limit_order_ids(&ids);
+        write_user_perp_nonce(&account_id, nonce);
+        settle_storage_credit(&account_id, storage_before);
+        true
+    }
+
+    pub fn cancel_perp_limit_order_message(
+        &self,
+        account_id: String,
+        order_id: String,
+        nonce: u64,
+        expires_at_ms: u64,
+    ) -> String {
+        perp_limit_cancel_message(&account_id, &order_id, nonce, expires_at_ms)
+    }
+
+    pub fn cancel_perp_limit_order(
+        &mut self,
+        account_id: String,
+        order_id: String,
+        nonce: u64,
+        expires_at_ms: u64,
+        owner_signature: Base64VecU8,
+    ) -> bool {
+        assert!(
+            read_perp_limit_order(&account_id, &order_id).is_some(),
+            "limit order does not exist"
+        );
+        let expected = read_user_perp_nonce(&account_id)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        assert_eq!(nonce, expected, "invalid trading nonce");
+        assert_valid_short_trade_expiry(expires_at_ms);
+        let owner = read_owner(&account_id).expect("owner is not registered");
+        let message = perp_limit_cancel_message(&account_id, &order_id, nonce, expires_at_ms);
+        assert!(
+            verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
+            "invalid limit cancellation signature"
+        );
+        let storage_before = env::storage_usage();
+        delete_perp_limit_order(&account_id, &order_id);
+        write_user_perp_nonce(&account_id, nonce);
+        settle_storage_credit(&account_id, storage_before);
+        true
+    }
+
+    /// Permissionless cleanup for expired standing orders. It cannot execute
+    /// or alter an order; it only releases the owner's stored order record.
+    pub fn expire_perp_limit_order(&mut self, account_id: String, order_id: String) -> bool {
+        let order =
+            read_perp_limit_order(&account_id, &order_id).expect("limit order does not exist");
+        let now = env::block_timestamp() / 1_000_000;
+        assert!(now > order.expires_at_ms, "limit order has not expired");
+        let storage_before = env::storage_usage();
+        delete_perp_limit_order(&account_id, &order_id);
+        settle_storage_credit(&account_id, storage_before);
+        true
+    }
+
     /// Owner-signed market order against the latest fresh A1 mark. The quote
     /// service signs the same exact payload; user authorization remains the
     /// authority for movement of that user's margin.
@@ -2302,6 +2497,14 @@ impl SharedLedger {
         quote_signature: Base64VecU8,
     ) -> U128 {
         assert_valid_record_id(&position_id);
+        let limit_order = if owner_signature.0.is_empty() {
+            Some(
+                read_perp_limit_order(&account_id, &position_id)
+                    .expect("owner signature or active limit order required"),
+            )
+        } else {
+            None
+        };
         assert!(!self.perp_paused(), "perps paused");
         let market = read_perp_market(&market_id).expect("market not listed");
         assert!(
@@ -2337,6 +2540,27 @@ impl SharedLedger {
             "stale quote sequence"
         );
         let price = require_fresh_market_price(&market_id);
+        if let Some(order) = &limit_order {
+            let now = env::block_timestamp() / 1_000_000;
+            assert!(now <= order.expires_at_ms, "limit order expired");
+            assert_eq!(order.account_id, account_id, "limit order account mismatch");
+            assert_eq!(order.order_id, position_id, "limit order id mismatch");
+            assert_eq!(order.market_id, market_id, "limit order market mismatch");
+            assert_eq!(order.is_long, is_long, "limit order side mismatch");
+            assert_eq!(order.notional_usdc, notional, "limit order size mismatch");
+            assert_eq!(
+                order.leverage_bps, leverage_bps,
+                "limit order leverage mismatch"
+            );
+            assert!(
+                if order.is_long {
+                    price.price.0 <= order.limit_price.0
+                } else {
+                    price.price.0 >= order.limit_price.0
+                },
+                "limit price has not been reached"
+            );
+        }
         assert!(reference_price.0 > 0, "reference price must be positive");
         let price_delta = price.price.0.abs_diff(reference_price.0);
         let max_deviation = u128::from(max_slippage_bps.min(market.max_execution_deviation_bps));
@@ -2392,11 +2616,11 @@ impl SharedLedger {
                 "agent open notional limit exceeded"
             );
         }
-        let nonce_expected = if agent_config.is_some() {
+        let nonce_expected = (if agent_config.is_some() {
             read_agent_action_nonce(&account_id)
         } else {
             read_user_perp_nonce(&account_id)
-        }
+        })
         .checked_add(1)
         .expect("trading nonce overflow");
         assert_eq!(nonce, nonce_expected, "invalid trading nonce");
@@ -2433,11 +2657,16 @@ impl SharedLedger {
                 ),
                 "invalid agent action signature"
             );
-        } else {
+        } else if limit_order.is_none() {
             let owner = read_owner(&account_id).expect("owner is not registered");
             assert!(
                 verify_owner_signature(&owner, &message, owner_signature.as_ref(), nonce),
                 "invalid owner signature"
+            );
+        } else {
+            assert!(
+                owner_signature.0.is_empty(),
+                "limit execution must not include another owner signature"
             );
         }
         let quote_signer = read_perp_quote_signer().expect("quote signer is not configured");
@@ -2613,6 +2842,9 @@ impl SharedLedger {
             );
         } else {
             write_user_perp_nonce(&account_id, nonce);
+        }
+        if limit_order.is_some() {
+            delete_perp_limit_order(&account_id, &position_id);
         }
         settle_storage_credit(
             agent_config
@@ -4183,6 +4415,29 @@ fn legacy_base_units(notional: u128, entry_value: u128) -> u128 {
 fn read_perp_position(account_id: &str, position_id: &str) -> Option<PerpPosition> {
     read_json_storage(&raw_key(PERP_POSITION_PREFIX, &[account_id, position_id]))
 }
+
+fn read_perp_limit_order_ids() -> Vec<String> {
+    read_json_storage(PERP_LIMIT_ORDER_IDS_KEY).unwrap_or_default()
+}
+fn write_perp_limit_order_ids(ids: &[String]) {
+    write_json_storage(PERP_LIMIT_ORDER_IDS_KEY, &ids);
+}
+fn read_perp_limit_order(account_id: &str, order_id: &str) -> Option<PerpLimitOrder> {
+    read_json_storage(&raw_key(PERP_LIMIT_ORDER_PREFIX, &[account_id, order_id]))
+}
+fn write_perp_limit_order(account_id: &str, order_id: &str, order: &PerpLimitOrder) {
+    write_json_storage(
+        &raw_key(PERP_LIMIT_ORDER_PREFIX, &[account_id, order_id]),
+        order,
+    );
+}
+fn delete_perp_limit_order(account_id: &str, order_id: &str) {
+    env::storage_remove(&raw_key(PERP_LIMIT_ORDER_PREFIX, &[account_id, order_id]));
+    let key = format!("{}\n{}", account_id, order_id);
+    let mut ids = read_perp_limit_order_ids();
+    ids.retain(|candidate| candidate != &key);
+    write_perp_limit_order_ids(&ids);
+}
 fn write_perp_position(account_id: &str, position_id: &str, position: &PerpPosition) {
     let entry = perp_position_index_entry(account_id, position_id);
     let position_index_key = raw_key(
@@ -4449,6 +4704,29 @@ fn perp_trade_message(
     expires_at_ms: u64,
 ) -> String {
     format!("afterbell:v1\ncontract:{}\naction:open_perp_position\naccount:{}\nposition:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nleverage_bps:{}\nreference_price:{}\nmax_slippage_bps:{}\nprice_sequence:{}\nfee_bps:{}\nnonce:{}\nexpires_at_ms:{}", env::current_account_id(), account_id, position_id, market_id, if is_long {"long"} else {"short"}, notional.0, leverage_bps, reference_price.0, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms)
+}
+
+fn perp_limit_order_message(
+    account_id: &str,
+    order_id: &str,
+    market_id: &str,
+    is_long: bool,
+    notional: U128,
+    leverage_bps: u32,
+    limit_price: U128,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!("afterbell:v1\ncontract:{}\naction:create_perp_limit_order\naccount:{}\norder:{}\nmarket:{}\nside:{}\nnotional_usdc:{}\nleverage_bps:{}\nlimit_price:{}\nnonce:{}\nexpires_at_ms:{}", env::current_account_id(), account_id, order_id, market_id, if is_long {"long"} else {"short"}, notional.0, leverage_bps, limit_price.0, nonce, expires_at_ms)
+}
+
+fn perp_limit_cancel_message(
+    account_id: &str,
+    order_id: &str,
+    nonce: u64,
+    expires_at_ms: u64,
+) -> String {
+    format!("afterbell:v1\ncontract:{}\naction:cancel_perp_limit_order\naccount:{}\norder:{}\nnonce:{}\nexpires_at_ms:{}", env::current_account_id(), account_id, order_id, nonce, expires_at_ms)
 }
 
 fn perp_close_message(
@@ -7683,6 +7961,178 @@ mod tests {
             U128(0)
         );
         assert_eq!(contract.balance_of(USER.to_string()), U128(2_049_400));
+    }
+
+    #[test]
+    fn owner_signed_limit_executes_only_at_bound_and_consumes_authorization() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[151; 32]);
+        let quote_key = SigningKey::from_bytes(&[152; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        fund_record(&mut contract, USER, 2_000_000, "limit-user");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "limit-vault",
+        );
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+
+        let order_expiry = NOW_MS + 60_000;
+        let order_message = contract.create_perp_limit_order_message(
+            USER.to_string(),
+            "limit-1".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            1,
+            order_expiry,
+        );
+        let order_signature = owner_key.sign(order_message.as_bytes());
+        assert!(contract.create_perp_limit_order(
+            USER.to_string(),
+            "limit-1".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            1,
+            order_expiry,
+            Base64VecU8::from(order_signature.to_bytes().to_vec()),
+        ));
+
+        let quote_expiry = NOW_MS + 30_000;
+        let trade_message = contract.trade_quote_message(
+            USER.to_string(),
+            "limit-1".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            0,
+            1,
+            6,
+            2,
+            quote_expiry,
+        );
+        let quote_signature = quote_key.sign(trade_message.as_bytes());
+        assert_eq!(
+            contract.open_perp_position(
+                USER.to_string(),
+                "limit-1".to_string(),
+                "NVDA".to_string(),
+                true,
+                U128(500_000),
+                20_000,
+                U128(10_000_000_000),
+                0,
+                1,
+                6,
+                2,
+                quote_expiry,
+                Base64VecU8::from(Vec::new()),
+                Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+            ),
+            U128(250_000)
+        );
+        assert!(contract
+            .perp_limit_order(USER.to_string(), "limit-1".to_string())
+            .is_none());
+        assert!(contract
+            .perp_position(USER.to_string(), "limit-1".to_string())
+            .is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "limit price has not been reached")]
+    fn standing_limit_cannot_execute_before_its_price_is_reached() {
+        let mut contract = setup("a1.near");
+        let owner_key = SigningKey::from_bytes(&[153; 32]);
+        let quote_key = SigningKey::from_bytes(&[154; 32]);
+        configure_test_perp(&mut contract, &quote_key);
+        register_solana_owner_for(&mut contract, USER, &owner_key);
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("a1.near".parse().unwrap())
+            .predecessor_account_id(TOKEN.parse().unwrap())
+            .block_timestamp(NOW_MS * 1_000_000);
+        testing_env!(context.build());
+        fund_record(&mut contract, USER, 2_000_000, "limit-before-bound-user");
+        fund_record(
+            &mut contract,
+            SHARED_VAULT_RECORD_ID,
+            100_000_000,
+            "limit-before-bound-vault",
+        );
+        publish_test_price(&mut contract, U128(10_000_000_000), 1);
+        let expiry = NOW_MS + 60_000;
+        let message = contract.create_perp_limit_order_message(
+            USER.to_string(),
+            "limit-2".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(9_000_000_000),
+            1,
+            expiry,
+        );
+        let signature = owner_key.sign(message.as_bytes());
+        contract.create_perp_limit_order(
+            USER.to_string(),
+            "limit-2".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(9_000_000_000),
+            1,
+            expiry,
+            Base64VecU8::from(signature.to_bytes().to_vec()),
+        );
+        let quote_expiry = NOW_MS + 30_000;
+        let trade = contract.trade_quote_message(
+            USER.to_string(),
+            "limit-2".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            0,
+            1,
+            6,
+            2,
+            quote_expiry,
+        );
+        let quote_signature = quote_key.sign(trade.as_bytes());
+        contract.open_perp_position(
+            USER.to_string(),
+            "limit-2".to_string(),
+            "NVDA".to_string(),
+            true,
+            U128(500_000),
+            20_000,
+            U128(10_000_000_000),
+            0,
+            1,
+            6,
+            2,
+            quote_expiry,
+            Base64VecU8::from(Vec::new()),
+            Base64VecU8::from(quote_signature.to_bytes().to_vec()),
+        );
     }
 
     #[test]
