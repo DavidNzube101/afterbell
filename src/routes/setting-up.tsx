@@ -20,9 +20,8 @@ import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
 
-function Icon({ kind, size = 16 }: { kind: 'shield' | 'check' | 'left' | 'right' | 'down'; size?: number }) {
+function Icon({ kind, size = 16 }: { kind: 'check' | 'left' | 'right' | 'down'; size?: number }) {
   const paths = {
-    shield: <><path d="M12 3 20 6v5c0 5-3.4 8.3-8 10-4.6-1.7-8-5-8-10V6l8-3Z"/><path d="m9 12 2 2 4-4"/></>,
     check: <path d="m5 12 4 4L19 6"/>,
     left: <><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></>,
     right: <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
@@ -155,7 +154,7 @@ function SettingUpPage() {
               <label className="agent-limit-control"><span>Daily loss limit</span><div className="agent-select-value">$250 <Icon kind="down" size={14} /></div></label>
               <label className="agent-limit-control"><span>Access duration</span><div className="agent-select-value">30 days <Icon kind="down" size={14} /></div></label>
             </div>
-            <div className="onboarding-note"><Icon kind="shield" size={16} /><span>Your agent gets limited permissions. You can revoke access at any time.</span></div>
+            <div className="onboarding-note"><span>Your agent gets limited permissions. You can revoke access at any time.</span></div>
           </article>
         </div>
       </div>

@@ -38,7 +38,6 @@
 .username-form-preview > p { margin: 9px 0 0; color: #727e8c; font-size: 11px; }
 .reclaim-preview { min-height: 0; }
 .onboarding-note { display: flex; align-items: center; gap: 9px; margin-top: 27px; padding-top: 17px; border-top: 1px solid #202833; color: #778392; font-size: 11px; }
-.onboarding-note svg { flex: 0 0 auto; color: #71859c; }
 .agent-slide { min-height: 466px; }
 .agent-slide .onboarding-card-heading { margin-bottom: 20px; }
 .agent-name-field { margin-bottom: 19px; }
