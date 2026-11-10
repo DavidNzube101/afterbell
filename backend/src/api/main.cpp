@@ -152,6 +152,54 @@ bool databaseReady(const std::string &connectionString) {
     return PQping(connectionString.c_str()) == PQPING_OK;
 }
 
+void ensureOwnerSponsorQuotaTable(const std::string &connectionString) {
+    PGconn *connection = PQconnectdb(connectionString.c_str());
+    if (!connection || PQstatus(connection) != CONNECTION_OK) {
+        if (connection) PQfinish(connection);
+        throw std::runtime_error("could not connect to PostgreSQL for account sponsorship quotas");
+    }
+    PGresult *result = PQexec(connection,
+        "CREATE TABLE IF NOT EXISTS owner_registration_sponsorships (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+    const bool ok = result && PQresultStatus(result) == PGRES_COMMAND_OK;
+    if (result) PQclear(result);
+    PQfinish(connection);
+    if (!ok) throw std::runtime_error("could not initialize owner registration sponsorship quotas");
+}
+
+bool reserveOwnerSponsorQuota(const std::string &connectionString) {
+    PGconn *connection = PQconnectdb(connectionString.c_str());
+    if (!connection || PQstatus(connection) != CONNECTION_OK) {
+        if (connection) PQfinish(connection);
+        throw std::runtime_error("could not connect to PostgreSQL for account sponsorship quotas");
+    }
+    const auto exec = [connection](const char *sql) {
+        PGresult *result = PQexec(connection, sql);
+        const bool ok = result && (PQresultStatus(result) == PGRES_COMMAND_OK || PQresultStatus(result) == PGRES_TUPLES_OK);
+        if (result) PQclear(result);
+        return ok;
+    };
+    if (!exec("BEGIN") || !exec("SELECT pg_advisory_xact_lock(42011026)")) {
+        exec("ROLLBACK"); PQfinish(connection);
+        throw std::runtime_error("could not check owner registration sponsorship quota");
+    }
+    PGresult *countResult = PQexec(connection,
+        "SELECT count(*) FROM owner_registration_sponsorships WHERE created_at > now() - interval '24 hours'");
+    if (!countResult || PQresultStatus(countResult) != PGRES_TUPLES_OK) {
+        if (countResult) PQclear(countResult);
+        exec("ROLLBACK"); PQfinish(connection);
+        throw std::runtime_error("could not read owner registration sponsorship quota");
+    }
+    const auto count = std::strtoul(PQgetvalue(countResult, 0, 0), nullptr, 10);
+    PQclear(countResult);
+    if (count >= 25) { exec("ROLLBACK"); PQfinish(connection); return false; }
+    const bool inserted = exec("INSERT INTO owner_registration_sponsorships DEFAULT VALUES");
+    const bool committed = inserted && exec("COMMIT");
+    if (!committed) exec("ROLLBACK");
+    PQfinish(connection);
+    if (!committed) throw std::runtime_error("could not reserve owner registration sponsorship quota");
+    return true;
+}
+
 Json::Value errorBody(const std::string &code, const std::string &message) {
     Json::Value body;
     body["error"]["code"] = code;
@@ -216,6 +264,7 @@ int main() {
 
         const auto databaseUrl = env("DATABASE_URL");
         if (!databaseUrl) throw std::runtime_error("DATABASE_URL is required");
+        ensureOwnerSponsorQuotaTable(*databaseUrl);
         const auto network = env("NEAR_NETWORK");
         const auto contractId = env("A1_CONTRACT_ID");
         if (!network || !contractId) {
@@ -235,7 +284,9 @@ int main() {
         const bool runIndexer = indexerEnabled();
         const bool runOracle = oracleEnabled();
         const bool runTrading = perpTradingEnabled();
-        const auto nearRpcUrl = (runIndexer || runOracle || runTrading)
+        const bool accountSetupConfigured = env("ORACLE_RELAYER_ACCOUNT_ID").has_value() &&
+                                            env("ORACLE_RELAYER_PRIVATE_KEY").has_value();
+        const auto nearRpcUrl = (runIndexer || runOracle || runTrading || accountSetupConfigured)
                                     ? nearRpcUrlForNetwork(*network)
                                     : std::string{};
         std::shared_ptr<afterbell::oracle::Worker> oracleWorker;
@@ -284,22 +335,30 @@ int main() {
                 uintEnvOr("INDEXER_POLL_INTERVAL_MS", 5000));
             indexerWorker->start();
         }
+        std::shared_ptr<afterbell::trading::Service> accountService;
         std::shared_ptr<afterbell::trading::Service> tradingService;
-        if (runTrading) {
+        if (runTrading || accountSetupConfigured) {
             const auto tradeFeeBps = uintEnvOr("PERP_TRADE_FEE_BPS", 10);
             if (tradeFeeBps > 100) throw std::runtime_error("PERP_TRADE_FEE_BPS must be between 0 and 100");
-            tradingService = std::make_shared<afterbell::trading::Service>(
+            auto service = std::make_shared<afterbell::trading::Service>(
                 afterbell::trading::Config{
                     *network,
                     nearRpcUrl,
                     nearTransactionRpcUrlForNetwork(*network, nearRpcUrl),
                     *contractId,
-                    requiredEnv("ORACLE_RELAYER_ACCOUNT_ID"),
-                    requiredEnv("ORACLE_RELAYER_PRIVATE_KEY"),
-                    requiredEnv("PERP_QUOTE_SIGNER_PRIVATE_KEY"),
+                    env("ORACLE_RELAYER_ACCOUNT_ID").value_or(""),
+                    env("ORACLE_RELAYER_PRIVATE_KEY").value_or(""),
+                    env("PERP_QUOTE_SIGNER_PRIVATE_KEY").value_or(""),
+                    env("OWNER_REGISTRATION_STORAGE_DEPOSIT_YOCTO").value_or("10000000000000000000000"),
                     static_cast<std::uint16_t>(tradeFeeBps),
                 });
-            tradingService->startLimitWorker();
+            accountService = service;
+            if (runTrading) {
+                if (env("PERP_QUOTE_SIGNER_PRIVATE_KEY").value_or("").empty())
+                    throw std::runtime_error("PERP_QUOTE_SIGNER_PRIVATE_KEY is required when PERP_TRADING_ENABLED=true");
+                tradingService = service;
+                tradingService->startLimitWorker();
+            }
         }
 
         drogon::app().setThreadNum(4);
@@ -365,6 +424,65 @@ int main() {
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/account/owner/status",
+            [accountService](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input || !(*input)["account_id"].isString()) throw std::invalid_argument("account_id is required");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(accountService->ownerStatus((*input)["account_id"].asString())));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_status_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/owner/payload",
+            [accountService](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(accountService->ownerRegistrationPayload(*input)));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("owner_payload_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/owner/register",
+            [accountService, databaseUrl = *databaseUrl](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    if (!(*input)["account_id"].isString()) throw std::invalid_argument("account_id is required");
+                    const auto accountId = (*input)["account_id"].asString();
+                    const auto ownerState = accountService->ownerStatus(accountId);
+                    if (!ownerState["registered"].asBool() && !reserveOwnerSponsorQuota(databaseUrl)) {
+                        Json::Value body = errorBody("sponsorship_limit", "New account setup has reached its rolling 24-hour sponsorship limit");
+                        auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                        response->setStatusCode(drogon::k429TooManyRequests); callback(response); return;
+                    }
+                    callback(drogon::HttpResponse::newHttpJsonResponse(accountService->registerOwner(*input)));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("owner_registration_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            }, {drogon::Post});
         drogon::app().registerHandler(
             "/v1/trade/quote",
             [tradingService](const drogon::HttpRequestPtr &request,

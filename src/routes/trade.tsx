@@ -7,6 +7,7 @@ import shareImage3 from '../assets/share-images/3.png'
 import { TickerIcon } from '../components/TickerIcon'
 import { markets, type Market } from '../data/markets'
 import { useMarketRegistry } from '../lib/api'
+import { useWalletSession } from '../lib/wallet-session'
 import './trade.css'
 
 export const Route = createFileRoute('/trade')({
@@ -225,6 +226,10 @@ const shareBackgrounds = [
 ]
 
 function TradingPage() {
+  const { session, disconnect } = useWalletSession()
+  useEffect(() => {
+    if (!session) window.location.assign('/')
+  }, [session])
   const { market: selectedTicker, side: initialSide } = Route.useSearch()
   const [selectedMarket, setSelectedMarket] = useState(selectedTicker ?? markets[0].ticker)
   const { markets: availableMarkets } = useMarketRegistry()
@@ -393,7 +398,17 @@ function TradingPage() {
     <header className="trade-header">
       <a href="/" className="trade-brand"><img className="trade-logo" src={logo} alt=""/><span>Afterbell</span></a>
       <nav className="trade-nav" aria-label="Main navigation"><a className="nav-active" href="/trade">Trade</a><a href="/markets">Markets</a><a href="#agent">AI agent</a></nav>
-      <div className="header-right"><button className={`icon-button header-bell ${notificationsOpen ? 'is-open' : ''}`} aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(open => !open)}><Icon name="bell"/>{notifications.length > 0 && <span className="notification-count">{notifications.length}</span>}</button><button className="account-button" onClick={() => setNotice('Wallet connection will be added in the next integration step.')}><span className="account-avatar">D</span><span className="account-address">0x84...b29a</span><Icon name="chevron"/></button></div>
+      <div className="header-right">
+        <button className={`icon-button header-bell ${notificationsOpen ? 'is-open' : ''}`} aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(open => !open)}>
+          <Icon name="bell" />
+          {notifications.length > 0 && <span className="notification-count">{notifications.length}</span>}
+        </button>
+        <button className="account-button" title={`${session?.walletName ?? 'Wallet'} · ${session?.chain ?? 'disconnected'} · Disconnect`} onClick={() => { void disconnect(); window.location.assign('/') }}>
+          <span className="account-avatar wallet-chain-avatar">{session?.chain === 'solana' ? 'SOL' : session?.chain === 'evm' ? 'EVM' : 'NEAR'}</span>
+          <span className="account-address">{session ? `${session.address.slice(0, 6)}...${session.address.slice(-4)}` : 'Connect wallet'}</span>
+          <Icon name="chevron" />
+        </button>
+      </div>
     </header>
 
     <div className="trade-main">

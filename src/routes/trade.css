@@ -36,6 +36,7 @@
 .account-button { min-height: 38px; display: flex; align-items: center; gap: 10px; padding: 4px 8px 4px 5px; border: 1px solid var(--trade-line); border-radius: 10px; background: #111821; }
 .account-button > svg { width: 15px; height: 15px; color: #82909f; }
 .account-avatar { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(145deg,#126fd1,#183b67); color: white; font-size: 12px; font-weight: 700; }
+.wallet-chain-avatar { font-size: 8px; letter-spacing: -.02em; }
 .account-address { color: #d4dbe3; font-variant-numeric: tabular-nums; }
 .trade-main { width: 100%; max-width: 1760px; flex: 1 0 auto; margin: 0 auto; padding: 20px 32px 34px; }
 .market-overview { min-height: 86px; display: flex; align-items: center; gap: clamp(28px, 4.2vw, 70px); margin-bottom: 17px; padding: 0 4px 17px; border-bottom: 1px solid var(--trade-line-soft); }

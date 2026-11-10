@@ -1,15 +1,18 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { siRobinhood } from 'simple-icons'
 import logo from '../assets/afterbell-logo.png'
 import { TickerIcon } from '../components/TickerIcon'
 import { useMarketRegistry } from '../lib/api'
+import { useWalletSession } from '../lib/wallet-session'
 import './trade.css'
 import './markets.css'
 
 export const Route = createFileRoute('/markets')({ component: MarketsPage })
 
 function MarketsPage() {
+  const { session, disconnect } = useWalletSession()
+  useEffect(() => { if (!session) window.location.assign('/') }, [session])
   const [query, setQuery] = useState('')
   const { markets, error } = useMarketRegistry()
   const filteredMarkets = useMemo(() => {
@@ -21,7 +24,7 @@ function MarketsPage() {
     <header className="trade-header">
       <a href="/" className="trade-brand"><img className="trade-logo" src={logo} alt=""/><span>Afterbell</span></a>
       <nav className="trade-nav" aria-label="Main navigation"><a href="/trade">Trade</a><a className="nav-active" href="/markets">Markets</a><a href="#agent">AI agent</a></nav>
-      <div className="header-right"><button className="account-button" onClick={() => window.location.assign('/')}><span className="account-avatar">D</span><span className="account-address">0x84...b29a</span></button></div>
+      <div className="header-right"><button className="account-button" title={`${session?.walletName ?? 'Wallet'} · ${session?.chain ?? 'disconnected'} · Disconnect`} onClick={() => { void disconnect(); window.location.assign('/') }}><span className="account-avatar wallet-chain-avatar">{session?.chain === 'solana' ? 'SOL' : session?.chain === 'evm' ? 'EVM' : 'NEAR'}</span><span className="account-address">{session ? `${session.address.slice(0, 6)}...${session.address.slice(-4)}` : 'Connect wallet'}</span></button></div>
     </header>
 
     <main className="markets-content">

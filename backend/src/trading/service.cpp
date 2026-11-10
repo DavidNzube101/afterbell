@@ -154,7 +154,46 @@ std::vector<std::uint8_t> nearSign(const std::vector<std::uint8_t> &key,
     return signature;
 }
 
-Json::Value relayCall(const Config &config, const std::string &method, const Json::Value &args) {
+void appendU128(std::vector<std::uint8_t> &out, unsigned __int128 value) {
+    for (unsigned i = 0; i < 16; ++i) out.push_back(static_cast<std::uint8_t>(value >> (8 * i)));
+}
+
+void validateAccountOwnerBinding(const std::string &accountId, const Json::Value &owner) {
+    if (owner.isMember("Ethereum") && owner["Ethereum"]["address"].isArray() &&
+        owner["Ethereum"]["address"].size() == 20) {
+        std::string address = "0x";
+        static constexpr char hex[] = "0123456789abcdef";
+        for (const auto &byte : owner["Ethereum"]["address"]) {
+            if (!byte.isUInt() || byte.asUInt() > 255) throw std::invalid_argument("invalid Ethereum owner address");
+            address.push_back(hex[byte.asUInt() >> 4]); address.push_back(hex[byte.asUInt() & 15]);
+        }
+        if (accountId != "ethereum:" + address) throw std::invalid_argument("account_id does not match the Ethereum wallet address");
+        return;
+    }
+    if (owner.isMember("SolanaEd25519") && owner["SolanaEd25519"]["public_key"].isArray() &&
+        owner["SolanaEd25519"]["public_key"].size() == 32) {
+        std::vector<std::uint8_t> key;
+        for (const auto &byte : owner["SolanaEd25519"]["public_key"]) {
+            if (!byte.isUInt() || byte.asUInt() > 255) throw std::invalid_argument("invalid Solana owner key");
+            key.push_back(static_cast<std::uint8_t>(byte.asUInt()));
+        }
+        const auto expected = "solana:" + afterbell::oracle::base58Encode(key.data(), key.size());
+        if (accountId != expected) throw std::invalid_argument("account_id does not match the Solana wallet key");
+        return;
+    }
+    if (owner.isMember("NearEd25519") && owner["NearEd25519"]["public_key"].isArray() &&
+        owner["NearEd25519"]["public_key"].size() == 32) {
+        for (const auto &byte : owner["NearEd25519"]["public_key"])
+            if (!byte.isUInt() || byte.asUInt() > 255) throw std::invalid_argument("invalid NEAR owner key");
+        if (accountId.rfind("near:", 0) != 0 || accountId.size() <= 5)
+            throw std::invalid_argument("NEAR account_id must use the near:<account> namespace");
+        return;
+    }
+    throw std::invalid_argument("owner must contain one supported A1 wallet key");
+}
+
+Json::Value relayCall(const Config &config, const std::string &method, const Json::Value &args,
+                      unsigned __int128 attachedDeposit = 0) {
     const auto key = nearKey(config.relayerPrivateKey);
     const auto pub = nearPublic(key);
     const auto publicKeyText = "ed25519:" + afterbell::oracle::base58Encode(pub.data(), pub.size());
@@ -173,7 +212,7 @@ Json::Value relayCall(const Config &config, const std::string &method, const Jso
     appendU64(tx, nonce); appendString(tx, config.contractId); tx.insert(tx.end(), blockHash.begin(), blockHash.end());
     appendU32(tx, 1); tx.push_back(2); appendString(tx, method);
     appendBytes(tx, std::vector<std::uint8_t>(argsText.begin(), argsText.end()));
-    appendU64(tx, 180'000'000'000'000ULL); tx.insert(tx.end(), 16, 0);
+    appendU64(tx, 180'000'000'000'000ULL); appendU128(tx, attachedDeposit);
     const auto hash = afterbell::oracle::sha256(tx.data(), tx.size());
     const auto signature = nearSign(key, hash.data(), hash.size());
     tx.push_back(0); tx.insert(tx.end(), signature.begin(), signature.end());
@@ -292,11 +331,69 @@ Service::Service(Config config) : config_(std::move(config)) {
     if (config_.network != "testnet" && config_.network != "mainnet") throw std::invalid_argument("NEAR_NETWORK must be testnet or mainnet");
     if (config_.contractId.empty() || config_.readRpcUrl.empty() || config_.transactionRpcUrl.empty() || config_.relayerAccountId.empty()) throw std::invalid_argument("trading RPC, contract, and relayer configuration are required");
     (void)nearPublic(nearKey(config_.relayerPrivateKey));
-    (void)afterbell::oracle::ethereumAddress(config_.quoteSignerPrivateKey);
+    if (!config_.quoteSignerPrivateKey.empty()) (void)afterbell::oracle::ethereumAddress(config_.quoteSignerPrivateKey);
     if (config_.feeBps > 100) throw std::invalid_argument("PERP_TRADE_FEE_BPS must be between 0 and 100");
 }
 
 Service::~Service() { stopLimitWorker(); }
+
+Json::Value Service::ownerStatus(const std::string &accountId) const {
+    if (accountId.empty() || accountId.size() > 128) throw std::invalid_argument("invalid account_id");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = accountId;
+    const auto owner = viewCall(rpc, config_.contractId, "owner_of", args);
+    Json::Value response; response["account_id"] = accountId;
+    response["registered"] = !owner.isNull();
+    if (!owner.isNull()) response["owner"] = owner;
+    return response;
+}
+
+Json::Value Service::ownerRegistrationPayload(const Json::Value &request) const {
+    if (!request["account_id"].isString() || !request["owner"].isObject()) throw std::invalid_argument("account_id and owner are required");
+    const auto accountId = request["account_id"].asString();
+    if (accountId.empty() || accountId.size() > 128 || accountId.rfind("protocol:", 0) == 0 || accountId.rfind("agent:", 0) == 0)
+        throw std::invalid_argument("invalid or reserved account_id");
+    validateAccountOwnerBinding(accountId, request["owner"]);
+    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    Json::Value args; args["account_id"] = accountId; args["owner"] = request["owner"];
+    args["expires_at_ms"] = Json::UInt64(expiry);
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
+    const auto value = viewCall(rpc, config_.contractId, "owner_registration_signing_payload", args);
+    Json::Value response; response["payload"] = value; response["account_id"] = accountId;
+    return response;
+}
+
+Json::Value Service::registerOwner(const Json::Value &request) {
+    if (!request["account_id"].isString() || !request["owner"].isObject() || !request["signature"].isString())
+        throw std::invalid_argument("account_id, owner, and signature are required");
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    const auto accountId = request["account_id"].asString();
+    validateAccountOwnerBinding(accountId, request["owner"]);
+    const auto current = ownerStatus(accountId);
+    if (current["registered"].asBool()) {
+        if (current["owner"] != request["owner"]) throw std::invalid_argument("account is already registered to a different wallet key");
+        Json::Value response; response["account_id"] = accountId; response["status"] = "already_registered";
+        return response;
+    }
+    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
+    if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
+    if (config_.ownerRegistrationDepositYocto.empty()) throw std::runtime_error("owner registration sponsorship is not configured");
+    const auto deposit = u128(Json::Value(config_.ownerRegistrationDepositYocto), "owner registration storage deposit");
+    if (deposit == 0 || deposit > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 10'000)
+        throw std::runtime_error("owner registration storage deposit must be between 0 and 0.01 NEAR");
+    Json::Value storageArgs; storageArgs["account_id"] = accountId;
+    const auto storage = relayCall(config_, "storage_deposit_for", storageArgs, deposit);
+    Json::Value registerArgs; registerArgs["account_id"] = accountId; registerArgs["owner"] = request["owner"];
+    registerArgs["expires_at_ms"] = Json::UInt64(expiry); registerArgs["signature"] = request["signature"];
+    const auto registration = relayCall(config_, "register_owner", registerArgs);
+    Json::Value response; response["account_id"] = accountId; response["status"] = "registered";
+    response["storage_transaction_hash"] = storage["transaction_hash"];
+    response["registration_transaction_hash"] = registration["transaction_hash"];
+    return response;
+}
 
 Json::Value Service::createOpenQuote(const Json::Value &request) const {
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);

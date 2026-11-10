@@ -1,0 +1,9 @@
+.setup-screen { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #0c1016; color: #f4f6f8; }
+.setup-content { display: grid; justify-items: center; text-align: center; }
+.setup-logo { width: 68px; height: 68px; object-fit: contain; margin-bottom: 28px; }
+.setup-spinner { width: 24px; height: 24px; border: 2px solid #263240; border-top-color: #0065d2; border-radius: 50%; animation: setup-spin .8s linear infinite; }
+.setup-content h1 { margin: 20px 0 7px; font-size: 25px; font-weight: 570; letter-spacing: -.04em; }
+.setup-content p { margin: 0; color: #929ba7; font-size: 14px; }
+.setup-content button { margin-top: 20px; border: 0; border-radius: 9px; background: #0065d2; color: white; padding: 9px 16px; cursor: pointer; }
+@keyframes setup-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .setup-spinner { animation-duration: 2s; } }

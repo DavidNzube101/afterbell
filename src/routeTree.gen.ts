@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MarketsRouteImport } from './routes/markets'
+import { Route as SettingUpRouteImport } from './routes/setting-up'
 import { Route as TradeRouteImport } from './routes/trade'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const MarketsRoute = MarketsRouteImport.update({
   path: '/markets',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingUpRoute = SettingUpRouteImport.update({
+  id: '/setting-up',
+  path: '/setting-up',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TradeRoute = TradeRouteImport.update({
   id: '/trade',
   path: '/trade',
@@ -32,30 +38,34 @@ const TradeRoute = TradeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/markets': typeof MarketsRoute
+  '/setting-up': typeof SettingUpRoute
   '/trade': typeof TradeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/markets': typeof MarketsRoute
+  '/setting-up': typeof SettingUpRoute
   '/trade': typeof TradeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/markets': typeof MarketsRoute
+  '/setting-up': typeof SettingUpRoute
   '/trade': typeof TradeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/markets' | '/trade'
+  fullPaths: '/' | '/markets' | '/setting-up' | '/trade'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/markets' | '/trade'
-  id: '__root__' | '/' | '/markets' | '/trade'
+  to: '/' | '/markets' | '/setting-up' | '/trade'
+  id: '__root__' | '/' | '/markets' | '/setting-up' | '/trade'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   MarketsRoute: typeof MarketsRoute
+  SettingUpRoute: typeof SettingUpRoute
   TradeRoute: typeof TradeRoute
 }
 
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/setting-up': {
+      id: '/setting-up'
+      path: '/setting-up'
+      fullPath: '/setting-up'
+      preLoaderRoute: typeof SettingUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/trade': {
       id: '/trade'
       path: '/trade'
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   MarketsRoute: MarketsRoute,
+  SettingUpRoute: SettingUpRoute,
   TradeRoute: TradeRoute,
 }
 export const routeTree = rootRouteImport

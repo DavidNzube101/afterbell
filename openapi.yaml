@@ -9,6 +9,7 @@ servers:
 tags:
   - name: Health
   - name: Waitlist
+  - name: Accounts
 paths:
   /health/live:
     get:
@@ -42,6 +43,106 @@ paths:
                   status: { type: string, const: ready }
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/account/owner/status:
+    post:
+      tags: [Accounts]
+      operationId: getA1OwnerStatus
+      summary: Check whether an A1 logical account has a registered owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id]
+              properties:
+                account_id: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: Current owner state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account_id, registered]
+                properties:
+                  account_id: { type: string }
+                  registered: { type: boolean }
+                  owner: { $ref: '#/components/schemas/A1OwnerKey' }
+        '422': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/account/owner/payload:
+    post:
+      tags: [Accounts]
+      operationId: getA1OwnerRegistrationPayload
+      summary: Fetch the exact domain-bound message that a wallet must sign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id, owner, expires_at_ms]
+              properties:
+                account_id: { type: string, maxLength: 128 }
+                owner: { $ref: '#/components/schemas/A1OwnerKey' }
+                expires_at_ms: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: A1 signature payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account_id, payload]
+                properties:
+                  account_id: { type: string }
+                  payload:
+                    type: object
+                    required: [message, nonce, recipient]
+                    properties:
+                      message: { type: string }
+                      nonce: { type: string, contentEncoding: base64 }
+                      recipient: { type: string }
+        '422': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/account/owner/register:
+    post:
+      tags: [Accounts]
+      operationId: registerA1Owner
+      summary: Relay a wallet-signed A1 owner registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id, owner, expires_at_ms, signature]
+              properties:
+                account_id: { type: string, maxLength: 128 }
+                owner: { $ref: '#/components/schemas/A1OwnerKey' }
+                expires_at_ms: { type: integer, format: int64 }
+                signature: { type: string, contentEncoding: base64 }
+      responses:
+        '200':
+          description: Owner registered or already registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account_id, status]
+                properties:
+                  account_id: { type: string }
+                  status: { type: string, enum: [registered, already_registered] }
+                  storage_transaction_hash: { type: string }
+                  registration_transaction_hash: { type: string }
+        '422': { $ref: '#/components/responses/BadRequest' }
+        '429':
+          description: Rolling sponsorship quota reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/waitlist/username/check:
     get:
       tags: [Waitlist]
@@ -161,6 +262,32 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
 components:
   schemas:
+    A1OwnerKey:
+      oneOf:
+        - type: object
+          required: [SolanaEd25519]
+          properties:
+            SolanaEd25519:
+              type: object
+              required: [public_key]
+              properties:
+                public_key: { type: array, minItems: 32, maxItems: 32, items: { type: integer, minimum: 0, maximum: 255 } }
+        - type: object
+          required: [Ethereum]
+          properties:
+            Ethereum:
+              type: object
+              required: [address]
+              properties:
+                address: { type: array, minItems: 20, maxItems: 20, items: { type: integer, minimum: 0, maximum: 255 } }
+        - type: object
+          required: [NearEd25519]
+          properties:
+            NearEd25519:
+              type: object
+              required: [public_key]
+              properties:
+                public_key: { type: array, minItems: 32, maxItems: 32, items: { type: integer, minimum: 0, maximum: 255 } }
     ClaimUsernameRequest:
       type: object
       additionalProperties: false

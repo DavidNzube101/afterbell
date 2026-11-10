@@ -18,6 +18,7 @@ struct Config {
     std::string relayerAccountId;
     std::string relayerPrivateKey;
     std::string quoteSignerPrivateKey;
+    std::string ownerRegistrationDepositYocto;
     std::uint16_t feeBps;
 };
 
@@ -35,6 +36,9 @@ class Service {
     Json::Value submitLimitOrder(const Json::Value &request);
     Json::Value createLimitCancelMessage(const Json::Value &request) const;
     Json::Value cancelLimitOrder(const Json::Value &request);
+    Json::Value ownerStatus(const std::string &accountId) const;
+    Json::Value ownerRegistrationPayload(const Json::Value &request) const;
+    Json::Value registerOwner(const Json::Value &request);
     void startLimitWorker();
     void stopLimitWorker();
 

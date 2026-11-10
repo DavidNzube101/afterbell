@@ -11,7 +11,12 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/hot-wallet": "^10.1.4",
+    "@near-wallet-selector/nightly": "^10.1.4",
     "@tanstack/react-router": "^1.170.46",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "simple-icons": "^16.36.0"

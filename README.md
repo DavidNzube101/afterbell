@@ -50,6 +50,13 @@ The TanStack React dapp is served from this repository root. Its API requests us
 development, while Vercel forwards them to `https://api.afterbellfx.xyz`. This
 keeps browser requests same-origin and avoids requiring cross-origin API access.
 
+The dapp connects Solana, EVM, and NEAR wallets and uses each chain's native
+message-signing format to register the wallet as the owner of an A1 logical
+account. First-time account setup is relayed by the backend, which sponsors
+bounded NEAR storage for the A1 owner record. Configure the frontend's
+`VITE_NEAR_NETWORK` and `VITE_A1_CONTRACT_ID` to match the API deployment, and
+set `OWNER_REGISTRATION_STORAGE_DEPOSIT_YOCTO` on the API service.
+
 For local frontend development, run the API on port `8080`, then:
 
 ```sh

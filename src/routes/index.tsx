@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import { useWalletSession, type WalletChain as AdapterChain } from '../lib/wallet-session'
 import logo from '../assets/afterbell-logo.png'
 import phantomIcon from '../assets/wallet-icons/phantom.jpeg'
 import solflareIcon from '../assets/wallet-icons/solflare.jpeg'
@@ -129,9 +130,18 @@ function Dots({ count }: { count: 2 | 3 }) {
 
 function AuthPage() {
   const navigate = useNavigate()
+  const { session, connect, connecting } = useWalletSession()
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [selectedChain, setSelectedChain] = useState<WalletChain | null>(null)
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward' | null>(null)
+  const [walletError, setWalletError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (session) void navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
+  // A saved wallet is handled once at page entry. A fresh connection below
+  // chooses either first-time setup or the core app explicitly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -165,9 +175,19 @@ function AuthPage() {
     setSelectedChain(null)
   }
 
-  const continueWithWallet = () => {
-    closeWalletModal()
-    void navigate({ to: '/trade', search: { market: undefined, side: undefined } })
+  const continueWithWallet = async (walletName: string) => {
+    if (!selectedChain) return
+    setWalletError(null)
+    try {
+      const chain = selectedChain === 'Solana' ? 'solana' : selectedChain === 'EVM' ? 'evm' : 'near'
+      await connect(chain as AdapterChain, walletName)
+      closeWalletModal()
+      const firstTime = sessionStorage.getItem('afterbell.first-time-setup') === 'true'
+      if (firstTime) await navigate({ to: '/setting-up' })
+      else await navigate({ to: '/trade', search: { market: undefined, side: undefined } })
+    } catch (error) {
+      setWalletError(error instanceof Error ? error.message : 'Could not connect wallet')
+    }
   }
 
   return (
@@ -227,7 +247,7 @@ function AuthPage() {
               {selectedChain ? (
                 <div className="wallet-options" aria-label={`${selectedChain} wallets`}>
                   {walletCatalog[selectedChain].map((wallet) => (
-                    <button className="wallet-option" key={wallet.name} type="button" onClick={continueWithWallet}>
+                    <button className="wallet-option" key={wallet.name} type="button" disabled={connecting} onClick={() => void continueWithWallet(wallet.name)}>
                       <img src={wallet.icon} alt="" />
                       <span>{wallet.name}</span>
                       <svg className="wallet-option-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -249,6 +269,8 @@ function AuthPage() {
                   ))}
                 </div>
               )}
+              {connecting && <p className="wallet-feedback">Connect your wallet and approve the Afterbell owner signature.</p>}
+              {walletError && <p className="wallet-error" role="alert">{walletError}</p>}
             </div>
           </section>
         </div>
