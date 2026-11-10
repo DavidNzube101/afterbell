@@ -137,11 +137,6 @@ paths:
                   storage_transaction_hash: { type: string }
                   registration_transaction_hash: { type: string }
         '422': { $ref: '#/components/responses/BadRequest' }
-        '429':
-          description: Rolling sponsorship quota reached
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/waitlist/username/check:
     get:

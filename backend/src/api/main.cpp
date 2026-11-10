@@ -152,54 +152,6 @@ bool databaseReady(const std::string &connectionString) {
     return PQping(connectionString.c_str()) == PQPING_OK;
 }
 
-void ensureOwnerSponsorQuotaTable(const std::string &connectionString) {
-    PGconn *connection = PQconnectdb(connectionString.c_str());
-    if (!connection || PQstatus(connection) != CONNECTION_OK) {
-        if (connection) PQfinish(connection);
-        throw std::runtime_error("could not connect to PostgreSQL for account sponsorship quotas");
-    }
-    PGresult *result = PQexec(connection,
-        "CREATE TABLE IF NOT EXISTS owner_registration_sponsorships (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now())");
-    const bool ok = result && PQresultStatus(result) == PGRES_COMMAND_OK;
-    if (result) PQclear(result);
-    PQfinish(connection);
-    if (!ok) throw std::runtime_error("could not initialize owner registration sponsorship quotas");
-}
-
-bool reserveOwnerSponsorQuota(const std::string &connectionString) {
-    PGconn *connection = PQconnectdb(connectionString.c_str());
-    if (!connection || PQstatus(connection) != CONNECTION_OK) {
-        if (connection) PQfinish(connection);
-        throw std::runtime_error("could not connect to PostgreSQL for account sponsorship quotas");
-    }
-    const auto exec = [connection](const char *sql) {
-        PGresult *result = PQexec(connection, sql);
-        const bool ok = result && (PQresultStatus(result) == PGRES_COMMAND_OK || PQresultStatus(result) == PGRES_TUPLES_OK);
-        if (result) PQclear(result);
-        return ok;
-    };
-    if (!exec("BEGIN") || !exec("SELECT pg_advisory_xact_lock(42011026)")) {
-        exec("ROLLBACK"); PQfinish(connection);
-        throw std::runtime_error("could not check owner registration sponsorship quota");
-    }
-    PGresult *countResult = PQexec(connection,
-        "SELECT count(*) FROM owner_registration_sponsorships WHERE created_at > now() - interval '24 hours'");
-    if (!countResult || PQresultStatus(countResult) != PGRES_TUPLES_OK) {
-        if (countResult) PQclear(countResult);
-        exec("ROLLBACK"); PQfinish(connection);
-        throw std::runtime_error("could not read owner registration sponsorship quota");
-    }
-    const auto count = std::strtoul(PQgetvalue(countResult, 0, 0), nullptr, 10);
-    PQclear(countResult);
-    if (count >= 25) { exec("ROLLBACK"); PQfinish(connection); return false; }
-    const bool inserted = exec("INSERT INTO owner_registration_sponsorships DEFAULT VALUES");
-    const bool committed = inserted && exec("COMMIT");
-    if (!committed) exec("ROLLBACK");
-    PQfinish(connection);
-    if (!committed) throw std::runtime_error("could not reserve owner registration sponsorship quota");
-    return true;
-}
-
 Json::Value errorBody(const std::string &code, const std::string &message) {
     Json::Value body;
     body["error"]["code"] = code;
@@ -264,7 +216,6 @@ int main() {
 
         const auto databaseUrl = env("DATABASE_URL");
         if (!databaseUrl) throw std::runtime_error("DATABASE_URL is required");
-        ensureOwnerSponsorQuotaTable(*databaseUrl);
         const auto network = env("NEAR_NETWORK");
         const auto contractId = env("A1_CONTRACT_ID");
         if (!network || !contractId) {
@@ -460,7 +411,7 @@ int main() {
             }, {drogon::Post});
         drogon::app().registerHandler(
             "/v1/account/owner/register",
-            [accountService, databaseUrl = *databaseUrl](const drogon::HttpRequestPtr &request,
+            [accountService](const drogon::HttpRequestPtr &request,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!accountService) {
                     auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
@@ -469,14 +420,6 @@ int main() {
                 try {
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
-                    if (!(*input)["account_id"].isString()) throw std::invalid_argument("account_id is required");
-                    const auto accountId = (*input)["account_id"].asString();
-                    const auto ownerState = accountService->ownerStatus(accountId);
-                    if (!ownerState["registered"].asBool() && !reserveOwnerSponsorQuota(databaseUrl)) {
-                        Json::Value body = errorBody("sponsorship_limit", "New account setup has reached its rolling 24-hour sponsorship limit");
-                        auto response = drogon::HttpResponse::newHttpJsonResponse(body);
-                        response->setStatusCode(drogon::k429TooManyRequests); callback(response); return;
-                    }
                     callback(drogon::HttpResponse::newHttpJsonResponse(accountService->registerOwner(*input)));
                 } catch (const std::exception &error) {
                     auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("owner_registration_failed", error.what()));

@@ -1,46 +1,125 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
+import { markets } from '../data/markets'
 import { useWalletSession } from '../lib/wallet-session'
 import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
 
+function Icon({ kind, size = 16 }: { kind: 'spark' | 'shield' | 'check' | 'left' | 'right' | 'down'; size?: number }) {
+  const paths = {
+    spark: <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 14 .9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9L19 14Z"/></>,
+    shield: <><path d="M12 3 20 6v5c0 5-3.4 8.3-8 10-4.6-1.7-8-5-8-10V6l8-3Z"/><path d="m9 12 2 2 4-4"/></>,
+    check: <path d="m5 12 4 4L19 6"/>,
+    left: <><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></>,
+    right: <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
+    down: <path d="m6 9 6 6 6-6"/>,
+  }
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>
+}
+
 function SettingUpPage() {
   const navigate = useNavigate()
   const { session } = useWalletSession()
-  const [message, setMessage] = useState('Preparing your account')
+  const [step, setStep] = useState(0)
+  const [usernameMode, setUsernameMode] = useState<'new' | 'reclaim'>('new')
+  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(['NVDA', 'AAPL'])
+  const [leverage, setLeverage] = useState(3)
 
   useEffect(() => {
-    if (!session) {
-      void navigate({ to: '/', replace: true })
-      return
-    }
-    let active = true
-    const prepare = async () => {
-      try {
-        const response = await fetch('/api/v1/markets', { headers: { Accept: 'application/json' } })
-        if (!response.ok) throw new Error('Afterbell services are not available right now')
-        await response.json()
-        if (!active) return
-        setMessage('Your account is ready')
-        await new Promise(resolve => window.setTimeout(resolve, 650))
-        if (active) await navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
-      } catch {
-        if (active) setMessage('Could not finish setup. Please try again.')
-      }
-    }
-    void prepare()
-    return () => { active = false }
+    if (!session) void navigate({ to: '/', replace: true })
   }, [session, navigate])
 
-  return <main className="setup-screen">
-    <div className="setup-content">
-      <img className="setup-logo" src={logo} alt="Afterbell" />
-      <div className="setup-spinner" aria-hidden="true" />
-      <h1>Setting up</h1>
-      <p>{message}</p>
-      {message.startsWith('Could not') && <button onClick={() => window.location.reload()}>Try again</button>}
-    </div>
+  const toggleMarket = (ticker: string) => setSelectedMarkets(current =>
+    current.includes(ticker) ? current.filter(item => item !== ticker) : [...current, ticker],
+  )
+
+  if (!session) return null
+
+  return <main className="onboarding-screen">
+    <header className="onboarding-header">
+      <a className="onboarding-brand" href="/" aria-label="Afterbell home">
+        <img src={logo} alt="" />
+        <span>Afterbell</span>
+      </a>
+      <div className="onboarding-account" title={session.address}>
+        <span className="onboarding-account-dot" />
+        <span>{session.walletName}</span>
+        <span className="onboarding-account-divider" />
+        <span>{session.address.slice(0, 6)}…{session.address.slice(-4)}</span>
+      </div>
+    </header>
+
+    <section className="onboarding-main" aria-label="Account setup">
+      <div className="onboarding-intro">
+        <div className="onboarding-kicker"><Icon kind="spark" size={14} /> YOUR AFTERBELL ACCOUNT</div>
+        <h1>Let’s set things up.</h1>
+        <p>Choose how you want to show up, then shape the permissions for your trading agent.</p>
+      </div>
+
+      <div className="onboarding-progress" aria-label={`Step ${step + 1} of 2`}>
+        <div className="onboarding-progress-track"><span style={{ transform: `translateX(${step * 100}%)` }} /></div>
+        <div className="onboarding-step-labels">
+          <span className={step === 0 ? 'is-current' : 'is-done'}><b>{step > 0 ? <Icon kind="check" size={13} /> : '01'}</b> Username</span>
+          <span className={step === 1 ? 'is-current' : ''}><b>02</b> Agent</span>
+        </div>
+      </div>
+
+      <div className="onboarding-carousel-viewport">
+        <div className="onboarding-carousel" style={{ transform: `translateX(-${step * 100}%)` }}>
+          <article className="onboarding-slide" aria-hidden={step !== 0}>
+            <div className="onboarding-card-heading">
+              <div className="onboarding-icon-box"><span>@</span></div>
+              <div><h2>Choose your username</h2><p>This is how people will find you on Afterbell.</p></div>
+            </div>
+
+            <div className="username-mode-switch" role="tablist" aria-label="Username option">
+              <button className={usernameMode === 'new' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'new'} onClick={() => setUsernameMode('new')}>Choose a username</button>
+              <button className={usernameMode === 'reclaim' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'reclaim'} onClick={() => setUsernameMode('reclaim')}>Reclaim waitlist name</button>
+            </div>
+
+            {usernameMode === 'new' ? <div className="username-form-preview">
+              <label htmlFor="onboarding-username">Username</label>
+              <div className="username-input-wrap"><span>@</span><input id="onboarding-username" placeholder="yourname" autoComplete="off" /></div>
+              <p>3–20 characters: lowercase letters, numbers, and underscores.</p>
+            </div> : <div className="username-form-preview reclaim-preview">
+              <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
+              <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" /></div>
+              <p>We’ll look up the username you reserved with this email.</p>
+            </div>}
+
+            <div className="onboarding-note"><Icon kind="shield" size={16} /><span>Your wallet stays in control of your account.</span></div>
+          </article>
+
+          <article className="onboarding-slide agent-slide" aria-hidden={step !== 1}>
+            <div className="onboarding-card-heading">
+              <div className="onboarding-icon-box"><Icon kind="spark" size={19} /></div>
+              <div><h2>Set up your agent</h2><p>Give it a name and choose what it’s allowed to do.</p></div>
+            </div>
+
+            <div className="agent-name-field"><label htmlFor="agent-name">Agent name</label><input id="agent-name" placeholder="My trading agent" /></div>
+            <div className="agent-markets-field">
+              <div className="agent-field-title"><label>Markets it can trade</label><span>{selectedMarkets.length} selected</span></div>
+              <div className="agent-market-options">{markets.map(market => <button type="button" key={market.ticker} className={selectedMarkets.includes(market.ticker) ? 'selected' : ''} onClick={() => toggleMarket(market.ticker)} aria-pressed={selectedMarkets.includes(market.ticker)}><span>{market.ticker}-USDC</span>{selectedMarkets.includes(market.ticker) && <Icon kind="check" size={14} />}</button>)}</div>
+            </div>
+            <div className="agent-limits-grid">
+              <label className="agent-limit-control"><span>Maximum leverage</span><strong>{leverage}×</strong><input aria-label="Maximum leverage" type="range" min="1" max="10" value={leverage} onChange={event => setLeverage(Number(event.target.value))} /></label>
+              <label className="agent-limit-control"><span>Position limit</span><div className="agent-select-value">$1,000 <Icon kind="down" size={14} /></div></label>
+              <label className="agent-limit-control"><span>Daily loss limit</span><div className="agent-select-value">$250 <Icon kind="down" size={14} /></div></label>
+              <label className="agent-limit-control"><span>Access duration</span><div className="agent-select-value">30 days <Icon kind="down" size={14} /></div></label>
+            </div>
+            <div className="onboarding-note"><Icon kind="shield" size={16} /><span>Your agent gets limited permissions. You can revoke access at any time.</span></div>
+          </article>
+        </div>
+      </div>
+
+      <div className="onboarding-controls">
+        <button className="onboarding-back" type="button" onClick={() => setStep(0)} disabled={step === 0}><Icon kind="left" size={16} /> Back</button>
+        <div className="onboarding-dots" aria-hidden="true"><span className={step === 0 ? 'active' : ''} /><span className={step === 1 ? 'active' : ''} /></div>
+        <button className="onboarding-next" type="button" onClick={() => setStep(1)} disabled={step === 1}>Continue <Icon kind="right" size={16} /></button>
+      </div>
+      <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
+    </section>
   </main>
 }
