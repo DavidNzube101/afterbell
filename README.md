@@ -10,7 +10,28 @@
 ![Bun](https://img.shields.io/badge/Bun-1.4-f9f1e1?logo=bun&logoColor=000000)
 ![NEAR Protocol](https://img.shields.io/badge/Chain-NEAR%20Protocol-00C08B?logo=near&logoColor=white)
 
-Afterbell is the open source trading dapp monorepo. The public landing page remains in `../landing`; it calls the separate landing server documented in [`openapi.yaml`](./openapi.yaml). The trading frontend lives at this repository root, with C++ workers in `backend/` and NEAR contracts in `contracts/`.
+Afterbell is an open-source perpetuals trading dapp for synthetic US equity markets. Users connect a supported wallet, fund a shared A1 account with USDC, and open long or short positions against oracle-priced markets. A1 manages account ownership, margin, positions, limits, and shared liquidity on NEAR. The market registry is extensible; the initial launch markets are NVDA, AAPL, GOOGL, META, and TSLA.
+
+The project is built in the open. This public repository contains the React dapp, C++ API and workers, and Rust NEAR contracts so builders can inspect the implementation, follow development, and contribute.
+
+## Try Afterbell on testnet
+
+The dapp is live on NEAR Testnet at **[testnet.afterbellfx.xyz](https://testnet.afterbellfx.xyz)**. Testnet assets have no monetary value.
+
+To get test USDC, open [Circle's Testnet Faucet](https://faucet.circle.com/), choose **USDC** and **Near Testnet**, then enter your NEAR Testnet account ID. Circle currently allows 20 test USDC per address and network every two hours. Make sure the wallet and faucet are both set to NEAR Testnet.
+
+| | Link |
+|---|---|
+| Dapp | [testnet.afterbellfx.xyz](https://testnet.afterbellfx.xyz) |
+| Website | [afterbellfx.xyz](https://afterbellfx.xyz) |
+| X | [@afterbellfx](https://x.com/afterbellfx) |
+| Source code | [github.com/DavidNzube101/afterbell](https://github.com/DavidNzube101/afterbell) |
+
+Afterbell is in active development. Testnet behavior, market availability, and displayed prices may change as the contracts and trading infrastructure evolve.
+
+## About this repository
+
+The public landing page is at [afterbellfx.xyz](https://afterbellfx.xyz). This repository contains the trading frontend at its root, C++ workers in `backend/`, and NEAR contracts in `contracts/`.
 
 ## Repository layout
 
@@ -38,9 +59,7 @@ bun run dev
 
 To point the local dapp at the deployed API instead, copy `.env.example` to
 `.env.local` and set `VITE_API_PROXY_TARGET=https://api.afterbellfx.xyz`.
-Production Vercel settings use the repository root, `bun run build`, and `dist`
-as the output directory. Add `testnet.afterbellfx.xyz` to the Vercel project's
-Domains and configure the DNS record Vercel provides.
+Vercel builds this repository root with `bun run build` and serves `dist`.
 
 ## C++ API and workers
 
