@@ -146,8 +146,8 @@ function SettingUpPage() {
     </section>
 
     {walletModalOpen && <div className="onboarding-wallet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setWalletModalOpen(false) }}>
-      <section className="onboarding-wallet-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-wallet-title">
-        <header><div><span className="onboarding-wallet-chain">{session.chain === 'near' ? 'NEAR' : session.chain === 'evm' ? 'EVM' : 'Solana'} wallet</span><h2 id="onboarding-wallet-title">Connected wallet</h2></div><button type="button" className="onboarding-wallet-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header>
+      <section className="onboarding-wallet-modal" role="dialog" aria-modal="true" aria-label="Wallet details">
+        <header><button type="button" className="onboarding-wallet-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header>
         <dl><div><dt>Chain</dt><dd>{session.chain === 'near' ? 'NEAR' : session.chain === 'evm' ? 'EVM' : 'Solana'}</dd></div><div><dt>Wallet</dt><dd>{session.walletName}</dd></div><div><dt>Address</dt><dd className="onboarding-wallet-address">{session.address}</dd></div></dl>
         <footer><button type="button" className="onboarding-wallet-copy" onClick={() => void copyAddress(session.address)}>Copy address</button><button type="button" className="onboarding-wallet-disconnect" onClick={() => void disconnectWallet()}>Disconnect</button></footer>
       </section>
