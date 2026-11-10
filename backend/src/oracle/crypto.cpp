@@ -160,7 +160,10 @@ std::vector<std::uint8_t> eip191Sign(const std::string &message, const std::stri
     int parity = -1;
     for (int candidate=0;candidate<2;++candidate) if (recoveredKeyMatches(group.get(), ctx.get(), r, lowS.get(), digest.data(), candidate, expected)) { parity=candidate; break; }
     if (parity < 0) throw std::runtime_error("could not derive EVM signature recovery id");
-    out[64] = static_cast<std::uint8_t>(parity ^ (flipped ? 1 : 0));
+    // `parity` was recovered using the normalized low-S value. It already
+    // matches the signature bytes we return, so do not flip it again when the
+    // original ECDSA result had high-S.
+    out[64] = static_cast<std::uint8_t>(parity);
     return out;
 }
 
