@@ -174,9 +174,14 @@ button, a { font: inherit; }
   border-color: #11171f;
   background: #11171f;
 }
+.wallet-option {
+  border-color: #151c25;
+  background: #151c25;
+}
 .chain-option:hover,
 .wallet-option:hover { transform: translateY(-1px); border-color: #34475c; background: #1a2531; }
 .chain-option:hover { border-color: #273441; background: #141b24; }
+.wallet-option:hover { border-color: #1a2531; background: #1a2531; }
 .chain-option-icon {
   display: block;
   width: 40px;
