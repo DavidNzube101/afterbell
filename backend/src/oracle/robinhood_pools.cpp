@@ -75,8 +75,8 @@ std::int32_t slotTick(const std::string &data) {
 std::uint64_t tickPriceE8(std::int32_t tick, bool quoteIsToken1,
                           std::uint8_t assetDecimals, std::uint8_t quoteDecimals) {
     long double ratio=std::pow(1.0001L,static_cast<long double>(tick));
-    ratio*=std::pow(10.0L,static_cast<int>(assetDecimals)-static_cast<int>(quoteDecimals));
-    const auto price=quoteIsToken1?ratio:1.0L/ratio;
+    const auto price=(quoteIsToken1?ratio:1.0L/ratio)*
+        std::pow(10.0L,static_cast<int>(assetDecimals)-static_cast<int>(quoteDecimals));
     const auto scaled=price*100'000'000.0L;
     if(!std::isfinite(scaled)||scaled<1.0L||scaled>static_cast<long double>(UINT64_MAX))throw std::runtime_error("Uniswap pool produced an invalid stock price");
     return static_cast<std::uint64_t>(std::llround(scaled));
