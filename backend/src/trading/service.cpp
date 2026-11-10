@@ -389,16 +389,24 @@ Json::Value Service::registerOwner(const Json::Value &request) {
     const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
     if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
     if (config_.ownerRegistrationDepositYocto.empty()) throw std::runtime_error("owner registration sponsorship is not configured");
-    const auto deposit = u128(Json::Value(config_.ownerRegistrationDepositYocto), "owner registration storage deposit");
-    if (deposit == 0 || deposit > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 10'000)
-        throw std::runtime_error("owner registration storage deposit must be between 0 and 0.01 NEAR");
+    const auto storageCreditTarget = u128(Json::Value(config_.ownerRegistrationDepositYocto), "owner registration storage credit target");
+    if (storageCreditTarget == 0 || storageCreditTarget > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 10'000)
+        throw std::runtime_error("owner registration storage credit target must be between 0 and 0.01 NEAR");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
     Json::Value storageArgs; storageArgs["account_id"] = accountId;
-    const auto storage = relayCall(config_, "storage_deposit_for", storageArgs, deposit);
+    const auto currentCredit = u128(
+        viewCall(rpc, config_.contractId, "storage_credit_of", storageArgs),
+        "owner registration storage credit");
+    const auto topUp = currentCredit >= storageCreditTarget ? 0 : storageCreditTarget - currentCredit;
+    Json::Value storage;
+    if (topUp > 0) storage = relayCall(config_, "storage_deposit_for", storageArgs, topUp);
     Json::Value registerArgs; registerArgs["account_id"] = accountId; registerArgs["owner"] = request["owner"];
     registerArgs["expires_at_ms"] = Json::UInt64(expiry); registerArgs["signature"] = request["signature"];
     const auto registration = relayCall(config_, "register_owner", registerArgs);
     Json::Value response; response["account_id"] = accountId; response["status"] = "registered";
-    response["storage_transaction_hash"] = storage["transaction_hash"];
+    if (topUp > 0) response["storage_transaction_hash"] = storage["transaction_hash"];
+    response["storage_top_up_yocto"] = decimal(topUp);
     response["registration_transaction_hash"] = registration["transaction_hash"];
     return response;
 }

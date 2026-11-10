@@ -134,6 +134,7 @@ paths:
                 properties:
                   account_id: { type: string }
                   status: { type: string, enum: [registered, already_registered] }
+                  storage_top_up_yocto: { type: string }
                   storage_transaction_hash: { type: string }
                   registration_transaction_hash: { type: string }
         '422': { $ref: '#/components/responses/BadRequest' }
