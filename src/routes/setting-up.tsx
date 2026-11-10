@@ -1,15 +1,16 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
+import ottoLogo from '../assets/afterbell-otto-logo.png'
 import { markets } from '../data/markets'
 import { useWalletSession } from '../lib/wallet-session'
+import { useToasts } from '../lib/toasts'
 import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
 
-function Icon({ kind, size = 16 }: { kind: 'spark' | 'shield' | 'check' | 'left' | 'right' | 'down'; size?: number }) {
+function Icon({ kind, size = 16 }: { kind: 'shield' | 'check' | 'left' | 'right' | 'down'; size?: number }) {
   const paths = {
-    spark: <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 14 .9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9L19 14Z"/></>,
     shield: <><path d="M12 3 20 6v5c0 5-3.4 8.3-8 10-4.6-1.7-8-5-8-10V6l8-3Z"/><path d="m9 12 2 2 4-4"/></>,
     check: <path d="m5 12 4 4L19 6"/>,
     left: <><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></>,
@@ -21,8 +22,10 @@ function Icon({ kind, size = 16 }: { kind: 'spark' | 'shield' | 'check' | 'left'
 
 function SettingUpPage() {
   const navigate = useNavigate()
-  const { session } = useWalletSession()
+  const { session, disconnect } = useWalletSession()
+  const { showToast } = useToasts()
   const [step, setStep] = useState(0)
+  const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [usernameMode, setUsernameMode] = useState<'new' | 'reclaim'>('new')
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>(['NVDA', 'AAPL'])
   const [leverage, setLeverage] = useState(3)
@@ -31,9 +34,33 @@ function SettingUpPage() {
     if (!session) void navigate({ to: '/', replace: true })
   }, [session, navigate])
 
+  useEffect(() => {
+    if (!walletModalOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setWalletModalOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [walletModalOpen])
+
   const toggleMarket = (ticker: string) => setSelectedMarkets(current =>
     current.includes(ticker) ? current.filter(item => item !== ticker) : [...current, ticker],
   )
+
+  const copyAddress = async (address: string) => {
+    try {
+      await navigator.clipboard.writeText(address)
+      showToast('success', 'Wallet address copied.')
+    } catch {
+      showToast('error', 'Could not copy the wallet address.')
+    }
+  }
+
+  const disconnectWallet = async () => {
+    await disconnect()
+    setWalletModalOpen(false)
+    await navigate({ to: '/', replace: true })
+  }
 
   if (!session) return null
 
@@ -43,17 +70,13 @@ function SettingUpPage() {
         <img src={logo} alt="" />
         <span>Afterbell</span>
       </a>
-      <div className="onboarding-account" title={session.address}>
-        <span className="onboarding-account-dot" />
-        <span>{session.walletName}</span>
-        <span className="onboarding-account-divider" />
-        <span>{session.address.slice(0, 6)}…{session.address.slice(-4)}</span>
-      </div>
+      <button className="onboarding-account" type="button" title="Wallet details" onClick={() => setWalletModalOpen(true)}>
+        {session.address.slice(0, 6)}…{session.address.slice(-4)}
+      </button>
     </header>
 
     <section className="onboarding-main" aria-label="Account setup">
       <div className="onboarding-intro">
-        <div className="onboarding-kicker"><Icon kind="spark" size={14} /> YOUR AFTERBELL ACCOUNT</div>
         <h1>Let’s set things up.</h1>
         <p>Choose how you want to show up, then shape the permissions for your trading agent.</p>
       </div>
@@ -89,12 +112,12 @@ function SettingUpPage() {
               <p>We’ll look up the username you reserved with this email.</p>
             </div>}
 
-            <div className="onboarding-note"><Icon kind="shield" size={16} /><span>Your wallet stays in control of your account.</span></div>
+            <div className="onboarding-note"><span>Your wallet stays in control of your account.</span></div>
           </article>
 
           <article className="onboarding-slide agent-slide" aria-hidden={step !== 1}>
             <div className="onboarding-card-heading">
-              <div className="onboarding-icon-box"><Icon kind="spark" size={19} /></div>
+              <div className="onboarding-icon-box"><img className="agent-otto-logo" src={ottoLogo} alt="" /></div>
               <div><h2>Set up your agent</h2><p>Give it a name and choose what it’s allowed to do.</p></div>
             </div>
 
@@ -121,5 +144,13 @@ function SettingUpPage() {
       </div>
       <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
     </section>
+
+    {walletModalOpen && <div className="onboarding-wallet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setWalletModalOpen(false) }}>
+      <section className="onboarding-wallet-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-wallet-title">
+        <header><div><span className="onboarding-wallet-chain">{session.chain === 'near' ? 'NEAR' : session.chain === 'evm' ? 'EVM' : 'Solana'} wallet</span><h2 id="onboarding-wallet-title">Connected wallet</h2></div><button type="button" className="onboarding-wallet-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header>
+        <dl><div><dt>Chain</dt><dd>{session.chain === 'near' ? 'NEAR' : session.chain === 'evm' ? 'EVM' : 'Solana'}</dd></div><div><dt>Wallet</dt><dd>{session.walletName}</dd></div><div><dt>Address</dt><dd className="onboarding-wallet-address">{session.address}</dd></div></dl>
+        <footer><button type="button" className="onboarding-wallet-copy" onClick={() => void copyAddress(session.address)}>Copy address</button><button type="button" className="onboarding-wallet-disconnect" onClick={() => void disconnectWallet()}>Disconnect</button></footer>
+      </section>
+    </div>}
   </main>
 }
