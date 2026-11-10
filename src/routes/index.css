@@ -169,8 +169,8 @@ button, a { font: inherit; }
   transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
 }
 .chain-option {
-  border-color: #0f141b;
-  background: #0f141b;
+  border-color: #11171f;
+  background: #11171f;
 }
 .chain-option:hover,
 .wallet-option:hover { transform: translateY(-1px); border-color: #34475c; background: #1a2531; }
