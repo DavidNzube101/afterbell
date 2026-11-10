@@ -1,4 +1,14 @@
+![Afterbell project banner](docs/assets/afterbell-banner.png)
+
 # Afterbell
+
+[![CI](https://github.com/DavidNzube101/afterbell/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DavidNzube101/afterbell/actions/workflows/ci.yml)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-contracts-000000?logo=rust&logoColor=white)
+![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+![TanStack Router](https://img.shields.io/badge/TanStack-Router-FF4154?logo=reactquery&logoColor=white)
+![Bun](https://img.shields.io/badge/Bun-1.4-f9f1e1?logo=bun&logoColor=000000)
+![NEAR Protocol](https://img.shields.io/badge/Chain-NEAR%20Protocol-00C08B?logo=near&logoColor=white)
 
 Afterbell is the open source trading dapp monorepo. The public landing page remains in `../landing`; it calls the separate landing server documented in [`openapi.yaml`](./openapi.yaml). The trading frontend lives at this repository root, with C++ workers in `backend/` and NEAR contracts in `contracts/`.
 

@@ -1,0 +1,98 @@
+# Canonical record of deployed Afterbell contracts and state migrations.
+# Keep private keys, seed phrases, RPC credentials, and deployer files out of this file.
+format_version: 1
+
+networks:
+  testnet:
+    network_id: testnet
+    usdc_token_id: 3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
+    active_a1_contract_id: afterbellfx-dev-faucet.testnet
+    verified_code:
+      sha256: 3536b8e887a1c8d36a8d0b4f0e3ce4509f316ff96f2f277863d4e1c9daa3df56
+      verified_at_block_height: 277057514
+    deployments:
+      - component: a1
+        release: initial shared ledger
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: 5UqcRFyCmQuhPdtrVJhsVhVtBnJgdLAe1JxE9SMRDrVf
+        wasm_sha256: null
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: shared signature support
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: 7oUEY62WJ9REoxf5MEQkJR2hjr9L2ToTLpeWjfEAxfiT
+        wasm_sha256: null
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: agent foundation
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: 2Cc8rBcDRerRaehHYH7c2WaypkxrFSMR7Gxn2K3mEAyb
+        wasm_sha256: null
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: signed price and pnl
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: 5emN9iDxsb51KhHqBpAfq7LTY9iFAdfLfsEVoQmCEVmT
+        wasm_sha256: null
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: funded settlement
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: FGhgPfAWfesmfRS4qtu9SYSn9VBYQZ5tb17J6KCLxhHQ
+        wasm_sha256: ce2e1d008d16e7fc11a3d37634f41f2158c5e2261590314f30320f7f9b60c2b4
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: storage credit and owner rotation
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: AVNMYXoHASbmDGqm4nGh3a9otqNPyqHrbKA1pxnb6vAJ
+        wasm_sha256: 565aa13953f141e9bcc0ebc79c97125036cb5eb3d57a6a462cf1a8038305129e
+        wasm_size_bytes: null
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: legacy storage release compatibility
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: Ac2YyRibNc3VkJd9W8up4JpXMyXehVKvSFVCKEmXvErb
+        wasm_sha256: 75accd9d413f84f0da01904c9ef2618a22160fe4626241461ab844dff6195dfe
+        wasm_size_bytes: null
+        source_commit: null
+        deployed_at_utc: null
+      - component: a1
+        release: protocol admin migration support
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: D3AjGHCSQpR8ir73V6ek7UxYRMkM16Axaw6g1vVgV7JC
+        wasm_sha256: 3536b8e887a1c8d36a8d0b4f0e3ce4509f316ff96f2f277863d4e1c9daa3df56
+        source_commit: null
+        deployed_at_utc: null
+    state_migrations:
+      - component: a1
+        method: initialize_protocol_admin
+        contract_id: afterbellfx-dev-faucet.testnet
+        caller_account_id: afterbellfx-dev-faucet.testnet
+        protocol_admin_account_id: afterbellfx-dev-faucet.testnet
+        transaction_id: GN8Yqu2TEmR9icRi9tyG3M6ekRnP5KSCgVuPCN78kk4N
+        result: successful; protocol_admin_account view verified
+        executed_at_utc: null
+
+  mainnet:
+    network_id: mainnet
+    usdc_token_id: 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1
+    active_a1_contract_id: null
+    deployments: []
+    state_migrations: []
+
+historical_experiments:
+  testnet:
+    - component: account factory
+      contract_id: accounts.afterbellfx-dev-faucet.testnet
+      transaction_id: 4tJDB9Nuxkzuh1Kk55mvTycrd5kzEdCyck2fXqnj2YRA
+      status: superseded architecture experiment
+    - component: per user smart account
+      contract_id: alice.accounts.afterbellfx-dev-faucet.testnet
+      transaction_id: DzNR23GL4MQPRg9pBu4nXvSh5XCL4VbUSwiJzrdeCQB3
+      status: superseded architecture experiment

@@ -69,6 +69,17 @@ flow below are historical experiments, not the product architecture.
 
 ### Current testnet deployment
 
+The machine-readable deployment history, including the active A1 account per
+network and state-only migrations, is [`deployments.yaml`](./deployments.yaml).
+Update that file after every contract deploy or upgrade and every state
+migration. Preserve prior entries; append a new record with the network,
+component/release, contract account, transaction ID, UTC timestamp, WASM
+SHA-256 and byte size, and source commit. For state migrations, record the
+method, caller account, transaction ID, and a read-after-write verification.
+After a deploy, query the live contract code hash and update the network's
+`verified_code` snapshot. Use `null` only where historical records do not
+contain the value.
+
 | Component | Testnet account | Transaction |
 |---|---|---|
 | A1 shared ledger | `afterbellfx-dev-faucet.testnet` | [Deploy and initialize](https://explorer.testnet.near.org/transactions/5UqcRFyCmQuhPdtrVJhsVhVtBnJgdLAe1JxE9SMRDrVf) |
@@ -78,6 +89,8 @@ flow below are historical experiments, not the product architecture.
 | A1 funded-settlement prototype | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/FGhgPfAWfesmfRS4qtu9SYSn9VBYQZ5tb17J6KCLxhHQ); deployed WASM SHA-256 `ce2e1d008d16e7fc11a3d37634f41f2158c5e2261590314f30320f7f9b60c2b4` |
 | A1 storage-credit and owner-rotation upgrade | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/AVNMYXoHASbmDGqm4nGh3a9otqNPyqHrbKA1pxnb6vAJ); WASM SHA-256 `565aa13953f141e9bcc0ebc79c97125036cb5eb3d57a6a462cf1a8038305129e`; 423.1 KB |
 | A1 legacy storage-release compatibility fix | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/Ac2YyRibNc3VkJd9W8up4JpXMyXehVKvSFVCKEmXvErb); WASM SHA-256 `75accd9d413f84f0da01904c9ef2618a22160fe4626241461ab844dff6195dfe`; 423.5 KB |
+| A1 protocol-admin migration support | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/D3AjGHCSQpR8ir73V6ek7UxYRMkM16Axaw6g1vVgV7JC); WASM SHA-256 `3536b8e887a1c8d36a8d0b4f0e3ce4509f316ff96f2f277863d4e1c9daa3df56` |
+| Initialize protocol admin on existing A1 | `afterbellfx-dev-faucet.testnet` | [State migration](https://explorer.testnet.near.org/transactions/GN8Yqu2TEmR9icRi9tyG3M6ekRnP5KSCgVuPCN78kk4N); read view verified as `afterbellfx-dev-faucet.testnet` |
 | Storage-credit funding smoke test | `near:shared-model-smoke-20261024` | [Sponsor 0.1 NEAR](https://explorer.testnet.near.org/transactions/AHAwU64UxSzJYCXCUzPq8BzXNrptbM6wjuLuVnsd2cWs); `storage_credit_of` returned `98840000000000000000000` yoctoNEAR (0.09884 NEAR) |
 | Storage-credit owner withdrawal | `solana:vault-settlement-20261024` | [Sponsor 0.05 NEAR](https://explorer.testnet.near.org/transactions/CnLBTEjZeb24Y2gSpJdf5RfVduWgtGWsHFJ85oSeaJt5) · [Owner-signed withdrawal of 0.01 NEAR](https://explorer.testnet.near.org/transactions/3WM6Jgkkjnhh23MLJFr6LK7CdcZ9a2WLGnBTJAUH8VaP) · [Failed withdrawal and credit restoration](https://explorer.testnet.near.org/transactions/9KHNKbZNnPWvpUMCm6k7SGaSsNqX6fHFkXQWaWYJNSDU) |
 | NEAR wallet owner path | `near:shared-model-smoke-20261024` | [Register owner](https://explorer.testnet.near.org/transactions/8AXZKPadTDchnv3GWpMFYRHwUAfWTHQd6s1nRiDTixtu) · [Deposit](https://explorer.testnet.near.org/transactions/4otFDaTMEa7BqB1V9nSfCPuKjGwSNtndvzZHEdSKRXsz) · [Direct signed withdrawal](https://explorer.testnet.near.org/transactions/4mZ2KHeRpLjGZZLn4tK8WLR9NWxqeWWdu1CBEJMAf7nH) |
