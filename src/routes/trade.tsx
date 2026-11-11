@@ -55,8 +55,8 @@ function loadCanvasSvg(svg: SVGSVGElement) {
 
 const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
-const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 300_000, '1w': 3_600_000, '1m': 14_400_000, all: 86_400_000 }
-const chartGranularity: Record<ChartRange, 'm1' | 'm5' | 'h1' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm5', '1w': 'h1', '1m': 'h4', all: 'd1' }
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 900_000, '1d': 3_600_000, '1w': 14_400_000, '1m': 86_400_000, all: 86_400_000 }
+const chartGranularity: Record<ChartRange, 'm15' | 'h1' | 'h4' | 'd1'> = { '1h': 'm15', '1d': 'h1', '1w': 'h4', '1m': 'd1', all: 'd1' }
 const chartTheme: Theme = {
   base: 'dark',
   layers: {
@@ -99,18 +99,8 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       if (current) { current.high = Math.max(current.high, value); current.low = Math.min(current.low, value); current.close = value }
       else buckets.set(bucket, { open: value, high: value, low: value, close: value, volume: 0 })
     }
-    const timestamps = Array.from(buckets.keys()).sort((left, right) => left - right)
-    if (timestamps.length === 0) return []
-    const candles: DataPoint[] = []
-    let previousClose: number | null = null
-    for (let timestamp = timestamps[0]; timestamp <= timestamps[timestamps.length - 1]; timestamp += interval) {
-      const observed = buckets.get(timestamp)
-      if (observed) previousClose = observed.close
-      if (previousClose === null) continue
-      const candle = observed ?? { open: previousClose, high: previousClose, low: previousClose, close: previousClose, volume: 0 }
-      candles.push({ time: new Date(timestamp).toISOString(), ...candle, volume: volumes.get(timestamp) ?? 0 })
-    }
-    return candles
+    return Array.from(buckets, ([timestamp, candle]) => ({ time: new Date(timestamp).toISOString(), ...candle, volume: volumes.get(timestamp) ?? 0 }))
+      .sort((left, right) => left.time.localeCompare(right.time)) as DataPoint[]
   }, [points, volumePoints, range])
 
   useEffect(() => {
