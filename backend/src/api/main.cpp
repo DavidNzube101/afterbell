@@ -1,6 +1,7 @@
 #include <drogon/drogon.h>
 
 #include "http/request_logger.hpp"
+#include "api/profile_store.hpp"
 #include "indexer/worker.hpp"
 #include "oracle/worker.hpp"
 #include "trading/service.hpp"
@@ -216,6 +217,8 @@ int main() {
 
         const auto databaseUrl = env("DATABASE_URL");
         if (!databaseUrl) throw std::runtime_error("DATABASE_URL is required");
+        auto profileStore = std::make_shared<afterbell::api::ProfileStore>(
+            env("WAITLIST_DATABASE_URL").value_or(*databaseUrl));
         const auto network = env("NEAR_NETWORK");
         const auto contractId = env("A1_CONTRACT_ID");
         if (!network || !contractId) {
@@ -424,6 +427,94 @@ int main() {
                 } catch (const std::exception &error) {
                     auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("owner_registration_failed", error.what()));
                     response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/agent/payload",
+            [accountService](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(accountService->agentSetupPayload(*input)));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("agent_payload_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/agent/create",
+            [accountService](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(accountService->createAgentRecord(*input)));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("agent_creation_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/username/claim",
+            [accountService, profileStore](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    const auto accountId = (*input)["account_id"].asString();
+                    if (!accountService->ownerStatus(accountId)["registered"].asBool())
+                        throw std::invalid_argument("Register your connected wallet before choosing a username.");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(
+                        profileStore->claimUsername(accountId, (*input)["username"].asString())));
+                } catch (const afterbell::api::UsernameUnavailable &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_unavailable", error.what()));
+                    response->setStatusCode(drogon::k409Conflict); callback(response);
+                } catch (const std::invalid_argument &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_claim_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_store_unavailable", error.what()));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/username/reclaim",
+            [accountService, profileStore](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                if (!accountService) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                try {
+                    const auto input = request->getJsonObject();
+                    if (!input) throw std::invalid_argument("request body must be JSON");
+                    const auto accountId = (*input)["account_id"].asString();
+                    if (!accountService->ownerStatus(accountId)["registered"].asBool())
+                        throw std::invalid_argument("Register your connected wallet before reclaiming a username.");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(
+                        profileStore->reclaimUsername(accountId, (*input)["email"].asString())));
+                } catch (const afterbell::api::UsernameUnavailable &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_unavailable", error.what()));
+                    response->setStatusCode(drogon::k409Conflict); callback(response);
+                } catch (const std::invalid_argument &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_reclaim_failed", error.what()));
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_store_unavailable", error.what()));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response);
                 }
             }, {drogon::Post});
         drogon::app().registerHandler(

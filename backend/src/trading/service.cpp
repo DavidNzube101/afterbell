@@ -411,6 +411,103 @@ Json::Value Service::registerOwner(const Json::Value &request) {
     return response;
 }
 
+namespace {
+
+Json::Value agentSetupArgs(const Json::Value &request, std::uint64_t expiresAtMs) {
+    for (const auto *field : {"account_id", "agent_record_id"}) {
+        if (!request[field].isString() || request[field].asString().empty())
+            throw std::invalid_argument(std::string(field) + " is required");
+    }
+    if (!request["agent_key"].isObject() || !request["agent_key"].isMember("NearEd25519") ||
+        !request["agent_key"]["NearEd25519"]["public_key"].isArray() ||
+        request["agent_key"]["NearEd25519"]["public_key"].size() != 32)
+        throw std::invalid_argument("agent_key must contain a 32-byte Ed25519 public key");
+    if (!request["allowed_markets"].isArray() || request["allowed_markets"].empty())
+        throw std::invalid_argument("choose at least one agent market");
+    if (!request["max_position_usdc"].isString() || !request["max_open_notional_usdc"].isString() ||
+        !request["max_allocation_usdc"].isString() || !request["max_daily_loss_usdc"].isString() ||
+        !request["max_leverage_bps"].isUInt())
+        throw std::invalid_argument("agent limits are incomplete");
+
+    (void)u128(request["max_position_usdc"], "max_position_usdc");
+    (void)u128(request["max_open_notional_usdc"], "max_open_notional_usdc");
+    (void)u128(request["max_allocation_usdc"], "max_allocation_usdc");
+    (void)u128(request["max_daily_loss_usdc"], "max_daily_loss_usdc");
+
+    Json::Value args;
+    args["user_record_id"] = request["account_id"];
+    args["agent_record_id"] = request["agent_record_id"];
+    args["agent_key"] = request["agent_key"];
+    args["allowed_markets"] = request["allowed_markets"];
+    args["max_position_usdc"] = request["max_position_usdc"];
+    args["max_open_notional_usdc"] = request["max_open_notional_usdc"];
+    args["max_leverage_bps"] = request["max_leverage_bps"];
+    args["max_allocation_usdc"] = request["max_allocation_usdc"];
+    args["max_daily_loss_usdc"] = request["max_daily_loss_usdc"];
+    args["expires_at_ms"] = Json::UInt64(expiresAtMs);
+    return args;
+}
+
+} // namespace
+
+Json::Value Service::agentSetupPayload(const Json::Value &request) const {
+    if (!request["access_duration_days"].isUInt())
+        throw std::invalid_argument("access_duration_days is required");
+    const auto durationDays = request["access_duration_days"].asUInt();
+    if (durationDays == 0 || durationDays > 30)
+        throw std::invalid_argument("agent access duration must be between 1 and 30 days");
+    const auto status = ownerStatus(request["account_id"].asString());
+    if (!status["registered"].asBool()) throw std::invalid_argument("register the wallet account before creating an agent");
+
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("agent setup read RPC is on the wrong NEAR network");
+    const auto expiresAtMs = blockTimeMs(rpc) + static_cast<std::uint64_t>(durationDays) * 24 * 60 * 60 * 1000;
+    auto args = agentSetupArgs(request, expiresAtMs);
+    Json::Value nonceArgs; nonceArgs["user_record_id"] = request["account_id"];
+    const auto nonce = u64(viewCall(rpc, config_.contractId, "agent_admin_nonce", nonceArgs), "agent admin nonce") + 1;
+    const auto payload = viewCall(rpc, config_.contractId, "agent_setup_signing_payload", args);
+    Json::Value response;
+    response["payload"] = payload;
+    response["expires_at_ms"] = Json::UInt64(expiresAtMs);
+    response["nonce"] = Json::UInt64(nonce);
+    response["agent_record_id"] = request["agent_record_id"];
+    return response;
+}
+
+Json::Value Service::createAgentRecord(const Json::Value &request) {
+    if (!request["signature"].isString() || !request["expires_at_ms"].isUInt64() || !request["nonce"].isUInt64())
+        throw std::invalid_argument("agent signature, expiry, and nonce are required");
+    const auto accountId = request["account_id"].asString();
+    const auto owner = ownerStatus(accountId);
+    if (!owner["registered"].asBool()) throw std::invalid_argument("register the wallet account before creating an agent");
+    const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
+    if (signature.size() != 64 && signature.size() != 65)
+        throw std::invalid_argument("owner signature has an invalid length");
+
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("agent setup read RPC is on the wrong NEAR network");
+    Json::Value recordArgs; recordArgs["user_record_id"] = accountId;
+    const auto existingRecord = viewCall(rpc, config_.contractId, "agent_record_of", recordArgs);
+    if (existingRecord.isString() && existingRecord.asString() == request["agent_record_id"].asString()) {
+        Json::Value response;
+        response["account_id"] = accountId;
+        response["agent_record_id"] = request["agent_record_id"];
+        response["status"] = "already_created";
+        return response;
+    }
+    auto args = agentSetupArgs(request, u64(request["expires_at_ms"], "expires_at_ms"));
+    args["nonce"] = Json::UInt64(u64(request["nonce"], "nonce"));
+    args["signature"] = request["signature"];
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    const auto result = relayCall(config_, "create_agent_record", args);
+    Json::Value response;
+    response["account_id"] = accountId;
+    response["agent_record_id"] = request["agent_record_id"];
+    response["status"] = "created";
+    response["transaction_hash"] = result["transaction_hash"];
+    return response;
+}
+
 Json::Value Service::createOpenQuote(const Json::Value &request) const {
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
     if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");

@@ -16,6 +16,8 @@ import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
 import { markets } from '../data/markets'
 import { useWalletSession } from '../lib/wallet-session'
 import { useToasts } from '../lib/toasts'
+import { createAgentKey, type AgentPublicKey } from '../lib/agent-key'
+import { claimAccountUsername, getAgentSetupPayload, reclaimAccountUsername, submitAgentSetup } from '../lib/account'
 import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
@@ -32,8 +34,8 @@ function Icon({ kind, size = 16 }: { kind: 'check' | 'left' | 'right' | 'down'; 
 
 function SettingUpPage() {
   const navigate = useNavigate()
-  const { session, disconnect } = useWalletSession()
-  const { showToast } = useToasts()
+  const { session, disconnect, signMessage } = useWalletSession()
+  const { showToast, dismissToast } = useToasts()
   const [draft] = useState(() => {
     try {
       const accountId = session?.accountId
@@ -51,6 +53,10 @@ function SettingUpPage() {
   const [positionLimit, setPositionLimit] = useState<string>(draft?.positionLimit ?? '1000')
   const [dailyLossLimit, setDailyLossLimit] = useState<string>(draft?.dailyLossLimit ?? '250')
   const [accessDuration, setAccessDuration] = useState<string>(draft?.accessDuration ?? '30')
+  const [agentRecordId, setAgentRecordId] = useState<string>(draft?.agentRecordId ?? '')
+  const [agentPublicKey, setAgentPublicKey] = useState<AgentPublicKey | null>(draft?.agentPublicKey ?? null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isClaimingUsername, setIsClaimingUsername] = useState(false)
 
   useEffect(() => {
     if (!session) void navigate({ to: '/', replace: true })
@@ -61,8 +67,9 @@ function SettingUpPage() {
         localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) !== 'true')) return
     localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify({
       usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
+      agentRecordId, agentPublicKey,
     }))
-  }, [session, usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration])
+  }, [session, usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -92,24 +99,44 @@ function SettingUpPage() {
     await navigate({ to: '/', replace: true })
   }
 
-  const continueSetup = () => {
+  const continueSetup = async () => {
+    if (!session || isClaimingUsername) return
     if (usernameMode === 'reclaim') {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reclaimEmail.trim())) {
         showToast('error', 'Enter the email address used for your waitlist claim.')
         return
       }
-      showToast('error', 'Waitlist name lookup is not connected yet. Choose a username to continue.')
-      return
-    }
-    if (!/^[a-z0-9_]{3,20}$/.test(username.trim())) {
+    } else if (!/^[a-z0-9_]{3,20}$/.test(username.trim())) {
       showToast('error', 'Use 3–20 lowercase letters, numbers, or underscores for your username.')
       return
     }
-    setStep(1)
+    setIsClaimingUsername(true)
+    const waitingToast = showToast('waiting', usernameMode === 'reclaim' ? 'Looking up your waitlist username…' : 'Checking username availability…', 0)
+    try {
+      if (usernameMode === 'reclaim') {
+        const result = await reclaimAccountUsername({ account_id: session.accountId, email: reclaimEmail.trim() })
+        setUsername(result.username)
+        setStep(1)
+        dismissToast(waitingToast)
+        showToast('success', `Welcome back, ${result.username}.`)
+      } else {
+        const result = await claimAccountUsername({ account_id: session.accountId, username: username.trim() })
+        setUsername(result.username)
+        setStep(1)
+        dismissToast(waitingToast)
+        showToast('success', result.status === 'already_claimed' ? 'Your username is ready.' : 'Username claimed.')
+      }
+    } catch (error) {
+      dismissToast(waitingToast)
+      showToast('error', error instanceof Error ? error.message : 'Could not claim that username.')
+    } finally {
+      setIsClaimingUsername(false)
+    }
   }
 
-  const finishSetup = () => {
+  const finishSetup = async () => {
     if (!session) return
+    if (isSubmitting) return
     const name = agentName.trim()
     if (!name) {
       showToast('error', 'Give your agent a name to continue.')
@@ -119,23 +146,57 @@ function SettingUpPage() {
       showToast('error', 'Choose at least one market for your agent.')
       return
     }
-    const profile = {
-      username: username.trim(),
-      agent: {
-        name,
-        markets: selectedMarkets,
-        maxLeverage: leverage,
-        positionLimitUsdc: Number(positionLimit),
-        dailyLossLimitUsdc: Number(dailyLossLimit),
-        accessDurationDays: Number(accessDuration),
-      },
+    setIsSubmitting(true)
+    const waitingToast = showToast('waiting', 'Waiting for your wallet to approve the agent permissions…', 0)
+    try {
+      const recordId = agentRecordId || `agent:${session.accountId}:${crypto.randomUUID().replaceAll('-', '')}`
+      const publicKey = agentPublicKey ?? await createAgentKey(session.accountId, recordId)
+      setAgentRecordId(recordId)
+      setAgentPublicKey(publicKey)
+      const draftState = {
+        usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit,
+        accessDuration, agentRecordId: recordId, agentPublicKey: publicKey,
+      }
+      localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify(draftState))
+      const usdcUnits = (value: string) => (BigInt(value) * 1_000_000n).toString()
+      const setup = {
+        account_id: session.accountId,
+        agent_record_id: recordId,
+        agent_key: publicKey,
+        allowed_markets: selectedMarkets,
+        max_position_usdc: usdcUnits(positionLimit),
+        max_open_notional_usdc: usdcUnits(positionLimit),
+        max_leverage_bps: leverage * 10_000,
+        max_allocation_usdc: usdcUnits(positionLimit),
+        max_daily_loss_usdc: usdcUnits(dailyLossLimit),
+        access_duration_days: Number(accessDuration),
+      }
+      const challenge = await getAgentSetupPayload(setup)
+      const signature = await signMessage(challenge.payload)
+      const result = await submitAgentSetup({
+        ...setup,
+        signature,
+        expires_at_ms: challenge.expires_at_ms,
+        nonce: challenge.nonce,
+      })
+      localStorage.setItem(`afterbell.onboarding.v1:${session.accountId}`, JSON.stringify({
+        username: username.trim(), agent: { name, markets: selectedMarkets, maxLeverage: leverage,
+          positionLimitUsdc: Number(positionLimit), dailyLossLimitUsdc: Number(dailyLossLimit),
+          accessDurationDays: Number(accessDuration), recordId: result.agent_record_id,
+          transactionHash: result.transaction_hash ?? null },
+      }))
+      localStorage.removeItem(`afterbell.onboarding-draft.v1:${session.accountId}`)
+      localStorage.removeItem(`afterbell.onboarding-required.v1:${session.accountId}`)
+      sessionStorage.removeItem('afterbell.first-time-setup')
+      dismissToast(waitingToast)
+      showToast('success', 'Your agent is set up. Welcome to Afterbell.')
+      await navigate({ to: '/trade', search: { market: undefined, side: undefined } })
+    } catch (error) {
+      dismissToast(waitingToast)
+      showToast('error', error instanceof Error ? error.message : 'Could not create your agent. Please try again.')
+    } finally {
+      setIsSubmitting(false)
     }
-    localStorage.setItem(`afterbell.onboarding.v1:${session.accountId}`, JSON.stringify(profile))
-    localStorage.removeItem(`afterbell.onboarding-draft.v1:${session.accountId}`)
-    localStorage.removeItem(`afterbell.onboarding-required.v1:${session.accountId}`)
-    sessionStorage.removeItem('afterbell.first-time-setup')
-    showToast('success', 'Setup saved. Welcome to Afterbell.')
-    void navigate({ to: '/trade', search: { market: undefined, side: undefined } })
   }
 
   const chainIcon = session?.chain === 'near' ? nearIcon : session?.chain === 'evm' ? evmIcon : solanaIcon
@@ -215,12 +276,12 @@ function SettingUpPage() {
               <div className="agent-market-options">{markets.map(market => <button type="button" key={market.ticker} className={selectedMarkets.includes(market.ticker) ? 'selected' : ''} onClick={() => toggleMarket(market.ticker)} aria-pressed={selectedMarkets.includes(market.ticker)}><span>{market.ticker}-USDC</span>{selectedMarkets.includes(market.ticker) && <Icon kind="check" size={14} />}</button>)}</div>
             </div>
             <div className="agent-limits-grid">
-              <label className="agent-limit-control"><span>Maximum leverage</span><strong>{leverage}×</strong><input aria-label="Maximum leverage" type="range" min="1" max="10" value={leverage} onChange={event => setLeverage(Number(event.target.value))} /></label>
+              <label className="agent-limit-control"><span>Maximum leverage</span><strong>{leverage}×</strong><input aria-label="Maximum leverage" type="range" min="1" max="5" value={leverage} onChange={event => setLeverage(Number(event.target.value))} /></label>
               <label className="agent-limit-control"><span>Position limit</span><select aria-label="Position limit" value={positionLimit} onChange={event => setPositionLimit(event.target.value)}><option value="250">$250</option><option value="500">$500</option><option value="1000">$1,000</option><option value="2500">$2,500</option><option value="5000">$5,000</option></select></label>
               <label className="agent-limit-control"><span>Daily loss limit</span><select aria-label="Daily loss limit" value={dailyLossLimit} onChange={event => setDailyLossLimit(event.target.value)}><option value="50">$50</option><option value="100">$100</option><option value="250">$250</option><option value="500">$500</option></select></label>
-              <label className="agent-limit-control"><span>Access duration</span><select aria-label="Access duration" value={accessDuration} onChange={event => setAccessDuration(event.target.value)}><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>
+              <label className="agent-limit-control"><span>Access duration</span><select aria-label="Access duration" value={accessDuration} onChange={event => setAccessDuration(event.target.value)}><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option></select></label>
             </div>
-            <div className="onboarding-note"><span>You can adjust these agent preferences later.</span></div>
+            <div className="onboarding-note"><span>The contract enforces these limits on every agent trade.</span></div>
           </article>
         </div>
       </div>
@@ -228,7 +289,7 @@ function SettingUpPage() {
       <div className="onboarding-controls">
         <button className="onboarding-back" type="button" onClick={() => setStep(0)} disabled={step === 0}><Icon kind="left" size={16} /> Back</button>
         <div className="onboarding-dots" aria-hidden="true"><span className={step === 0 ? 'active' : ''} /><span className={step === 1 ? 'active' : ''} /></div>
-        <button className="onboarding-next" type="button" onClick={step === 0 ? continueSetup : finishSetup}>{step === 0 ? <>Continue <Icon kind="right" size={16} /></> : 'Finish setup'}</button>
+        <button className="onboarding-next" type="button" onClick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername}>{step === 0 ? isClaimingUsername ? 'Checking…' : <>Continue <Icon kind="right" size={16} /></> : isSubmitting ? 'Setting up…' : 'Finish setup'}</button>
       </div>
       <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
     </section>

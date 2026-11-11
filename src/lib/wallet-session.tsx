@@ -14,11 +14,13 @@ type WalletContextValue = {
   session: WalletSession | null
   connecting: boolean
   connect: (chain: WalletChain, walletName: string) => Promise<WalletSession>
+  signMessage: (payload: WalletMessagePayload) => Promise<string>
   disconnect: () => Promise<void>
 }
 
 type Owner = { SolanaEd25519: { public_key: number[] } } | { Ethereum: { address: number[] } } | { NearEd25519: { public_key: number[] } }
-type Payload = { message: string; nonce: string; recipient: string }
+export type WalletMessagePayload = { message: string; nonce: string; recipient: string }
+let activeWalletSigner: ((payload: WalletMessagePayload) => Promise<Uint8Array>) | null = null
 let cleanupCurrentWallet: (() => void) | null = null
 if (typeof globalThis.Buffer === 'undefined') globalThis.Buffer = Buffer
 const SESSION_KEY = 'afterbell.wallet-session.v1'
@@ -97,7 +99,7 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
   let address: string
   let accountId: string
   let owner: Owner
-  let sign: (payload: Payload) => Promise<Uint8Array>
+  let sign: (payload: WalletMessagePayload) => Promise<Uint8Array>
   let watchWallet: (onChange: () => void) => () => void = () => () => undefined
 
   if (chain === 'evm') {
@@ -179,19 +181,20 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
     }
   }
 
+  activeWalletSigner = sign
   const status = await post<{ registered: boolean; owner?: Owner }>('/v1/account/owner/status', { account_id: accountId })
   if (status.registered) {
     if (JSON.stringify(status.owner) !== JSON.stringify(owner)) throw new Error('This account is already linked to a different wallet key. Contact support to recover it.')
     cleanupCurrentWallet?.()
-    cleanupCurrentWallet = watchWallet(() => { localStorage.removeItem(SESSION_KEY); window.location.assign('/') })
+    cleanupCurrentWallet = watchWallet(() => { activeWalletSigner = null; localStorage.removeItem(SESSION_KEY); window.location.assign('/') })
     return { session: { chain, walletName, address, accountId }, firstTime: false }
   }
 
-  const challenge = await post<{ payload: Payload; expires_at_ms: number }>('/v1/account/owner/payload', { account_id: accountId, owner })
+  const challenge = await post<{ payload: WalletMessagePayload; expires_at_ms: number }>('/v1/account/owner/payload', { account_id: accountId, owner })
   const signature = await sign(challenge.payload)
   await post('/v1/account/owner/register', { account_id: accountId, owner, expires_at_ms: challenge.expires_at_ms, signature: bytesBase64(signature) })
   cleanupCurrentWallet?.()
-  cleanupCurrentWallet = watchWallet(() => { localStorage.removeItem(SESSION_KEY); window.location.assign('/') })
+  cleanupCurrentWallet = watchWallet(() => { activeWalletSigner = null; localStorage.removeItem(SESSION_KEY); window.location.assign('/') })
   return { session: { chain, walletName, address, accountId }, firstTime: true }
 }
 
@@ -213,16 +216,27 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       return result.session
     } finally { setConnecting(false) }
   }, [])
+  const signMessage = useCallback(async (payload: WalletMessagePayload) => {
+    if (!session) throw new Error('Connect a wallet before signing this action.')
+    if (!activeWalletSigner) {
+      const refreshed = await connectAndSign(session.chain, session.walletName)
+      if (refreshed.session.accountId !== session.accountId)
+        throw new Error('The active wallet account changed. Reconnect and try again.')
+    }
+    if (!activeWalletSigner) throw new Error('The connected wallet cannot sign this action.')
+    return bytesBase64(await activeWalletSigner(payload))
+  }, [session])
   const disconnect = useCallback(async () => {
     cleanupCurrentWallet?.()
     cleanupCurrentWallet = null
+    activeWalletSigner = null
     setSession(null)
     localStorage.removeItem(SESSION_KEY)
   }, [])
   useEffect(() => {
     if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   }, [session])
-  const value = useMemo(() => ({ session, connecting, connect, disconnect }), [session, connecting, connect, disconnect])
+  const value = useMemo(() => ({ session, connecting, connect, signMessage, disconnect }), [session, connecting, connect, signMessage, disconnect])
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
 

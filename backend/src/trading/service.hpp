@@ -39,6 +39,8 @@ class Service {
     Json::Value ownerStatus(const std::string &accountId) const;
     Json::Value ownerRegistrationPayload(const Json::Value &request) const;
     Json::Value registerOwner(const Json::Value &request);
+    Json::Value agentSetupPayload(const Json::Value &request) const;
+    Json::Value createAgentRecord(const Json::Value &request);
     void startLimitWorker();
     void stopLimitWorker();
 
