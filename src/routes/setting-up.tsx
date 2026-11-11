@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
 import ottoLogo from '../assets/afterbell-otto-logo.png'
 import solanaIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
@@ -22,59 +22,15 @@ import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
 
-type UsernameAvailability = 'idle' | 'checking' | 'available' | 'taken' | 'error'
-
 function UsernameField({
   accountId,
   valueRef,
   initialValue,
-  onAvailabilityChange,
 }: {
   accountId: string
   valueRef: { current: string }
   initialValue: string
-  onAvailabilityChange: (status: UsernameAvailability) => void
 }) {
-  const [availability, setAvailability] = useState<UsernameAvailability>('idle')
-  const availabilityRef = useRef<UsernameAvailability>('idle')
-  const checkTimerRef = useRef<number | null>(null)
-  const checkControllerRef = useRef<AbortController | null>(null)
-
-  const updateAvailability = (status: UsernameAvailability) => {
-    const previous = availabilityRef.current
-    if (previous === status) return
-    availabilityRef.current = status
-    setAvailability(status)
-    if (status !== 'checking' || previous === 'available') onAvailabilityChange(status)
-  }
-
-  const scheduleAvailabilityCheck = useCallback((value: string) => {
-    if (checkTimerRef.current !== null) window.clearTimeout(checkTimerRef.current)
-    checkControllerRef.current?.abort()
-    if (!/^[a-z0-9_]{3,20}$/.test(value)) {
-      updateAvailability('idle')
-      return
-    }
-    const controller = new AbortController()
-    checkControllerRef.current = controller
-    updateAvailability('checking')
-    checkTimerRef.current = window.setTimeout(() => {
-      void checkAccountUsername(accountId, value, controller.signal)
-        .then(result => updateAvailability(result.valid && result.available ? 'available' : 'taken'))
-        .catch(error => {
-          if (!(error instanceof DOMException && error.name === 'AbortError')) updateAvailability('error')
-        })
-    }, 700)
-  }, [accountId, onAvailabilityChange])
-
-  useEffect(() => {
-    scheduleAvailabilityCheck(initialValue.trim())
-    return () => {
-      if (checkTimerRef.current !== null) window.clearTimeout(checkTimerRef.current)
-      checkControllerRef.current?.abort()
-    }
-  }, [scheduleAvailabilityCheck, initialValue])
-
   const saveUsernameDraft = () => {
     try {
       const key = `afterbell.onboarding-draft.v1:${accountId}`
@@ -91,17 +47,10 @@ function UsernameField({
           const next = event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20)
           if (event.target.value !== next) event.target.value = next
           valueRef.current = next
-          scheduleAvailabilityCheck(next)
         }}
         onBlur={saveUsernameDraft} />
     </div>
-    <p className={`username-availability username-availability-${availability}`} aria-live="polite">
-      {availability === 'checking' ? 'Checking availability…'
-        : availability === 'available' ? <><span aria-hidden="true">✓</span> Username is available.</>
-        : availability === 'taken' ? <><span aria-hidden="true">×</span> That username is taken or reserved.</>
-        : availability === 'error' ? 'Could not check availability. Try again.'
-        : '3–20 characters: lowercase letters, numbers, and underscores.'}
-    </p>
+    <p className="username-availability">3–20 characters: lowercase letters, numbers, and underscores.</p>
   </>
 }
 
@@ -141,8 +90,6 @@ function SettingUpPage() {
   const [agentPublicKey, setAgentPublicKey] = useState<AgentPublicKey | null>(draft?.agentPublicKey ?? null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isClaimingUsername, setIsClaimingUsername] = useState(false)
-  const [usernameAvailability, setUsernameAvailability] = useState<UsernameAvailability>('idle')
-  const handleUsernameAvailability = useCallback((status: UsernameAvailability) => setUsernameAvailability(status), [])
 
   useEffect(() => {
     if (!session) void navigate({ to: '/', replace: true })
@@ -198,9 +145,6 @@ function SettingUpPage() {
     } else if (!/^[a-z0-9_]{3,20}$/.test(usernameRef.current.trim())) {
       showToast('error', 'Use 3–20 lowercase letters, numbers, or underscores for your username.')
       return
-    } else if (usernameAvailability !== 'available') {
-      showToast('error', usernameAvailability === 'taken' ? 'That username is taken or reserved.' : 'Wait for the username check to finish.')
-      return
     }
     setIsClaimingUsername(true)
     const waitingToast = showToast('waiting', usernameMode === 'reclaim' ? 'Looking up your waitlist username…' : 'Checking username availability…', 0)
@@ -212,7 +156,12 @@ function SettingUpPage() {
         dismissToast(waitingToast)
         showToast('success', `Welcome back, ${result.username}.`)
       } else {
-        const result = await claimAccountUsername({ account_id: session.accountId, username: usernameRef.current.trim() })
+        const username = usernameRef.current.trim()
+        const availability = await checkAccountUsername(session.accountId, username)
+        if (!availability.valid || !availability.available) {
+          throw new Error('That username is taken or reserved. Choose another one.')
+        }
+        const result = await claimAccountUsername({ account_id: session.accountId, username })
         usernameRef.current = result.username
         setStep(1)
         dismissToast(waitingToast)
@@ -339,13 +288,13 @@ function SettingUpPage() {
             </div>
 
             <div className="username-mode-switch" role="tablist" aria-label="Username option">
-              <button className={usernameMode === 'new' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'new'} onClick={() => { setUsernameAvailability('idle'); setUsernameMode('new') }}>Choose a username</button>
+              <button className={usernameMode === 'new' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'new'} onClick={() => setUsernameMode('new')}>Choose a username</button>
               <button className={usernameMode === 'reclaim' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'reclaim'} onClick={() => setUsernameMode('reclaim')}>Reclaim waitlist name</button>
             </div>
 
             {usernameMode === 'new' ? <div className="username-form-preview">
               <label htmlFor="onboarding-username">Username</label>
-              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} initialValue={initialUsernameRef.current} onAvailabilityChange={handleUsernameAvailability} />}
+              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} initialValue={initialUsernameRef.current} />}
             </div> : <div className="username-form-preview reclaim-preview">
               <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
               <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" value={reclaimEmail} onChange={event => setReclaimEmail(event.target.value)} /></div>
@@ -380,7 +329,7 @@ function SettingUpPage() {
       <div className="onboarding-controls">
         <button className="onboarding-back" type="button" onClick={() => setStep(0)} disabled={step === 0}><Icon kind="left" size={16} /> Back</button>
         <div className="onboarding-dots" aria-hidden="true"><span className={step === 0 ? 'active' : ''} /><span className={step === 1 ? 'active' : ''} /></div>
-        <button className="onboarding-next" type="button" onClick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername || (step === 0 && usernameMode === 'new' && usernameAvailability !== 'available')}>{step === 0 ? isClaimingUsername ? 'Checking…' : <>Continue <Icon kind="right" size={16} /></> : isSubmitting ? 'Setting up…' : 'Finish setup'}</button>
+        <button className="onboarding-next" type="button" onClick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername}>{step === 0 ? isClaimingUsername ? 'Checking…' : <>Continue <Icon kind="right" size={16} /></> : isSubmitting ? 'Setting up…' : 'Finish setup'}</button>
       </div>
       <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
     </section>
