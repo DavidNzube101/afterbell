@@ -499,12 +499,26 @@ Json::Value Service::createAgentRecord(const Json::Value &request) {
     args["nonce"] = Json::UInt64(u64(request["nonce"], "nonce"));
     args["signature"] = request["signature"];
     std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    if (config_.ownerRegistrationDepositYocto.empty())
+        throw std::runtime_error("A1 record storage sponsorship is not configured");
+    const auto storageCreditTarget = u128(Json::Value(config_.ownerRegistrationDepositYocto), "record storage credit target");
+    if (storageCreditTarget == 0 || storageCreditTarget > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 10'000)
+        throw std::runtime_error("record storage credit target must be between 0 and 0.01 NEAR");
+    Json::Value storageArgs; storageArgs["account_id"] = accountId;
+    const auto currentCredit = u128(
+        viewCall(rpc, config_.contractId, "storage_credit_of", storageArgs),
+        "agent record storage credit");
+    const auto topUp = currentCredit >= storageCreditTarget ? 0 : storageCreditTarget - currentCredit;
+    Json::Value storage;
+    if (topUp > 0) storage = relayCall(config_, "storage_deposit_for", storageArgs, topUp);
     const auto result = relayCall(config_, "create_agent_record", args);
     Json::Value response;
     response["account_id"] = accountId;
     response["agent_record_id"] = request["agent_record_id"];
     response["status"] = "created";
     response["transaction_hash"] = result["transaction_hash"];
+    response["storage_top_up_yocto"] = decimal(topUp);
+    if (topUp > 0) response["storage_transaction_hash"] = storage["transaction_hash"];
     return response;
 }
 
