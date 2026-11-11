@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
 import ottoLogo from '../assets/afterbell-otto-logo.png'
 import solanaIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
@@ -21,6 +21,79 @@ import { checkAccountUsername, claimAccountUsername, getAgentSetupPayload, recla
 import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
+
+type UsernameAvailability = 'idle' | 'checking' | 'available' | 'taken' | 'error'
+
+function UsernameField({
+  accountId,
+  valueRef,
+  initialValue,
+  onAvailabilityChange,
+}: {
+  accountId: string
+  valueRef: { current: string }
+  initialValue: string
+  onAvailabilityChange: (status: UsernameAvailability) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  const [availability, setAvailability] = useState<UsernameAvailability>('idle')
+  const availabilityRef = useRef<UsernameAvailability>('idle')
+
+  const updateAvailability = (status: UsernameAvailability) => {
+    if (availabilityRef.current === status) return
+    availabilityRef.current = status
+    setAvailability(status)
+    onAvailabilityChange(status)
+  }
+
+  useEffect(() => {
+    if (!/^[a-z0-9_]{3,20}$/.test(value.trim())) {
+      updateAvailability('idle')
+      return
+    }
+    const controller = new AbortController()
+    updateAvailability('checking')
+    const timer = window.setTimeout(() => {
+      void checkAccountUsername(accountId, value.trim(), controller.signal)
+        .then(result => updateAvailability(result.valid && result.available ? 'available' : 'taken'))
+        .catch(error => {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) updateAvailability('error')
+        })
+    }, 600)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [accountId, value, onAvailabilityChange])
+
+  const saveUsernameDraft = () => {
+    try {
+      const key = `afterbell.onboarding-draft.v1:${accountId}`
+      const draft = JSON.parse(localStorage.getItem(key) || '{}')
+      localStorage.setItem(key, JSON.stringify({ ...draft, username: value }))
+    } catch { /* Draft persistence is best-effort. */ }
+  }
+
+  return <>
+    <div className="username-input-wrap">
+      <span>@</span>
+      <input id="onboarding-username" placeholder="yourname" autoComplete="off" value={value}
+        onChange={event => {
+          const next = event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20)
+          valueRef.current = next
+          setValue(next)
+        }}
+        onBlur={saveUsernameDraft} />
+    </div>
+    <p className={`username-availability username-availability-${availability}`} aria-live="polite">
+      {availability === 'checking' ? 'Checking availability…'
+        : availability === 'available' ? <><span aria-hidden="true">✓</span> Username is available.</>
+        : availability === 'taken' ? <><span aria-hidden="true">×</span> That username is taken or reserved.</>
+        : availability === 'error' ? 'Could not check availability. Try again.'
+        : '3–20 characters: lowercase letters, numbers, and underscores.'}
+    </p>
+  </>
+}
 
 function Icon({ kind, size = 16 }: { kind: 'check' | 'left' | 'right' | 'down'; size?: number }) {
   const paths = {
@@ -47,7 +120,7 @@ function SettingUpPage() {
   const [usernameMode, setUsernameMode] = useState<'new' | 'reclaim'>(draft?.usernameMode === 'reclaim' ? 'reclaim' : 'new')
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>(draft?.selectedMarkets ?? ['NVDA', 'AAPL'])
   const [leverage, setLeverage] = useState<number>(draft?.leverage ?? 3)
-  const [username, setUsername] = useState<string>(draft?.username ?? '')
+  const usernameRef = useRef<string>(draft?.username ?? '')
   const [reclaimEmail, setReclaimEmail] = useState<string>(draft?.reclaimEmail ?? '')
   const [agentName, setAgentName] = useState<string>(draft?.agentName ?? 'My agent')
   const [positionLimit, setPositionLimit] = useState<string>(draft?.positionLimit ?? '1000')
@@ -57,7 +130,8 @@ function SettingUpPage() {
   const [agentPublicKey, setAgentPublicKey] = useState<AgentPublicKey | null>(draft?.agentPublicKey ?? null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isClaimingUsername, setIsClaimingUsername] = useState(false)
-  const [usernameAvailability, setUsernameAvailability] = useState<'idle' | 'checking' | 'available' | 'taken' | 'error'>('idle')
+  const [usernameAvailability, setUsernameAvailability] = useState<UsernameAvailability>('idle')
+  const handleUsernameAvailability = useCallback((status: UsernameAvailability) => setUsernameAvailability(status), [])
 
   useEffect(() => {
     if (!session) void navigate({ to: '/', replace: true })
@@ -68,32 +142,12 @@ function SettingUpPage() {
         localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) !== 'true')) return
     const timer = window.setTimeout(() => {
       localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify({
-        usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
+        usernameMode, selectedMarkets, leverage, username: usernameRef.current, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
         agentRecordId, agentPublicKey,
       }))
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [session, usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
-
-  useEffect(() => {
-    if (usernameMode !== 'new' || !session || !/^[a-z0-9_]{3,20}$/.test(username.trim())) {
-      setUsernameAvailability('idle')
-      return
-    }
-    const controller = new AbortController()
-    setUsernameAvailability('checking')
-    const timer = window.setTimeout(() => {
-      void checkAccountUsername(session.accountId, username.trim(), controller.signal)
-        .then(result => setUsernameAvailability(result.valid && result.available ? 'available' : 'taken'))
-        .catch(error => {
-          if (!(error instanceof DOMException && error.name === 'AbortError')) setUsernameAvailability('error')
-        })
-    }, 300)
-    return () => {
-      window.clearTimeout(timer)
-      controller.abort()
-    }
-  }, [session?.accountId, usernameMode, username])
+  }, [session, usernameMode, selectedMarkets, leverage, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -130,7 +184,7 @@ function SettingUpPage() {
         showToast('error', 'Enter the email address used for your waitlist claim.')
         return
       }
-    } else if (!/^[a-z0-9_]{3,20}$/.test(username.trim())) {
+    } else if (!/^[a-z0-9_]{3,20}$/.test(usernameRef.current.trim())) {
       showToast('error', 'Use 3–20 lowercase letters, numbers, or underscores for your username.')
       return
     } else if (usernameAvailability !== 'available') {
@@ -142,13 +196,13 @@ function SettingUpPage() {
     try {
       if (usernameMode === 'reclaim') {
         const result = await reclaimAccountUsername({ account_id: session.accountId, email: reclaimEmail.trim() })
-        setUsername(result.username)
+        usernameRef.current = result.username
         setStep(1)
         dismissToast(waitingToast)
         showToast('success', `Welcome back, ${result.username}.`)
       } else {
-        const result = await claimAccountUsername({ account_id: session.accountId, username: username.trim() })
-        setUsername(result.username)
+        const result = await claimAccountUsername({ account_id: session.accountId, username: usernameRef.current.trim() })
+        usernameRef.current = result.username
         setStep(1)
         dismissToast(waitingToast)
         showToast('success', result.status === 'already_claimed' ? 'Your username is ready.' : 'Username claimed.')
@@ -181,7 +235,7 @@ function SettingUpPage() {
       setAgentRecordId(recordId)
       setAgentPublicKey(publicKey)
       const draftState = {
-        usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit,
+        usernameMode, selectedMarkets, leverage, username: usernameRef.current, reclaimEmail, agentName, positionLimit, dailyLossLimit,
         accessDuration, agentRecordId: recordId, agentPublicKey: publicKey,
       }
       localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify(draftState))
@@ -207,7 +261,7 @@ function SettingUpPage() {
         nonce: challenge.nonce,
       })
       localStorage.setItem(`afterbell.onboarding.v1:${session.accountId}`, JSON.stringify({
-        username: username.trim(), agent: { name, markets: selectedMarkets, maxLeverage: leverage,
+        username: usernameRef.current.trim(), agent: { name, markets: selectedMarkets, maxLeverage: leverage,
           positionLimitUsdc: Number(positionLimit), dailyLossLimitUsdc: Number(dailyLossLimit),
           accessDurationDays: Number(accessDuration), recordId: result.agent_record_id,
           transactionHash: result.transaction_hash ?? null },
@@ -274,20 +328,13 @@ function SettingUpPage() {
             </div>
 
             <div className="username-mode-switch" role="tablist" aria-label="Username option">
-              <button className={usernameMode === 'new' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'new'} onClick={() => setUsernameMode('new')}>Choose a username</button>
+              <button className={usernameMode === 'new' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'new'} onClick={() => { setUsernameAvailability('idle'); setUsernameMode('new') }}>Choose a username</button>
               <button className={usernameMode === 'reclaim' ? 'active' : ''} role="tab" aria-selected={usernameMode === 'reclaim'} onClick={() => setUsernameMode('reclaim')}>Reclaim waitlist name</button>
             </div>
 
             {usernameMode === 'new' ? <div className="username-form-preview">
               <label htmlFor="onboarding-username">Username</label>
-              <div className="username-input-wrap"><span>@</span><input id="onboarding-username" placeholder="yourname" autoComplete="off" value={username} onChange={event => setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))} /></div>
-              <p className={`username-availability username-availability-${usernameAvailability}`} aria-live="polite">
-                {usernameAvailability === 'checking' ? 'Checking availability…'
-                  : usernameAvailability === 'available' ? <><span aria-hidden="true">✓</span> Username is available.</>
-                  : usernameAvailability === 'taken' ? <><span aria-hidden="true">×</span> That username is taken or reserved.</>
-                  : usernameAvailability === 'error' ? 'Could not check availability. Try again.'
-                  : '3–20 characters: lowercase letters, numbers, and underscores.'}
-              </p>
+              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} initialValue={usernameRef.current} onAvailabilityChange={handleUsernameAvailability} />}
             </div> : <div className="username-form-preview reclaim-preview">
               <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
               <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" value={reclaimEmail} onChange={event => setReclaimEmail(event.target.value)} /></div>
