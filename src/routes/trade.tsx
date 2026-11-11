@@ -125,9 +125,9 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
         <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme={chartTheme} grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
           <Panel id="price" heightRatio={3}><Candlesticks legend={false} series={{
             body: {
-              up: { width: 8, backgroundColor: '#18bd83', borderColor: '#18bd83' },
-              down: { width: 8, backgroundColor: '#f05260', borderColor: '#f05260' },
-              flat: { width: 8, backgroundColor: '#8492a3', borderColor: '#8492a3' },
+              up: { width: 0.1, backgroundColor: '#18bd83', borderColor: '#18bd83' },
+              down: { width: 0.1, backgroundColor: '#f05260', borderColor: '#f05260' },
+              flat: { width: 0.1, backgroundColor: '#8492a3', borderColor: '#8492a3' },
             },
             wick: {
               up: { width: 1, color: '#18bd83' },
