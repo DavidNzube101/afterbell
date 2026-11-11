@@ -65,10 +65,13 @@ function SettingUpPage() {
   useEffect(() => {
     if (!session || (sessionStorage.getItem('afterbell.first-time-setup') !== 'true' &&
         localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) !== 'true')) return
-    localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify({
-      usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
-      agentRecordId, agentPublicKey,
-    }))
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify({
+        usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
+        agentRecordId, agentPublicKey,
+      }))
+    }, 400)
+    return () => window.clearTimeout(timer)
   }, [session, usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
 
   useEffect(() => {
