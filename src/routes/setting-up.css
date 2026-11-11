@@ -36,6 +36,13 @@
 .username-input-wrap input { flex: 1; }
 .username-input-wrap input::placeholder, .agent-name-field input::placeholder { color: #586372; }
 .username-form-preview > p { margin: 9px 0 0; color: #727e8c; font-size: 11px; }
+.username-form-preview > p.username-availability { min-height: 14px; display: flex; align-items: center; gap: 5px; }
+.username-availability-checking { color: #8994a2 !important; }
+.username-availability-available { color: #54d6a0 !important; }
+.username-availability-available span { font-size: 13px; font-weight: 700; }
+.username-availability-taken { color: #ff7c85 !important; }
+.username-availability-taken span { font-size: 15px; font-weight: 700; }
+.username-availability-error { color: #ffbb70 !important; }
 .reclaim-preview { min-height: 0; }
 .onboarding-note { display: flex; align-items: center; gap: 9px; margin-top: 27px; padding-top: 17px; border-top: 1px solid #202833; color: #778392; font-size: 11px; }
 .agent-slide { min-height: 466px; }

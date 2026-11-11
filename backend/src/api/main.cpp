@@ -464,6 +464,18 @@ int main() {
                 }
             }, {drogon::Post});
         drogon::app().registerHandler(
+            "/v1/account/username/check",
+            [profileStore](const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try {
+                    callback(drogon::HttpResponse::newHttpJsonResponse(profileStore->checkUsername(
+                        request->getParameter("account_id"), request->getParameter("username"))));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("username_check_unavailable", error.what()));
+                    response->setStatusCode(drogon::k503ServiceUnavailable); callback(response);
+                }
+            }, {drogon::Get});
+        drogon::app().registerHandler(
             "/v1/account/username/claim",
             [accountService, profileStore](const drogon::HttpRequestPtr &request,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {

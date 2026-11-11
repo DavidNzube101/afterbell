@@ -80,6 +80,32 @@ ProfileStore::ProfileStore(std::string databaseUrl) : databaseUrl_(std::move(dat
     PQclear(result);
 }
 
+Json::Value ProfileStore::checkUsername(const std::string &accountId, const std::string &username) const {
+    Json::Value response;
+    try {
+        validateAccount(accountId);
+        validateUsername(username);
+    } catch (const std::invalid_argument &) {
+        response["valid"] = false;
+        response["available"] = false;
+        return response;
+    }
+
+    Connection connection(databaseUrl_);
+    auto *result = connection.query(
+        "SELECT NOT EXISTS ("
+        "SELECT 1 FROM afterbell_user_profiles p WHERE lower(p.username) = lower($1) AND p.account_id <> $2 "
+        "UNION ALL "
+        "SELECT 1 FROM waitlist_signups w WHERE lower(w.username) = lower($1) "
+        "AND NOT EXISTS (SELECT 1 FROM afterbell_user_profiles p WHERE p.account_id = $2 AND lower(p.username) = lower($1))"
+        ") AND NOT EXISTS (SELECT 1 FROM afterbell_user_profiles p WHERE p.account_id = $2 AND lower(p.username) <> lower($1))",
+        {username, accountId});
+    response["valid"] = true;
+    response["available"] = PQntuples(result) == 1 && std::string(PQgetvalue(result, 0, 0)) == "t";
+    PQclear(result);
+    return response;
+}
+
 Json::Value ProfileStore::claimUsername(const std::string &accountId, const std::string &username) const {
     validateAccount(accountId);
     validateUsername(username);
@@ -109,6 +135,22 @@ Json::Value ProfileStore::persist(const std::string &accountId, const std::strin
     auto *result = connection.query("BEGIN");
     PQclear(result);
     try {
+        result = connection.query("SELECT username FROM afterbell_user_profiles WHERE account_id = $1", {accountId});
+        if (PQntuples(result) != 0) {
+            const bool alreadyClaimed = std::string(PQgetvalue(result, 0, 0)) == username;
+            PQclear(result);
+            if (alreadyClaimed) {
+                result = connection.query("COMMIT");
+                PQclear(result);
+                Json::Value response;
+                response["username"] = username;
+                response["status"] = "already_claimed";
+                response["reclaimed"] = fromWaitlist;
+                return response;
+            }
+            throw UsernameUnavailable("This wallet already has a username.");
+        }
+        PQclear(result);
         if (!fromWaitlist) {
             result = connection.query(
                 "SELECT 1 FROM waitlist_signups WHERE lower(username) = lower($1) LIMIT 1", {username});

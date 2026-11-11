@@ -14,6 +14,7 @@ class UsernameUnavailable : public std::runtime_error {
 class ProfileStore {
   public:
     explicit ProfileStore(std::string databaseUrl);
+    Json::Value checkUsername(const std::string &accountId, const std::string &username) const;
     Json::Value claimUsername(const std::string &accountId, const std::string &username) const;
     Json::Value reclaimUsername(const std::string &accountId, const std::string &email) const;
 

@@ -17,7 +17,7 @@ import { markets } from '../data/markets'
 import { useWalletSession } from '../lib/wallet-session'
 import { useToasts } from '../lib/toasts'
 import { createAgentKey, type AgentPublicKey } from '../lib/agent-key'
-import { claimAccountUsername, getAgentSetupPayload, reclaimAccountUsername, submitAgentSetup } from '../lib/account'
+import { checkAccountUsername, claimAccountUsername, getAgentSetupPayload, reclaimAccountUsername, submitAgentSetup } from '../lib/account'
 import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
@@ -57,6 +57,7 @@ function SettingUpPage() {
   const [agentPublicKey, setAgentPublicKey] = useState<AgentPublicKey | null>(draft?.agentPublicKey ?? null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isClaimingUsername, setIsClaimingUsername] = useState(false)
+  const [usernameAvailability, setUsernameAvailability] = useState<'idle' | 'checking' | 'available' | 'taken' | 'error'>('idle')
 
   useEffect(() => {
     if (!session) void navigate({ to: '/', replace: true })
@@ -73,6 +74,26 @@ function SettingUpPage() {
     }, 400)
     return () => window.clearTimeout(timer)
   }, [session, usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
+
+  useEffect(() => {
+    if (usernameMode !== 'new' || !session || !/^[a-z0-9_]{3,20}$/.test(username.trim())) {
+      setUsernameAvailability('idle')
+      return
+    }
+    const controller = new AbortController()
+    setUsernameAvailability('checking')
+    const timer = window.setTimeout(() => {
+      void checkAccountUsername(session.accountId, username.trim(), controller.signal)
+        .then(result => setUsernameAvailability(result.valid && result.available ? 'available' : 'taken'))
+        .catch(error => {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) setUsernameAvailability('error')
+        })
+    }, 300)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [session?.accountId, usernameMode, username])
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -111,6 +132,9 @@ function SettingUpPage() {
       }
     } else if (!/^[a-z0-9_]{3,20}$/.test(username.trim())) {
       showToast('error', 'Use 3–20 lowercase letters, numbers, or underscores for your username.')
+      return
+    } else if (usernameAvailability !== 'available') {
+      showToast('error', usernameAvailability === 'taken' ? 'That username is taken or reserved.' : 'Wait for the username check to finish.')
       return
     }
     setIsClaimingUsername(true)
@@ -257,7 +281,13 @@ function SettingUpPage() {
             {usernameMode === 'new' ? <div className="username-form-preview">
               <label htmlFor="onboarding-username">Username</label>
               <div className="username-input-wrap"><span>@</span><input id="onboarding-username" placeholder="yourname" autoComplete="off" value={username} onChange={event => setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))} /></div>
-              <p>3–20 characters: lowercase letters, numbers, and underscores.</p>
+              <p className={`username-availability username-availability-${usernameAvailability}`} aria-live="polite">
+                {usernameAvailability === 'checking' ? 'Checking availability…'
+                  : usernameAvailability === 'available' ? <><span aria-hidden="true">✓</span> Username is available.</>
+                  : usernameAvailability === 'taken' ? <><span aria-hidden="true">×</span> That username is taken or reserved.</>
+                  : usernameAvailability === 'error' ? 'Could not check availability. Try again.'
+                  : '3–20 characters: lowercase letters, numbers, and underscores.'}
+              </p>
             </div> : <div className="username-form-preview reclaim-preview">
               <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
               <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" value={reclaimEmail} onChange={event => setReclaimEmail(event.target.value)} /></div>
@@ -292,7 +322,7 @@ function SettingUpPage() {
       <div className="onboarding-controls">
         <button className="onboarding-back" type="button" onClick={() => setStep(0)} disabled={step === 0}><Icon kind="left" size={16} /> Back</button>
         <div className="onboarding-dots" aria-hidden="true"><span className={step === 0 ? 'active' : ''} /><span className={step === 1 ? 'active' : ''} /></div>
-        <button className="onboarding-next" type="button" onClick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername}>{step === 0 ? isClaimingUsername ? 'Checking…' : <>Continue <Icon kind="right" size={16} /></> : isSubmitting ? 'Setting up…' : 'Finish setup'}</button>
+        <button className="onboarding-next" type="button" onClick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername || (step === 0 && usernameMode === 'new' && usernameAvailability !== 'available')}>{step === 0 ? isClaimingUsername ? 'Checking…' : <>Continue <Icon kind="right" size={16} /></> : isSubmitting ? 'Setting up…' : 'Finish setup'}</button>
       </div>
       <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
     </section>

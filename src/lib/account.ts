@@ -16,6 +16,20 @@ type AgentSetupInput = {
 
 type ApiError = { error?: { message?: string } }
 
+export async function checkAccountUsername(accountId: string, username: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ account_id: accountId, username })
+  let response: Response
+  try {
+    response = await fetch(`/api/v1/account/username/check?${query}`, { headers: { Accept: 'application/json' }, signal })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new Error('Could not check username availability.')
+  }
+  const result = await response.json().catch(() => ({})) as ApiError & { valid?: boolean; available?: boolean }
+  if (!response.ok) throw new Error(result.error?.message || `Username check failed (${response.status}).`)
+  return { valid: result.valid === true, available: result.available === true }
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   let response: Response
   try {

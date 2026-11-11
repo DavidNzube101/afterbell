@@ -234,6 +234,32 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/account/username/check:
+    get:
+      tags: [Accounts]
+      operationId: checkAccountUsernameAvailability
+      summary: Check username syntax and availability
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: string, maxLength: 128 }
+        - name: username
+          in: query
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 20, pattern: '^[a-z0-9_]+$' }
+      responses:
+        '200':
+          description: Username availability
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, available]
+                properties:
+                  valid: { type: boolean }
+                  available: { type: boolean }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/account/username/reclaim:
     post:
       tags: [Accounts]
