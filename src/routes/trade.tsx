@@ -1,8 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
-import { Candlesticks, Chart, Panel, VolumeBars } from 'react-candlesticks'
-import type { ChartHandle, DataPoint, Theme } from 'react-candlesticks'
-import 'react-candlesticks/style.css'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
 import logo from '../assets/afterbell-logo.png'
 import shareImage1 from '../assets/share-images/1.png'
@@ -56,32 +53,10 @@ function loadCanvasSvg(svg: SVGSVGElement) {
 const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
 const candleIntervalMs: Record<ChartRange, number> = { '1h': 900_000, '1d': 3_600_000, '1w': 14_400_000, '1m': 86_400_000, all: 86_400_000 }
-const chartGranularity: Record<ChartRange, 'm15' | 'h1' | 'h4' | 'd1'> = { '1h': 'm15', '1d': 'h1', '1w': 'h4', '1m': 'd1', all: 'd1' }
-const chartTheme: Theme = {
-  base: 'dark',
-  layers: {
-    candlesticks: { series: {
-      body: {
-        up: { backgroundColor: '#18bd83', borderColor: '#18bd83' },
-        down: { backgroundColor: '#f05260', borderColor: '#f05260' },
-        flat: { backgroundColor: '#8492a3', borderColor: '#8492a3' },
-      },
-      wick: {
-        up: { color: '#18bd83' },
-        down: { color: '#f05260' },
-        flat: { color: '#8492a3' },
-      },
-    } },
-    volumeBars: { series: { bars: {
-      up: { backgroundColor: '#18bd83', borderColor: '#18bd83' },
-      down: { backgroundColor: '#f05260', borderColor: '#f05260' },
-      flat: { backgroundColor: '#657386', borderColor: '#657386' },
-    } } },
-  },
-}
 function PriceChart({ market, points, volumePoints, range, onRangeChange }: { market: Market; points: PricePoint[]; volumePoints: VolumePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
-  const chartRef = useRef<ChartHandle>(null)
-  const fittedRef = useRef<{ ticker: string; range: ChartRange } | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hoverRef = useRef<{ index: number; y: number } | null>(null)
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const candles = useMemo(() => {
     const buckets = new Map<number, { open: number; high: number; low: number; close: number; volume: number }>()
     const interval = candleIntervalMs[range]
@@ -99,34 +74,163 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       if (current) { current.high = Math.max(current.high, value); current.low = Math.min(current.low, value); current.close = value }
       else buckets.set(bucket, { open: value, high: value, low: value, close: value, volume: 0 })
     }
-    return Array.from(buckets, ([timestamp, candle]) => ({ time: new Date(timestamp).toISOString(), ...candle, volume: volumes.get(timestamp) ?? 0 }))
-      .sort((left, right) => left.time.localeCompare(right.time)) as DataPoint[]
+    return Array.from(buckets, ([timestamp, candle]) => ({ time: timestamp, ...candle, volume: volumes.get(timestamp) ?? 0 }))
+      .sort((left, right) => left.time - right.time)
   }, [points, volumePoints, range])
 
   useEffect(() => {
-    if (!candles.length || !chartRef.current) return
-    if (fittedRef.current?.ticker === market.ticker && fittedRef.current.range === range) return
-    fittedRef.current = { ticker: market.ticker, range }
-    const frame = requestAnimationFrame(() => chartRef.current?.fitContent({ marginBars: 4 }))
-    return () => cancelAnimationFrame(frame)
-  }, [candles, market.ticker, range])
+    const canvas = canvasRef.current
+    const context = canvas?.getContext('2d')
+    if (!canvas || !context) return
+    hoverRef.current = null
+    const paint = () => {
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
+      if (!width || !height) return
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+      context.clearRect(0, 0, width, height)
+      if (!candles.length) return
+
+      const left = 12
+      const right = Math.min(width * 0.2, 76)
+      const top = 20
+      const bottom = 26
+      const volumeHeight = Math.min(74, Math.max(42, height * 0.18))
+      const volumeGap = 12
+      const priceBottom = height - bottom - volumeHeight - volumeGap
+      const plotWidth = width - left - right
+      const plotHeight = priceBottom - top
+      if (plotWidth <= 0 || plotHeight <= 0) return
+
+      const minPrice = Math.min(...candles.map(candle => candle.low))
+      const maxPrice = Math.max(...candles.map(candle => candle.high))
+      const padding = Math.max((maxPrice - minPrice) * 0.1, maxPrice * 0.001)
+      const low = Math.max(0, minPrice - padding)
+      const high = maxPrice + padding
+      const timeStart = candles[0].time - candleIntervalMs[range] / 2
+      const timeEnd = candles[candles.length - 1].time + candleIntervalMs[range] / 2
+      const timeSpan = Math.max(candleIntervalMs[range], timeEnd - timeStart)
+      const x = (time: number) => left + (time - timeStart) / timeSpan * plotWidth
+      const y = (price: number) => top + (high - price) / (high - low || 1) * plotHeight
+      const font = getComputedStyle(canvas).fontFamily
+      context.font = `12px ${font}`
+      context.fillStyle = '#18212d'
+      for (let gx = left; gx <= width - right; gx += 24) {
+        for (let gy = top; gy <= height - bottom; gy += 24) {
+          context.beginPath()
+          context.arc(gx, gy, 0.7, 0, Math.PI * 2)
+          context.fill()
+        }
+      }
+      context.fillStyle = '#8492a3'
+      context.textAlign = 'left'
+      for (let tick = 0; tick <= 4; tick++) {
+        const value = high - (high - low) * tick / 4
+        context.fillText(value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), width - right + 8, top + plotHeight * tick / 4 + 4)
+      }
+
+      const maxVolume = Math.max(1, ...candles.map(candle => candle.volume))
+      const bodyWidth = Math.max(1, Math.min(12, plotWidth * candleIntervalMs[range] / timeSpan * 0.72))
+      for (const candle of candles) {
+        const centerX = x(candle.time)
+        const openY = y(candle.open)
+        const closeY = y(candle.close)
+        const color = candle.close >= candle.open ? '#18c77a' : '#ff583f'
+        context.strokeStyle = color
+        context.lineWidth = 1
+        context.beginPath()
+        context.moveTo(centerX, y(candle.high))
+        context.lineTo(centerX, y(candle.low))
+        context.stroke()
+        context.fillStyle = color
+        context.fillRect(centerX - bodyWidth / 2, Math.min(openY, closeY), bodyWidth, Math.max(1.5, Math.abs(closeY - openY)))
+        if (candle.volume > 0) {
+          const barHeight = candle.volume / maxVolume * (volumeHeight - 4)
+          context.globalAlpha = 0.55
+          context.fillRect(centerX - bodyWidth / 2, height - bottom - barHeight, bodyWidth, barHeight)
+          context.globalAlpha = 1
+        }
+      }
+
+      const last = candles[candles.length - 1]
+      const lastY = y(last.close)
+      context.strokeStyle = 'rgba(132, 146, 163, .42)'
+      context.setLineDash([4, 5])
+      context.beginPath()
+      context.moveTo(left, lastY)
+      context.lineTo(width - right, lastY)
+      context.stroke()
+      context.setLineDash([])
+      context.fillStyle = '#10161f'
+      context.fillRect(width - right + 2, lastY - 12, right - 4, 24)
+      context.strokeStyle = last.close >= last.open ? '#18c77a' : '#ff583f'
+      context.strokeRect(width - right + 2, lastY - 12, right - 4, 24)
+      context.fillStyle = last.close >= last.open ? '#18c77a' : '#ff583f'
+      context.fillText(last.close.toFixed(2), width - right + 8, lastY + 4)
+
+      context.fillStyle = '#8492a3'
+      const timeTicks = width < 480 ? 3 : 5
+      for (let tick = 0; tick < timeTicks; tick++) {
+        const time = timeStart + timeSpan * tick / (timeTicks - 1)
+        const options: Intl.DateTimeFormatOptions = range === '1w' || range === '1m' || range === 'all'
+          ? { month: 'short', day: 'numeric' }
+          : { hour: '2-digit', minute: '2-digit' }
+        context.textAlign = tick === 0 ? 'left' : tick === timeTicks - 1 ? 'right' : 'center'
+        context.fillText(new Date(time).toLocaleString([], options), x(time), height - 6)
+      }
+      context.textAlign = 'left'
+      if (hoverRef.current) {
+        const candle = candles[hoverRef.current.index]
+        const crossX = x(candle.time)
+        context.strokeStyle = 'rgba(132, 146, 163, .55)'
+        context.lineWidth = 0.7
+        context.beginPath()
+        context.moveTo(crossX, top)
+        context.lineTo(crossX, height - bottom)
+        context.moveTo(left, hoverRef.current.y)
+        context.lineTo(width - right, hoverRef.current.y)
+        context.stroke()
+      }
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      if (!candles.length) return
+      const rect = canvas.getBoundingClientRect()
+      const px = event.clientX - rect.left
+      const start = candles[0].time - candleIntervalMs[range] / 2
+      const end = candles[candles.length - 1].time + candleIntervalMs[range] / 2
+      const right = Math.min(canvas.clientWidth * 0.2, 76)
+      const t = start + (px - 12) / (canvas.clientWidth - 12 - right) * (end - start)
+      const index = candles.reduce((best, candle, i) => Math.abs(candle.time - t) < Math.abs(candles[best].time - t) ? i : best, 0)
+      hoverRef.current = { index, y: event.clientY - rect.top }
+      setHoveredIndex(current => current === index ? current : index)
+      paint()
+    }
+    const onPointerLeave = () => { hoverRef.current = null; setHoveredIndex(null); paint() }
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerleave', onPointerLeave)
+    const resize = new ResizeObserver(paint)
+    resize.observe(canvas)
+    paint()
+    return () => { resize.disconnect(); canvas.removeEventListener('pointermove', onPointerMove); canvas.removeEventListener('pointerleave', onPointerLeave) }
+  }, [candles, range])
 
   const latest = candles[candles.length - 1]
+  const displayCandle = hoveredIndex === null ? latest : candles[hoveredIndex] ?? latest
   return <div className="chart-shell">
     <div className="chart-tools">
       <div className="chart-pair"><span>{market.ticker} / USDC</span></div>
       <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
     </div>
     <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
-      {candles.length < 2 ? <div className="chart-placeholder">
+      {candles.length === 0 ? <div className="chart-placeholder">
         {latest && <strong>${latest.close.toFixed(2)}</strong>}
         <span>{latest ? 'Collecting more A1 price updates to build the chart.' : 'Waiting for fresh market price data.'}</span>
       </div> : <>
-        <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme={chartTheme} grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
-          <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
-          <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
-        </Chart>
-        {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
+        <canvas ref={canvasRef} className="oracle-candlestick-canvas" aria-label={`${market.ticker} / USDC OHLC price history`} />
+        {displayCandle && <div className="chart-ohlc" aria-label="Selected candle"><span>O <b>{displayCandle.open.toFixed(2)}</b></span><span>H <b>{displayCandle.high.toFixed(2)}</b></span><span>L <b>{displayCandle.low.toFixed(2)}</b></span><span>C <b>{displayCandle.close.toFixed(2)}</b></span></div>}
       </>}
     </div>
   </div>

@@ -13,7 +13,6 @@
         "buffer": "^6.0.3",
         "qrcode": "^1.5.4",
         "react": "^19.3.1",
-        "react-candlesticks": "^0.7.14",
         "react-dom": "^19.3.1",
         "simple-icons": "^16.36.0",
       },
@@ -465,8 +464,6 @@
     "randombytes": ["randombytes@2.1.0", "", { "dependencies": { "safe-buffer": "^5.1.0" } }, "sha512-vYl3iOX+4CKUWuxGi9Ukhie6fsqXqS9FE2Zaic4tNFD2N2QQaXOMFbuKK4QmDHC0JO6B1Zp41J0LpT0oR68amQ=="],
 
     "react": ["react@19.3.1", "", {}, "sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw=="],
-
-    "react-candlesticks": ["react-candlesticks@0.7.14", "", { "peerDependencies": { "prop-types": "^15.8.1", "react": "^18.2.0 || ^19.0.0", "react-dom": "^18.2.0 || ^19.0.0" }, "optionalPeers": ["prop-types"] }, "sha512-tergsGxUKSUlAnFWS8jdQEBQjaHET1Hn0qLvGVg7CaIFgITz3WNPkzvRNOLAWZDyT9q3x/Z5HI10wfM/btxP7Q=="],
 
     "react-dom": ["react-dom@19.3.1", "", { "dependencies": { "scheduler": "^0.28.0" }, "peerDependencies": { "react": "^19.3.1" } }, "sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ=="],
 
