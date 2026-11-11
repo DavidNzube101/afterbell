@@ -34,6 +34,45 @@
 .deposit-info button { max-height: 53px; overflow: auto; }
 .deposit-warning, .withdraw-note { margin: 14px 0 0; padding: 10px; border-radius: 8px; background: #1b2024; color: #b9aa86; font-size: 9px; line-height: 1.55; }
 .deposit-warning code { color: #ded3b7; font-family: inherit; }
+.balance-deposit-page { display: grid; align-content: start; gap: 15px; }
+.deposit-amount-label { display: grid; gap: 8px; color: #9eabb8; font-size: 11px; }
+.deposit-amount-input { width: 100%; height: 54px; display: flex; align-items: center; gap: 9px; padding: 0 13px; border: 0; border-radius: 10px; background: #171f29; }
+.deposit-amount-input:focus-within { box-shadow: 0 0 0 1px #345372; }
+.deposit-amount-input input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #f1f5f8; font: inherit; font-size: 21px; font-variant-numeric: tabular-nums; }
+.deposit-amount-input input::placeholder { color: #586675; }
+.deposit-amount-input > span { color: #c4cfda; font-size: 11px; }
+.deposit-note { margin: 0; color: #8794a2; font-size: 10px; line-height: 1.6; }
+.balance-deposit-page .balance-primary-action { width: 100%; margin-top: 2px; }
+.deposit-wallet-page { display: grid; align-content: start; gap: 16px; padding: 20px; }
+.deposit-network-heading { display: flex; align-items: center; gap: 11px; padding: 2px 1px 5px; }
+.near-network-icon { display: block; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 11px; object-fit: cover; }
+.deposit-network-heading > div { display: grid; gap: 4px; }
+.deposit-network-heading b { color: #f0f4f8; font-size: 14px; font-weight: 580; }
+.deposit-network-heading small { color: #8995a2; font-size: 11px; }
+.deposit-wallet-options { display: grid; gap: 9px; }
+.deposit-wallet-option { width: 100%; min-height: 58px; display: flex; align-items: center; gap: 13px; padding: 11px 13px; border: 1px solid #151c25; border-radius: 12px; background: #151c25; color: #f4f6f8; text-align: left; cursor: pointer; transition: background 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.deposit-wallet-option:hover:not(:disabled) { transform: translateY(-1px); border-color: #1a2531; background: #1a2531; }
+.deposit-wallet-option:disabled { cursor: wait; opacity: .58; }
+.deposit-wallet-option img { display: block; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; object-fit: cover; }
+.deposit-wallet-option > span { flex: 1; font-size: 13px; font-weight: 520; }
+.deposit-wallet-option svg { width: 17px; height: 17px; color: #75818f; }
+.deposit-selected-amount { display: flex; align-items: center; gap: 7px; margin: 2px 0 0; padding: 11px; border-radius: 9px; background: #171f29; color: #9aa7b4; font-size: 10px; }
+.deposit-selected-amount b { color: #e4ebf1; font-weight: 600; }
+.deposit-selected-amount > span { margin-left: auto; overflow: hidden; max-width: 145px; text-overflow: ellipsis; white-space: nowrap; }
+.deposit-progress { display: flex; align-items: center; gap: 8px; margin: 0; color: #a9bacb; font-size: 10px; }
+.deposit-progress span { width: 7px; height: 7px; border-radius: 50%; background: #0065d2; animation: deposit-wait 1s ease-in-out infinite alternate; }
+.deposit-complete { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.deposit-complete-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: #123327; color: #52d49b; font-size: 20px; }
+.deposit-complete h3 { margin: 0; color: #eef4f8; font-size: 15px; font-weight: 600; }
+.deposit-complete > p { margin: 0; color: #8794a2; font-size: 10px; line-height: 1.6; }
+.deposit-complete > p b { color: #d6e0e8; font-weight: 550; }
+.deposit-complete .deposit-copy-address { margin: 3px 0; }
+.deposit-complete .balance-primary-action { width: 100%; margin-top: 2px; }
+.balance-carousel.next { animation: balance-wipe-forward .3s cubic-bezier(.22,.75,.25,1) both; }
+.balance-carousel.back { animation: balance-wipe-backward .3s cubic-bezier(.22,.75,.25,1) both; }
+@keyframes deposit-wait { to { opacity: .35; } }
+@keyframes balance-wipe-forward { from { opacity: .4; transform: translate3d(12px,0,0); } to { opacity: 1; transform: translate3d(0,0,0); } }
+@keyframes balance-wipe-backward { from { opacity: .4; transform: translate3d(-12px,0,0); } to { opacity: 1; transform: translate3d(0,0,0); } }
 .balance-withdraw-page { display: grid; gap: 15px; }
 .withdraw-available { display: flex; justify-content: space-between; gap: 10px; padding: 12px; border-radius: 8px; background: #171f29; color: #8a97a5; font-size: 10px; }
 .withdraw-available b { color: #dce5ee; font-weight: 550; }
@@ -50,4 +89,4 @@
 @keyframes balance-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes balance-slide-next { from { opacity: .55; transform: translateX(22px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes balance-slide-back { from { opacity: .55; transform: translateX(-22px); } to { opacity: 1; transform: translateX(0); } }
-@media (prefers-reduced-motion: reduce) { .balance-modal-backdrop, .balance-carousel { animation-duration: .01ms; } }
+@media (prefers-reduced-motion: reduce) { .balance-modal-backdrop, .balance-carousel, .deposit-progress span { animation-duration: .01ms; } }

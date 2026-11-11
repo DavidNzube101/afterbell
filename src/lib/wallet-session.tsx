@@ -27,6 +27,34 @@ const SESSION_KEY = 'afterbell.wallet-session.v1'
 const nearNetwork = import.meta.env.VITE_NEAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
 const contractId = import.meta.env.VITE_A1_CONTRACT_ID || (nearNetwork === 'mainnet' ? 'a1.afterbell.near' : 'afterbellfx-dev-faucet.testnet')
 
+export async function sendNearUsdcDeposit(walletName: string, expectedNetwork: string, tokenId: string, receiverId: string, accountId: string, amount: string) {
+  if (expectedNetwork.toLowerCase() !== nearNetwork) throw new Error(`This app is connected to NEAR ${nearNetwork}, but the deposit uses ${expectedNetwork}.`)
+  const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { actionCreators }] = await Promise.all([
+    import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-js/transactions'),
+  ])
+  const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly()] })
+  const walletId = walletName.toLowerCase().startsWith('hot') ? 'hot-wallet' : 'nightly'
+  const wallet = await selector.wallet(walletId)
+  let accounts = await wallet.getAccounts()
+  if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId: tokenId, methodNames: ['ft_transfer_call'] })
+  const signer = accounts[0]
+  if (!signer) throw new Error('The selected wallet did not provide a NEAR account.')
+
+  const result = await wallet.signAndSendTransaction({
+    signerId: signer.accountId,
+    receiverId: tokenId,
+    actions: [actionCreators.functionCall('ft_transfer_call', {
+      receiver_id: receiverId,
+      amount,
+      msg: JSON.stringify({ account_id: accountId, deposit_id: crypto.randomUUID() }),
+    }, 120_000_000_000_000n, 1n)],
+  })
+  if (result?.status && typeof result.status === 'object' && 'Failure' in result.status) {
+    throw new Error(result.status.Failure?.error_message || 'The NEAR transaction failed. No deposit was credited.')
+  }
+  return { accountId: signer.accountId, transactionHash: result?.transaction?.hash as string | undefined }
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   let response: Response
   try {
