@@ -138,7 +138,12 @@ function AuthPage() {
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward' | null>(null)
 
   useEffect(() => {
-    if (session) void navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
+    if (session) {
+      const firstTimeSetup = sessionStorage.getItem('afterbell.first-time-setup') === 'true' ||
+        localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) === 'true'
+      if (firstTimeSetup) void navigate({ to: '/setting-up', replace: true })
+      else void navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
+    }
   // A saved wallet is handled once at page entry. A fresh connection below
   // chooses either first-time setup or the core app explicitly.
   // eslint-disable-next-line react-hooks/exhaustive-deps

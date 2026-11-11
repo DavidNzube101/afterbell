@@ -34,15 +34,35 @@ function SettingUpPage() {
   const navigate = useNavigate()
   const { session, disconnect } = useWalletSession()
   const { showToast } = useToasts()
+  const [draft] = useState(() => {
+    try {
+      const accountId = session?.accountId
+      return accountId ? JSON.parse(localStorage.getItem(`afterbell.onboarding-draft.v1:${accountId}`) || 'null') : null
+    } catch { return null }
+  })
   const [step, setStep] = useState(0)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
-  const [usernameMode, setUsernameMode] = useState<'new' | 'reclaim'>('new')
-  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(['NVDA', 'AAPL'])
-  const [leverage, setLeverage] = useState(3)
+  const [usernameMode, setUsernameMode] = useState<'new' | 'reclaim'>(draft?.usernameMode === 'reclaim' ? 'reclaim' : 'new')
+  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(draft?.selectedMarkets ?? ['NVDA', 'AAPL'])
+  const [leverage, setLeverage] = useState<number>(draft?.leverage ?? 3)
+  const [username, setUsername] = useState<string>(draft?.username ?? '')
+  const [reclaimEmail, setReclaimEmail] = useState<string>(draft?.reclaimEmail ?? '')
+  const [agentName, setAgentName] = useState<string>(draft?.agentName ?? 'My agent')
+  const [positionLimit, setPositionLimit] = useState<string>(draft?.positionLimit ?? '1000')
+  const [dailyLossLimit, setDailyLossLimit] = useState<string>(draft?.dailyLossLimit ?? '250')
+  const [accessDuration, setAccessDuration] = useState<string>(draft?.accessDuration ?? '30')
 
   useEffect(() => {
     if (!session) void navigate({ to: '/', replace: true })
   }, [session, navigate])
+
+  useEffect(() => {
+    if (!session || (sessionStorage.getItem('afterbell.first-time-setup') !== 'true' &&
+        localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) !== 'true')) return
+    localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify({
+      usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
+    }))
+  }, [session, usernameMode, selectedMarkets, leverage, username, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration])
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -70,6 +90,52 @@ function SettingUpPage() {
     await disconnect()
     setWalletModalOpen(false)
     await navigate({ to: '/', replace: true })
+  }
+
+  const continueSetup = () => {
+    if (usernameMode === 'reclaim') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reclaimEmail.trim())) {
+        showToast('error', 'Enter the email address used for your waitlist claim.')
+        return
+      }
+      showToast('error', 'Waitlist name lookup is not connected yet. Choose a username to continue.')
+      return
+    }
+    if (!/^[a-z0-9_]{3,20}$/.test(username.trim())) {
+      showToast('error', 'Use 3–20 lowercase letters, numbers, or underscores for your username.')
+      return
+    }
+    setStep(1)
+  }
+
+  const finishSetup = () => {
+    if (!session) return
+    const name = agentName.trim()
+    if (!name) {
+      showToast('error', 'Give your agent a name to continue.')
+      return
+    }
+    if (selectedMarkets.length === 0) {
+      showToast('error', 'Choose at least one market for your agent.')
+      return
+    }
+    const profile = {
+      username: username.trim(),
+      agent: {
+        name,
+        markets: selectedMarkets,
+        maxLeverage: leverage,
+        positionLimitUsdc: Number(positionLimit),
+        dailyLossLimitUsdc: Number(dailyLossLimit),
+        accessDurationDays: Number(accessDuration),
+      },
+    }
+    localStorage.setItem(`afterbell.onboarding.v1:${session.accountId}`, JSON.stringify(profile))
+    localStorage.removeItem(`afterbell.onboarding-draft.v1:${session.accountId}`)
+    localStorage.removeItem(`afterbell.onboarding-required.v1:${session.accountId}`)
+    sessionStorage.removeItem('afterbell.first-time-setup')
+    showToast('success', 'Setup saved. Welcome to Afterbell.')
+    void navigate({ to: '/trade', search: { market: undefined, side: undefined } })
   }
 
   const chainIcon = session?.chain === 'near' ? nearIcon : session?.chain === 'evm' ? evmIcon : solanaIcon
@@ -126,11 +192,11 @@ function SettingUpPage() {
 
             {usernameMode === 'new' ? <div className="username-form-preview">
               <label htmlFor="onboarding-username">Username</label>
-              <div className="username-input-wrap"><span>@</span><input id="onboarding-username" placeholder="yourname" autoComplete="off" /></div>
+              <div className="username-input-wrap"><span>@</span><input id="onboarding-username" placeholder="yourname" autoComplete="off" value={username} onChange={event => setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))} /></div>
               <p>3–20 characters: lowercase letters, numbers, and underscores.</p>
             </div> : <div className="username-form-preview reclaim-preview">
               <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
-              <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" /></div>
+              <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" value={reclaimEmail} onChange={event => setReclaimEmail(event.target.value)} /></div>
               <p>We’ll look up the username you reserved with this email.</p>
             </div>}
 
@@ -143,18 +209,18 @@ function SettingUpPage() {
               <div><h2>Set up your agent</h2><p>Give it a name and choose what it’s allowed to do.</p></div>
             </div>
 
-            <div className="agent-name-field"><label htmlFor="agent-name">Agent name</label><input id="agent-name" placeholder="My trading agent" /></div>
+            <div className="agent-name-field"><label htmlFor="agent-name">Agent name</label><input id="agent-name" placeholder="My trading agent" value={agentName} onChange={event => setAgentName(event.target.value)} /></div>
             <div className="agent-markets-field">
               <div className="agent-field-title"><label>Markets it can trade</label><span>{selectedMarkets.length} selected</span></div>
               <div className="agent-market-options">{markets.map(market => <button type="button" key={market.ticker} className={selectedMarkets.includes(market.ticker) ? 'selected' : ''} onClick={() => toggleMarket(market.ticker)} aria-pressed={selectedMarkets.includes(market.ticker)}><span>{market.ticker}-USDC</span>{selectedMarkets.includes(market.ticker) && <Icon kind="check" size={14} />}</button>)}</div>
             </div>
             <div className="agent-limits-grid">
               <label className="agent-limit-control"><span>Maximum leverage</span><strong>{leverage}×</strong><input aria-label="Maximum leverage" type="range" min="1" max="10" value={leverage} onChange={event => setLeverage(Number(event.target.value))} /></label>
-              <label className="agent-limit-control"><span>Position limit</span><div className="agent-select-value">$1,000 <Icon kind="down" size={14} /></div></label>
-              <label className="agent-limit-control"><span>Daily loss limit</span><div className="agent-select-value">$250 <Icon kind="down" size={14} /></div></label>
-              <label className="agent-limit-control"><span>Access duration</span><div className="agent-select-value">30 days <Icon kind="down" size={14} /></div></label>
+              <label className="agent-limit-control"><span>Position limit</span><select aria-label="Position limit" value={positionLimit} onChange={event => setPositionLimit(event.target.value)}><option value="250">$250</option><option value="500">$500</option><option value="1000">$1,000</option><option value="2500">$2,500</option><option value="5000">$5,000</option></select></label>
+              <label className="agent-limit-control"><span>Daily loss limit</span><select aria-label="Daily loss limit" value={dailyLossLimit} onChange={event => setDailyLossLimit(event.target.value)}><option value="50">$50</option><option value="100">$100</option><option value="250">$250</option><option value="500">$500</option></select></label>
+              <label className="agent-limit-control"><span>Access duration</span><select aria-label="Access duration" value={accessDuration} onChange={event => setAccessDuration(event.target.value)}><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>
             </div>
-            <div className="onboarding-note"><span>Your agent gets limited permissions. You can revoke access at any time.</span></div>
+            <div className="onboarding-note"><span>You can adjust these agent preferences later.</span></div>
           </article>
         </div>
       </div>
@@ -162,7 +228,7 @@ function SettingUpPage() {
       <div className="onboarding-controls">
         <button className="onboarding-back" type="button" onClick={() => setStep(0)} disabled={step === 0}><Icon kind="left" size={16} /> Back</button>
         <div className="onboarding-dots" aria-hidden="true"><span className={step === 0 ? 'active' : ''} /><span className={step === 1 ? 'active' : ''} /></div>
-        <button className="onboarding-next" type="button" onClick={() => setStep(1)} disabled={step === 1}>Continue <Icon kind="right" size={16} /></button>
+        <button className="onboarding-next" type="button" onClick={step === 0 ? continueSetup : finishSetup}>{step === 0 ? <>Continue <Icon kind="right" size={16} /></> : 'Finish setup'}</button>
       </div>
       <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
     </section>

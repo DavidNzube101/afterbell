@@ -209,6 +209,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       setSession(result.session)
       localStorage.setItem(SESSION_KEY, JSON.stringify(result.session))
       sessionStorage.setItem('afterbell.first-time-setup', result.firstTime ? 'true' : 'false')
+      if (result.firstTime) localStorage.setItem(`afterbell.onboarding-required.v1:${result.session.accountId}`, 'true')
       return result.session
     } finally { setConnecting(false) }
   }, [])
