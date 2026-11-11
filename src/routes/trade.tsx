@@ -96,12 +96,16 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
     </div>
     <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
-      <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme="dark" grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
-        <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
-        <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
-      </Chart>
-      {candles.length === 0 && <div className="chart-placeholder">Waiting for fresh market price data.</div>}
-      {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
+      {candles.length < 2 ? <div className="chart-placeholder">
+        {latest && <strong>${latest.close.toFixed(2)}</strong>}
+        <span>{latest ? 'Collecting more A1 price updates to build the chart.' : 'Waiting for fresh market price data.'}</span>
+      </div> : <>
+        <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme="dark" grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
+          <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
+          <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
+        </Chart>
+        {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
+      </>}
     </div>
   </div>
 }
