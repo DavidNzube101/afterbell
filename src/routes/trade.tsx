@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import { Candlesticks, Chart, Panel } from 'react-candlesticks'
-import type { DataPoint, Theme } from 'react-candlesticks'
+import type { ChartHandle, DataPoint, Theme } from 'react-candlesticks'
 import 'react-candlesticks/style.css'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
 import logo from '../assets/afterbell-logo.png'
@@ -55,15 +55,15 @@ function loadCanvasSvg(svg: SVGSVGElement) {
 
 const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
-const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 60_000, '1w': 900_000, '1m': 14_400_000, all: 86_400_000 }
-const chartGranularity: Record<ChartRange, 'm1' | 'm15' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm1', '1w': 'm15', '1m': 'h4', all: 'd1' }
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 300_000, '1w': 900_000, '1m': 14_400_000, all: 86_400_000 }
+const chartGranularity: Record<ChartRange, 'm1' | 'm5' | 'm15' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm5', '1w': 'm15', '1m': 'h4', all: 'd1' }
 const chartTheme: Theme = {
   base: 'dark',
   chart: {
     backgroundColor: '#0c1016',
     grid: {
-      time: { color: '#17202a', width: 1 },
-      value: { color: '#17202a', width: 1 },
+      time: { color: '#10151c', width: 1 },
+      value: { color: '#151c25', width: 1 },
     },
     borders: {
       left: { color: '#0c1016', width: 0 },
@@ -89,6 +89,8 @@ const chartTheme: Theme = {
 }
 
 function PriceChart({ market, points, range, onRangeChange }: { market: Market; points: PricePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
+  const chartRef = useRef<ChartHandle>(null)
+  const fittedRef = useRef<{ ticker: string; range: ChartRange } | null>(null)
   const candles = useMemo(() => {
     const buckets = new Map<number, { open: number; high: number; low: number; close: number }>()
     const interval = candleIntervalMs[range]
@@ -104,6 +106,14 @@ function PriceChart({ market, points, range, onRangeChange }: { market: Market; 
       .sort((left, right) => left.time.localeCompare(right.time)) as DataPoint[]
   }, [points, range])
 
+  useEffect(() => {
+    if (!candles.length || !chartRef.current) return
+    if (fittedRef.current?.ticker === market.ticker && fittedRef.current.range === range) return
+    fittedRef.current = { ticker: market.ticker, range }
+    const frame = requestAnimationFrame(() => chartRef.current?.fitContent({ marginBars: 4 }))
+    return () => cancelAnimationFrame(frame)
+  }, [candles, market.ticker, range])
+
   const latest = candles[candles.length - 1]
   return <div className="chart-shell">
     <div className="chart-tools">
@@ -111,8 +121,8 @@ function PriceChart({ market, points, range, onRangeChange }: { market: Market; 
       <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
     </div>
     <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
-      <Chart className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#0c1016" theme={chartTheme} initialScrollToLatest enableScroll enableZoom>
-        <Panel><Candlesticks /></Panel>
+      <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#0c1016" theme={chartTheme} initialScrollToLatest enableScroll enableZoom>
+        <Panel><Candlesticks legend={false} /></Panel>
       </Chart>
       {candles.length === 0 && <div className="chart-placeholder">Candles will appear as oracle prices arrive.</div>}
       {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
