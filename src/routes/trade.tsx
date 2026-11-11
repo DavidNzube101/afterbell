@@ -55,8 +55,8 @@ function loadCanvasSvg(svg: SVGSVGElement) {
 
 const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
-const candleIntervalMs: Record<ChartRange, number> = { '1h': 300_000, '1d': 900_000, '1w': 3_600_000, '1m': 14_400_000, all: 86_400_000 }
-const chartGranularity: Record<ChartRange, 'm5' | 'm15' | 'h1' | 'h4' | 'd1'> = { '1h': 'm5', '1d': 'm15', '1w': 'h1', '1m': 'h4', all: 'd1' }
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 900_000, '1d': 3_600_000, '1w': 14_400_000, '1m': 86_400_000, all: 86_400_000 }
+const chartGranularity: Record<ChartRange, 'm15' | 'h1' | 'h4' | 'd1'> = { '1h': 'm15', '1d': 'h1', '1w': 'h4', '1m': 'd1', all: 'd1' }
 const chartTheme: Theme = {
   base: 'dark',
   layers: {
