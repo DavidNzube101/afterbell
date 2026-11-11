@@ -16,6 +16,7 @@ export type MarketSnapshot = {
   funding_rate_bps_8h: number; max_leverage_bps?: number; max_position_usdc?: string
 }
 export type PricePoint = { price_e8: string; timestamp_ms: number }
+export type VolumePoint = { volume_usdg_raw: string; timestamp_ms: number }
 export type PositionRecord = {
   position_id: string; market_id: string; is_long: boolean; notional_usdc: string; margin_usdc?: string
   leverage_bps: number; entry_price: string; mark_price?: string; unrealized_pnl_usdc?: string; mark_observed_at_ms?: number
@@ -27,7 +28,7 @@ export type LiquidityOverview = { account_id: string; balance_usdc: string; lp_s
 export type SignedActionPayload = { account_id: string; message: string; nonce: number; expires_at_ms: number; recipient: string; amount_usdc?: string; shares?: string; min_amount_usdc?: string }
 
 export const getSnapshots = () => request<MarketSnapshot[]>('/v1/markets/snapshot')
-export const getMarketHistory = (market: string, range = '1d') => request<{ points: PricePoint[] }>(`/v1/markets/history?${params({ market_id: market, range })}`)
+export const getMarketHistory = (market: string, range = '1d') => request<{ points: PricePoint[]; volume_points: VolumePoint[]; history_start_ms: number | null }>(`/v1/markets/history?${params({ market_id: market, range })}`)
 export const getMarketVolumes = () => request<Array<{ market_id: string; volume_usdc_raw: string }>>('/v1/markets/volume')
 export const getLiquidityOverview = (account: string) => request<LiquidityOverview>(`/v1/liquidity/overview?${params({ account_id: account })}`)
 export const getDepositInstructions = (account: string) => request<{ account_id: string; contract_id: string; token_id: string; network: string }>(`/v1/account/deposit/instructions?${params({ account_id: account })}`)

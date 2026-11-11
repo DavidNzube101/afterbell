@@ -71,12 +71,26 @@ DashboardStore::DashboardStore(std::string databaseUrl) : databaseUrl_(std::move
         "event_json JSONB NOT NULL, indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (network,receipt_id,log_index))");
     PQclear(result);
     result = connection.query(
-        "CREATE TABLE IF NOT EXISTS afterbell_oracle_price_samples ("
+        "CREATE TABLE IF NOT EXISTS afterbell_oracle_mark_history ("
         "network TEXT NOT NULL, market_id TEXT NOT NULL, price_e8 NUMERIC(78,0) NOT NULL, "
-        "observed_at_ms BIGINT NOT NULL, PRIMARY KEY (network, market_id, observed_at_ms))");
+        "observed_at_ms BIGINT NOT NULL, sequence BIGINT NOT NULL, "
+        "PRIMARY KEY (network, market_id, observed_at_ms))");
     PQclear(result);
-    result = connection.query("CREATE INDEX IF NOT EXISTS afterbell_oracle_price_samples_chart_idx "
-                              "ON afterbell_oracle_price_samples (network, market_id, observed_at_ms DESC)");
+    result = connection.query("CREATE INDEX IF NOT EXISTS afterbell_oracle_mark_history_chart_idx "
+                              "ON afterbell_oracle_mark_history (network, market_id, observed_at_ms DESC)");
+    PQclear(result);
+    result = connection.query(
+        "CREATE TABLE IF NOT EXISTS afterbell_robinhood_swaps ("
+        "network TEXT NOT NULL, market_id TEXT NOT NULL, transaction_hash TEXT NOT NULL, log_index BIGINT NOT NULL, "
+        "block_number BIGINT NOT NULL, observed_at_ms BIGINT NOT NULL, quote_amount_raw NUMERIC(78,0) NOT NULL, "
+        "PRIMARY KEY (network, market_id, transaction_hash, log_index))");
+    PQclear(result);
+    result = connection.query("CREATE INDEX IF NOT EXISTS afterbell_robinhood_swaps_chart_idx "
+                              "ON afterbell_robinhood_swaps (network, market_id, observed_at_ms)");
+    PQclear(result);
+    result = connection.query(
+        "CREATE TABLE IF NOT EXISTS afterbell_robinhood_swap_cursors ("
+        "network TEXT PRIMARY KEY, next_block BIGINT NOT NULL)");
     PQclear(result);
     result = connection.query(
         "CREATE TABLE IF NOT EXISTS afterbell_activity_events ("
@@ -98,13 +112,14 @@ DashboardStore::DashboardStore(std::string databaseUrl) : databaseUrl_(std::move
     PQclear(result);
 }
 
-void DashboardStore::recordOracleSample(const std::string &network, const std::string &market,
-                                        std::uint64_t priceE8, std::uint64_t observedAtMs) const {
+void DashboardStore::recordOracleMark(const std::string &network, const std::string &market,
+                                      std::uint64_t priceE8, std::uint64_t observedAtMs,
+                                      std::uint64_t sequence) const {
     Connection connection(databaseUrl_);
     auto *result = connection.query(
-        "INSERT INTO afterbell_oracle_price_samples (network, market_id, price_e8, observed_at_ms) "
-        "VALUES ($1,$2,$3,$4) ON CONFLICT (network, market_id, observed_at_ms) DO NOTHING",
-        {network, market, std::to_string(priceE8), std::to_string(observedAtMs)});
+        "INSERT INTO afterbell_oracle_mark_history (network, market_id, price_e8, observed_at_ms, sequence) "
+        "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (network, market_id, observed_at_ms) DO NOTHING",
+        {network, market, std::to_string(priceE8), std::to_string(observedAtMs), std::to_string(sequence)});
     PQclear(result);
 }
 
@@ -112,7 +127,7 @@ Json::Value DashboardStore::marketHistory(const std::string &network, const std:
                                          std::uint64_t sinceMs, std::size_t limit) const {
     Connection connection(databaseUrl_);
     auto *result = connection.query(
-        "SELECT price_e8::text, observed_at_ms::text FROM afterbell_oracle_price_samples "
+        "SELECT price_e8::text, observed_at_ms::text, sequence::text FROM afterbell_oracle_mark_history "
         "WHERE network=$1 AND market_id=$2 AND observed_at_ms >= $3 "
         "ORDER BY observed_at_ms ASC LIMIT $4",
         {network, market, std::to_string(sinceMs), std::to_string(std::min<std::size_t>(limit, 2000))});
@@ -121,6 +136,70 @@ Json::Value DashboardStore::marketHistory(const std::string &network, const std:
         Json::Value point;
         point["price_e8"] = PQgetvalue(result, row, 0);
         point["timestamp_ms"] = Json::UInt64(std::stoull(PQgetvalue(result, row, 1)));
+        point["sequence"] = Json::UInt64(std::stoull(PQgetvalue(result, row, 2)));
+        output.append(std::move(point));
+    }
+    PQclear(result);
+    return output;
+}
+
+std::optional<std::uint64_t> DashboardStore::marketHistoryStart(const std::string &network,
+                                                                const std::string &market) const {
+    Connection connection(databaseUrl_);
+    auto *result = connection.query(
+        "SELECT MIN(observed_at_ms)::text FROM afterbell_oracle_mark_history WHERE network=$1 AND market_id=$2",
+        {network, market});
+    if (PQntuples(result) == 0 || PQgetisnull(result, 0, 0)) { PQclear(result); return std::nullopt; }
+    const auto value = std::stoull(PQgetvalue(result, 0, 0));
+    PQclear(result);
+    return value;
+}
+
+std::optional<std::uint64_t> DashboardStore::robinhoodSwapCursor(const std::string &network) const {
+    Connection connection(databaseUrl_);
+    auto *result = connection.query("SELECT next_block::text FROM afterbell_robinhood_swap_cursors WHERE network=$1", {network});
+    if (PQntuples(result) == 0) { PQclear(result); return std::nullopt; }
+    const auto value = std::stoull(PQgetvalue(result, 0, 0));
+    PQclear(result);
+    return value;
+}
+
+void DashboardStore::setRobinhoodSwapCursor(const std::string &network, std::uint64_t nextBlock) const {
+    Connection connection(databaseUrl_);
+    auto *result = connection.query(
+        "INSERT INTO afterbell_robinhood_swap_cursors (network,next_block) VALUES ($1,$2) "
+        "ON CONFLICT (network) DO UPDATE SET next_block=EXCLUDED.next_block",
+        {network, std::to_string(nextBlock)});
+    PQclear(result);
+}
+
+void DashboardStore::recordRobinhoodSwap(const std::string &network, const std::string &market,
+                                         const std::string &transactionHash, std::uint64_t logIndex,
+                                         std::uint64_t blockNumber, std::uint64_t timestampMs,
+                                         const std::string &quoteAmountRaw) const {
+    Connection connection(databaseUrl_);
+    auto *result = connection.query(
+        "INSERT INTO afterbell_robinhood_swaps "
+        "(network,market_id,transaction_hash,log_index,block_number,observed_at_ms,quote_amount_raw) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (network,market_id,transaction_hash,log_index) DO NOTHING",
+        {network, market, transactionHash, std::to_string(logIndex), std::to_string(blockNumber),
+         std::to_string(timestampMs), quoteAmountRaw});
+    PQclear(result);
+}
+
+Json::Value DashboardStore::marketVolumeHistory(const std::string &network, const std::string &market,
+                                               std::uint64_t sinceMs) const {
+    Connection connection(databaseUrl_);
+    auto *result = connection.query(
+        "SELECT (observed_at_ms / 60000) * 60000 AS bucket_ms, SUM(quote_amount_raw)::text "
+        "FROM afterbell_robinhood_swaps WHERE network=$1 AND market_id=$2 AND observed_at_ms >= $3 "
+        "GROUP BY bucket_ms ORDER BY bucket_ms ASC",
+        {network, market, std::to_string(sinceMs)});
+    Json::Value output(Json::arrayValue);
+    for (int row = 0; row < PQntuples(result); ++row) {
+        Json::Value point;
+        point["timestamp_ms"] = Json::UInt64(std::stoull(PQgetvalue(result, row, 0)));
+        point["volume_usdg_raw"] = PQgetvalue(result, row, 1);
         output.append(std::move(point));
     }
     PQclear(result);

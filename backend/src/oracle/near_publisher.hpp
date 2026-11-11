@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace afterbell::oracle {
@@ -13,6 +14,12 @@ struct PriceAttestation {
     std::uint16_t confidenceBps;
     std::uint64_t observedAtMs;
     std::string sourceRound;
+};
+
+struct MarketMark {
+    std::uint64_t priceE8;
+    std::uint64_t observedAtMs;
+    std::uint64_t sequence;
 };
 
 class NearPublisher {
@@ -28,6 +35,7 @@ class NearPublisher {
     NearPublisher &operator=(const NearPublisher &) = delete;
 
     std::string publish(const PriceAttestation &price);
+    std::optional<MarketMark> marketMark(const std::string &marketId) const;
     const std::string &accountId() const noexcept { return accountId_; }
     bool verifyContractOracleSigner() const;
 

@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
-import { Candlesticks, Chart, Panel } from 'react-candlesticks'
+import { Candlesticks, Chart, Panel, VolumeBars } from 'react-candlesticks'
 import type { ChartHandle, DataPoint } from 'react-candlesticks'
 import 'react-candlesticks/style.css'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
@@ -15,7 +15,7 @@ import { markets, type Market } from '../data/markets'
 import { useMarketRegistry } from '../lib/api'
 import { useWalletSession } from '../lib/wallet-session'
 import { getChainName, getWalletIcon } from '../lib/wallet-icons'
-import { clearNotifications, deleteNotification, dollars, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, postTrade, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint } from '../lib/dashboard'
+import { clearNotifications, deleteNotification, dollars, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, postTrade, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint, type VolumePoint } from '../lib/dashboard'
 import { useToasts } from '../lib/toasts'
 import './trade.css'
 
@@ -57,23 +57,29 @@ const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
 const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 300_000, '1w': 900_000, '1m': 14_400_000, all: 86_400_000 }
 const chartGranularity: Record<ChartRange, 'm1' | 'm5' | 'm15' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm5', '1w': 'm15', '1m': 'h4', all: 'd1' }
-function PriceChart({ market, points, range, onRangeChange }: { market: Market; points: PricePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
+function PriceChart({ market, points, volumePoints, range, onRangeChange }: { market: Market; points: PricePoint[]; volumePoints: VolumePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
   const chartRef = useRef<ChartHandle>(null)
   const fittedRef = useRef<{ ticker: string; range: ChartRange } | null>(null)
   const candles = useMemo(() => {
-    const buckets = new Map<number, { open: number; high: number; low: number; close: number }>()
+    const buckets = new Map<number, { open: number; high: number; low: number; close: number; volume: number }>()
     const interval = candleIntervalMs[range]
+    const volumes = new Map<number, number>()
+    for (const point of volumePoints) {
+      const bucket = Math.floor(point.timestamp_ms / interval) * interval
+      const amount = Number(BigInt(point.volume_usdg_raw)) / 1_000_000
+      if (Number.isFinite(amount)) volumes.set(bucket, (volumes.get(bucket) ?? 0) + amount)
+    }
     for (const point of points) {
       const value = dollars(point.price_e8)
       if (!Number.isFinite(value) || value <= 0) continue
       const bucket = Math.floor(point.timestamp_ms / interval) * interval
       const current = buckets.get(bucket)
       if (current) { current.high = Math.max(current.high, value); current.low = Math.min(current.low, value); current.close = value }
-      else buckets.set(bucket, { open: value, high: value, low: value, close: value })
+      else buckets.set(bucket, { open: value, high: value, low: value, close: value, volume: 0 })
     }
-    return Array.from(buckets, ([timestamp, candle]) => ({ time: new Date(timestamp).toISOString(), volume: 0, ...candle }))
+    return Array.from(buckets, ([timestamp, candle]) => ({ time: new Date(timestamp).toISOString(), ...candle, volume: volumes.get(timestamp) ?? 0 }))
       .sort((left, right) => left.time.localeCompare(right.time)) as DataPoint[]
-  }, [points, range])
+  }, [points, volumePoints, range])
 
   useEffect(() => {
     if (!candles.length || !chartRef.current) return
@@ -87,11 +93,13 @@ function PriceChart({ market, points, range, onRangeChange }: { market: Market; 
   return <div className="chart-shell">
     <div className="chart-tools">
       <div className="chart-pair"><span>{market.ticker} / USDC</span></div>
+      <span className="chart-volume-source">Robinhood volume (USDG)</span>
       <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
     </div>
     <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
-      <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#0c1016" theme="dark" grid={{ time: { color: '#0c1016', width: 1 }, value: { color: '#0e1218', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
+      <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme="dark" grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
         <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
+        <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
       </Chart>
       {candles.length === 0 && <div className="chart-placeholder">Candles will appear as oracle prices arrive.</div>}
       {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
@@ -186,6 +194,8 @@ function TradingPage() {
   const [limitOrders, setLimitOrders] = useState<LimitOrderRecord[]>([])
   const [history, setHistory] = useState<ActivityRecord[]>([])
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([])
+  const [volumePoints, setVolumePoints] = useState<VolumePoint[]>([])
+  const [historyStartMs, setHistoryStartMs] = useState<number | null>(null)
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
   const [volumes, setVolumes] = useState<Record<string, string>>({})
   const [chartRange, setChartRange] = useState<ChartRange>('1h')
@@ -234,7 +244,7 @@ function TradingPage() {
     const tasks = [
       getSnapshots().then(data => setSnapshots(data)),
       getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))),
-      getMarketHistory(market.ticker, chartRange).then(data => setPricePoints(data.points)),
+      getMarketHistory(market.ticker, chartRange).then(data => { setPricePoints(data.points); setVolumePoints(data.volume_points ?? []); setHistoryStartMs(data.history_start_ms) }),
       getPositions(session.accountId).then(data => setPositions(data.positions)),
       getLimits(session.accountId).then(data => setLimitOrders(data.orders)),
       getHistory(session.accountId).then(data => setHistory(data.events)),
@@ -247,6 +257,22 @@ function TradingPage() {
     if (metricsRequestMarketRef.current === market.ticker) setMetricsLoadedMarket(market.ticker)
   }
   useEffect(() => { void refreshDashboard(); const timer = window.setInterval(() => void refreshDashboard(), 15000); return () => window.clearInterval(timer) }, [session?.accountId, market.ticker, chartRange])
+
+  function selectChartRange(next: ChartRange) {
+    const requiredMs: Record<ChartRange, number> = {
+      '1h': 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000,
+      '1w': 7 * 24 * 60 * 60 * 1000,
+      '1m': 30 * 24 * 60 * 60 * 1000,
+      all: 30 * 24 * 60 * 60 * 1000,
+    }
+    const coverageMs = historyStartMs === null ? 0 : Date.now() - historyStartMs
+    if (coverageMs < requiredMs[next]) {
+      showToast('waiting', 'We’re still collecting enough market history for that chart range.')
+      return
+    }
+    setChartRange(next)
+  }
 
   const walletIcon = session ? getWalletIcon(session.walletName) : undefined
   const chainName = session ? getChainName(session.chain) : 'NEAR'
@@ -494,7 +520,7 @@ function TradingPage() {
       </section>
 
       <div className="trading-grid" style={{ '--order-width': `${orderWidth}px`, '--chart-height': `${chartHeight}px` } as CSSProperties}>
-        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market} points={pricePoints} range={chartRange} onRangeChange={setChartRange}/>
+        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market} points={pricePoints} volumePoints={volumePoints} range={chartRange} onRangeChange={selectChartRange}/>
           <button className="resize-handle resize-horizontal" aria-label="Resize chart and positions panels" onPointerDown={event => startResize('y', event, chartHeight)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={endResize}><span/></button>
           <div className="positions-panel">
             <div className="positions-heading"><div className="position-tabs">{['Positions', 'Open orders', 'History'].map(tab => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}{tab === 'Positions' && <span className="tab-count">{positions.length}</span>}</button>)}</div></div>

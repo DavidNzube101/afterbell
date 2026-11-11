@@ -123,6 +123,18 @@ NearPublisher::NearPublisher(std::string rpcUrl, std::string transactionRpcUrl,
 }
 NearPublisher::~NearPublisher() = default;
 
+std::optional<MarketMark> NearPublisher::marketMark(const std::string &marketId) const {
+    afterbell::indexer::NearRpc rpc(rpcUrl_);
+    Json::Value args;
+    args["market_id"] = marketId;
+    const auto value = viewCall(rpc, contractId_, "market_price", args);
+    if (value.isNull()) return std::nullopt;
+    return MarketMark{
+        asU64(value["price"], "stored market price"),
+        asU64(value["observed_at_ms"], "stored market price timestamp"),
+        asU64(value["sequence"], "stored market price sequence")};
+}
+
 bool NearPublisher::verifyContractOracleSigner() const {
     afterbell::indexer::NearRpc rpc(rpcUrl_);
     if (expectedNetwork_ != "testnet" && expectedNetwork_ != "mainnet") throw std::invalid_argument("NEAR_NETWORK must be testnet or mainnet");

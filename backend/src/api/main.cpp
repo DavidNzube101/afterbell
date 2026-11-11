@@ -417,7 +417,11 @@ int main() {
                     const auto range = request->getParameter("range");
                     const auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
                     const std::uint64_t duration = range == "1h" ? 3'600'000ULL : range == "1d" ? 86'400'000ULL : range == "1w" ? 604'800'000ULL : range == "1m" ? 2'592'000'000ULL : range == "all" ? now : 86'400'000ULL;
-                    Json::Value body; body["market_id"] = market; body["range"] = range; body["points"] = dashboardStore->marketHistory(network, market, now - duration);
+                    Json::Value body; body["market_id"] = market; body["range"] = range;
+                    body["points"] = dashboardStore->marketHistory(network, market, now - duration);
+                    body["volume_points"] = dashboardStore->marketVolumeHistory(network, market, now - duration);
+                    const auto historyStart = dashboardStore->marketHistoryStart(network, market);
+                    body["history_start_ms"] = historyStart ? Json::Value(Json::UInt64(*historyStart)) : Json::Value();
                     callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("market_history_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
             }, {drogon::Get});

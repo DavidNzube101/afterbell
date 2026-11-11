@@ -46,12 +46,14 @@ class Worker {
 
   private:
     void run();
+    void runSwapIndexer();
     WorkerConfig config_;
     std::unique_ptr<RobinhoodPoolSampler> sampler_;
     std::unique_ptr<NearPublisher> publisher_;
     std::shared_ptr<afterbell::api::DashboardStore> dashboardStore_;
     std::atomic<bool> stopping_{false};
     std::thread thread_;
+    std::thread swapThread_;
     mutable std::mutex statusMutex_;
     std::condition_variable wake_;
     Json::Value status_;

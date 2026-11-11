@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <map>
 #include <stdexcept>
 #include <utility>
 
@@ -85,6 +86,50 @@ std::uint64_t deviationBps(std::uint64_t price,std::uint64_t spot) {
     const auto diff=price>spot?price-spot:spot-price;
     return static_cast<std::uint64_t>((static_cast<unsigned __int128>(diff)*10'000)/price);
 }
+
+unsigned hexDigit(char value) {
+    if (value >= '0' && value <= '9') return static_cast<unsigned>(value - '0');
+    if (value >= 'a' && value <= 'f') return static_cast<unsigned>(value - 'a' + 10);
+    if (value >= 'A' && value <= 'F') return static_cast<unsigned>(value - 'A' + 10);
+    throw std::runtime_error("Robinhood RPC returned invalid swap amount");
+}
+
+std::string decimalFromHexWord(std::string hex) {
+    if (hex.size() != 64) throw std::runtime_error("Robinhood RPC returned malformed swap amount");
+    const bool negative = hexDigit(hex.front()) >= 8;
+    if (negative) {
+        unsigned carry = 1;
+        for (auto it = hex.rbegin(); it != hex.rend(); ++it) {
+            const auto value = 15U - hexDigit(*it) + carry;
+            *it = "0123456789abcdef"[value & 15U];
+            carry = value >> 4U;
+        }
+    }
+    std::string decimal = "0";
+    for (const char digit : hex) {
+        unsigned carry = hexDigit(digit);
+        for (auto it = decimal.rbegin(); it != decimal.rend(); ++it) {
+            const auto value = static_cast<unsigned>(*it - '0') * 16U + carry;
+            *it = static_cast<char>('0' + (value % 10U));
+            carry = value / 10U;
+        }
+        while (carry) {
+            decimal.insert(decimal.begin(), static_cast<char>('0' + carry % 10U));
+            carry /= 10U;
+        }
+    }
+    const auto first = decimal.find_first_not_of('0');
+    return first == std::string::npos ? "0" : decimal.substr(first);
+}
+
+std::string hexBlock(std::uint64_t block) {
+    char value[19];
+    std::snprintf(value, sizeof(value), "0x%llx", static_cast<unsigned long long>(block));
+    return value;
+}
+
+constexpr const char *uniswapV3SwapTopic =
+    "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
 class EvmRpc {
   public:
@@ -211,6 +256,83 @@ std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
         samples.push_back({PriceAttestation{market.symbol,price,spotPrice,25,blockTime*1000,round},blockNumber,deviation,liquidity});
     }
     return samples;
+}
+
+std::pair<std::uint64_t, std::uint64_t> RobinhoodPoolSampler::latestBlock() const {
+    EvmRpc rpc(impl_->rpcUrl);
+    const auto chainId = rpc.call("eth_chainId", Json::Value(Json::arrayValue));
+    if (!chainId.isString() || parseHexU64(chainId.asString(), "chain id") != 4663)
+        throw std::runtime_error("configured Robinhood RPC is not chain 4663");
+    Json::Value params(Json::arrayValue); params.append("latest"); params.append(false);
+    const auto block = rpc.call("eth_getBlockByNumber", params);
+    return {parseHexU64(block["number"].asString(), "block number"),
+            parseHexU64(block["timestamp"].asString(), "block timestamp") * 1000};
+}
+
+std::uint64_t RobinhoodPoolSampler::blockAtOrBefore(std::uint64_t timestampMs) const {
+    const auto head = latestBlock();
+    if (timestampMs >= head.second) return head.first;
+    EvmRpc rpc(impl_->rpcUrl);
+    auto timestampAt = [&](std::uint64_t blockNumber) {
+        Json::Value params(Json::arrayValue); params.append(hexBlock(blockNumber)); params.append(false);
+        const auto block = rpc.call("eth_getBlockByNumber", params);
+        if (block.isNull()) throw std::runtime_error("Robinhood RPC omitted a historical block header");
+        return parseHexU64(block["timestamp"].asString(), "block timestamp") * 1000;
+    };
+    std::uint64_t low = 0, high = head.first;
+    while (low < high) {
+        const auto middle = low + (high - low + 1) / 2;
+        if (timestampAt(middle) <= timestampMs) low = middle;
+        else high = middle - 1;
+    }
+    return low;
+}
+
+std::vector<SwapVolumeEvent> RobinhoodPoolSampler::swapVolumeEvents(
+    std::uint64_t fromBlock, std::uint64_t toBlock) const {
+    if (toBlock < fromBlock || toBlock - fromBlock > 99)
+        throw std::invalid_argument("Robinhood swap scan range must be at most 100 blocks");
+    EvmRpc rpc(impl_->rpcUrl);
+    Json::Value filter;
+    Json::Value addresses(Json::arrayValue);
+    std::map<std::string, std::pair<std::string, bool>> marketsByPool;
+    for (const auto &market : impl_->markets) {
+        const auto pool = lower(market.pool);
+        addresses.append(market.pool);
+        marketsByPool.emplace(pool, std::make_pair(market.symbol, lower(impl_->quoteToken) < lower(market.token)));
+    }
+    filter["address"] = addresses;
+    filter["fromBlock"] = hexBlock(fromBlock);
+    filter["toBlock"] = hexBlock(toBlock);
+    Json::Value topics(Json::arrayValue); topics.append(uniswapV3SwapTopic); filter["topics"] = topics;
+    Json::Value params(Json::arrayValue); params.append(filter);
+    const auto logs = rpc.call("eth_getLogs", params);
+    if (!logs.isArray()) throw std::runtime_error("Robinhood RPC returned invalid swap logs");
+    std::map<std::uint64_t, std::uint64_t> blockTimes;
+    std::vector<SwapVolumeEvent> output;
+    output.reserve(logs.size());
+    for (const auto &log : logs) {
+        const auto pool = lower(log["address"].asString());
+        const auto market = marketsByPool.find(pool);
+        if (market == marketsByPool.end()) continue;
+        const auto block = parseHexU64(log["blockNumber"].asString(), "swap block number");
+        auto time = blockTimes.find(block);
+        if (time == blockTimes.end()) {
+            Json::Value blockParams(Json::arrayValue); blockParams.append(hexBlock(block)); blockParams.append(false);
+            const auto blockValue = rpc.call("eth_getBlockByNumber", blockParams);
+            if (blockValue.isNull()) throw std::runtime_error("Robinhood RPC omitted a swap block header");
+            time = blockTimes.emplace(block, parseHexU64(blockValue["timestamp"].asString(), "swap block timestamp") * 1000).first;
+        }
+        const auto data = log["data"].asString();
+        if (data.size() < 2 + 64 * 2) throw std::runtime_error("Robinhood RPC returned malformed Uniswap swap data");
+        const std::size_t quoteWord = market->second.second ? 0 : 1;
+        const auto quoteAmount = decimalFromHexWord(data.substr(2 + quoteWord * 64, 64));
+        if (quoteAmount == "0") continue;
+        output.push_back({market->second.first, log["transactionHash"].asString(),
+                          parseHexU64(log["logIndex"].asString(), "swap log index"), block,
+                          time->second, quoteAmount});
+    }
+    return output;
 }
 
 } // namespace afterbell::oracle
