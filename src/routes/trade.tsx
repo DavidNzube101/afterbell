@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import { Candlesticks, Chart, Panel, VolumeBars } from 'react-candlesticks'
-import type { ChartHandle, DataPoint } from 'react-candlesticks'
+import type { ChartHandle, DataPoint, Theme } from 'react-candlesticks'
 import 'react-candlesticks/style.css'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
 import logo from '../assets/afterbell-logo.png'
@@ -55,8 +55,30 @@ function loadCanvasSvg(svg: SVGSVGElement) {
 
 const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
-const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 300_000, '1w': 900_000, '1m': 14_400_000, all: 86_400_000 }
-const chartGranularity: Record<ChartRange, 'm1' | 'm5' | 'm15' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm5', '1w': 'm15', '1m': 'h4', all: 'd1' }
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 300_000, '1d': 900_000, '1w': 3_600_000, '1m': 14_400_000, all: 86_400_000 }
+const chartGranularity: Record<ChartRange, 'm5' | 'm15' | 'h1' | 'h4' | 'd1'> = { '1h': 'm5', '1d': 'm15', '1w': 'h1', '1m': 'h4', all: 'd1' }
+const chartTheme: Theme = {
+  base: 'dark',
+  layers: {
+    candlesticks: { series: {
+      body: {
+        up: { backgroundColor: '#18bd83', borderColor: '#18bd83' },
+        down: { backgroundColor: '#f05260', borderColor: '#f05260' },
+        flat: { backgroundColor: '#8492a3', borderColor: '#8492a3' },
+      },
+      wick: {
+        up: { color: '#18bd83' },
+        down: { color: '#f05260' },
+        flat: { color: '#8492a3' },
+      },
+    } },
+    volumeBars: { series: { bars: {
+      up: { backgroundColor: '#18bd83', borderColor: '#18bd83' },
+      down: { backgroundColor: '#f05260', borderColor: '#f05260' },
+      flat: { backgroundColor: '#657386', borderColor: '#657386' },
+    } } },
+  },
+}
 function PriceChart({ market, points, volumePoints, range, onRangeChange }: { market: Market; points: PricePoint[]; volumePoints: VolumePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
   const chartRef = useRef<ChartHandle>(null)
   const fittedRef = useRef<{ ticker: string; range: ChartRange } | null>(null)
@@ -100,7 +122,7 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
         {latest && <strong>${latest.close.toFixed(2)}</strong>}
         <span>{latest ? 'Collecting more A1 price updates to build the chart.' : 'Waiting for fresh market price data.'}</span>
       </div> : <>
-        <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme="dark" grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
+        <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme={chartTheme} grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
           <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
           <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
         </Chart>

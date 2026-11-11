@@ -79,13 +79,12 @@ void Worker::run(){
     bool signerChecked=false;
     while(!stopping_){
         try{
-            auto samples=sampler_->sampleAll();
-            const auto sampledAt=nowMs();
+            const auto marketIds=sampler_->marketIds();
             if(!signerChecked){
                 if(!publisher_->verifyContractOracleSigner()){
                     Json::Value markets(Json::arrayValue);
-                    for(const auto &sample:samples){Json::Value m;m["symbol"]=sample.marketId;m["blockNumber"]=Json::UInt64(sample.blockNumber);m["price"]=Json::UInt64(sample.price);m["spotPrice"]=Json::UInt64(sample.spotPrice);m["spotTwapDeviationBps"]=Json::UInt64(sample.spotTwapDeviationBps);m["liquidity"]=Json::UInt64(sample.liquidity);m["status"]=sample.spotTwapDeviationBps<=50?"awaiting_signer":"quarantined";if(sample.spotTwapDeviationBps>50)m["reason"]="spot_twap_deviation_over_50bps";markets.append(std::move(m));}
-                    {std::lock_guard<std::mutex> lock(statusMutex_);status_["status"]="signer_mismatch";status_["lastError"]="A1 oracle signer does not match ORACLE_SIGNER_PRIVATE_KEY";status_["lastSampleAtMs"]=Json::UInt64(sampledAt);status_["markets"]=markets;}
+                    for(const auto &marketId:marketIds){Json::Value m;m["symbol"]=marketId;m["status"]="awaiting_signer";markets.append(std::move(m));}
+                    {std::lock_guard<std::mutex> lock(statusMutex_);status_["status"]="signer_mismatch";status_["lastError"]="A1 oracle signer does not match ORACLE_SIGNER_PRIVATE_KEY";status_["lastSampleAtMs"]=Json::UInt64(nowMs());status_["markets"]=markets;}
                     logEvent("oracle.signer_mismatch","");
                     std::unique_lock<std::mutex> lockWait(statusMutex_);wake_.wait_for(lockWait,std::chrono::milliseconds(config_.pollIntervalMs),[this]{return stopping_.load();});
                     continue;
@@ -94,8 +93,22 @@ void Worker::run(){
             }
             Json::Value markets(Json::arrayValue);
             bool allOk=true;
-            for(const auto &sample:samples){
-                Json::Value m;m["symbol"]=sample.marketId;m["blockNumber"]=Json::UInt64(sample.blockNumber);m["price"]=Json::UInt64(sample.price);m["spotPrice"]=Json::UInt64(sample.spotPrice);m["spotTwapDeviationBps"]=Json::UInt64(sample.spotTwapDeviationBps);m["liquidity"]=Json::UInt64(sample.liquidity);
+            for(const auto &marketId:marketIds){
+                Json::Value m;
+                m["symbol"]=marketId;
+                std::optional<PoolPriceSample> sampled;
+                try {
+                    // Read each market immediately before submitting its attestation.
+                    // A shared sample timestamp ages while earlier NEAR transactions commit.
+                    sampled=sampler_->sampleMarket(marketId);
+                } catch(const std::exception &e) {
+                    m["status"]="sample_failed";m["reason"]=e.what();allOk=false;
+                    logEvent("oracle.sample_failed",marketId,e.what());
+                    markets.append(std::move(m));
+                    continue;
+                }
+                const auto &sample=*sampled;
+                m["blockNumber"]=Json::UInt64(sample.blockNumber);m["price"]=Json::UInt64(sample.price);m["spotPrice"]=Json::UInt64(sample.spotPrice);m["spotTwapDeviationBps"]=Json::UInt64(sample.spotTwapDeviationBps);m["liquidity"]=Json::UInt64(sample.liquidity);
                 if(sample.spotTwapDeviationBps>50){m["status"]="quarantined";m["reason"]="spot_twap_deviation_over_50bps";allOk=false;logEvent("oracle.sample_quarantined",sample.marketId,"spot and TWAP exceed A1 hard bound");}
                 else {
                     try{
@@ -120,7 +133,7 @@ void Worker::run(){
                 }
                 markets.append(std::move(m));
             }
-            {std::lock_guard<std::mutex> lock(statusMutex_);status_["markets"]=markets;status_["lastSampleAtMs"]=Json::UInt64(sampledAt);status_["status"]=allOk?"running":"degraded";status_.removeMember("lastError");}
+            {std::lock_guard<std::mutex> lock(statusMutex_);status_["markets"]=markets;status_["lastSampleAtMs"]=Json::UInt64(nowMs());status_["status"]=allOk?"running":"degraded";status_.removeMember("lastError");}
         }catch(const std::exception &e){
             std::lock_guard<std::mutex> lock(statusMutex_);status_["status"]="degraded";status_["lastError"]=e.what();logEvent("oracle.sample_failed","",e.what());
         }

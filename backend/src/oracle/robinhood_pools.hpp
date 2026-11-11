@@ -34,6 +34,8 @@ class RobinhoodPoolSampler {
     RobinhoodPoolSampler &operator=(const RobinhoodPoolSampler &) = delete;
 
     std::vector<PoolPriceSample> sampleAll() const;
+    std::vector<std::string> marketIds() const;
+    PoolPriceSample sampleMarket(const std::string &marketId) const;
     std::pair<std::uint64_t, std::uint64_t> latestBlock() const;
     std::uint64_t blockAtOrBefore(std::uint64_t timestampMs) const;
     std::vector<SwapVolumeEvent> swapVolumeEvents(std::uint64_t fromBlock,

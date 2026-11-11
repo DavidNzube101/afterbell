@@ -206,56 +206,38 @@ struct RobinhoodPoolSampler::Impl {
         }
         std::sort(markets.begin(),markets.end(),[](const auto &a,const auto &b){return a.symbol<b.symbol;});
     }
-};
 
-RobinhoodPoolSampler::RobinhoodPoolSampler(std::string rpcUrl,std::string marketRegistryPath,std::string poolRegistryPath,std::uint32_t twapWindowSeconds)
-    :impl_(std::make_unique<Impl>(std::move(rpcUrl),std::move(marketRegistryPath),std::move(poolRegistryPath),twapWindowSeconds)){}
-RobinhoodPoolSampler::~RobinhoodPoolSampler()=default;
-
-std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
-    EvmRpc rpc(impl_->rpcUrl);
-    const auto chainId=rpc.call("eth_chainId",Json::Value(Json::arrayValue));
-    if(!chainId.isString()||parseHexU64(chainId.asString(),"chain id")!=4663)throw std::runtime_error("configured Robinhood RPC is not chain 4663");
-    Json::Value blockParams(Json::arrayValue);blockParams.append("latest");blockParams.append(false);
-    const auto head=rpc.call("eth_getBlockByNumber",blockParams);
-    const auto blockNumber=parseHexU64(head["number"].asString(),"block number");
-    const auto blockTime=parseHexU64(head["timestamp"].asString(),"block timestamp");
-    const auto blockHash=head["hash"].asString();
-    if(blockNumber==0||blockTime==0||blockHash.size()!=66)throw std::runtime_error("Robinhood RPC returned invalid latest block");
-    const std::string round="rhc:"+std::to_string(blockNumber)+":"+blockHash.substr(2);
-    {
-        std::lock_guard<std::mutex> lock(impl_->metadataMutex);
-        if (!impl_->metadataReady) {
-            if(wordU64(rpc.ethCall(impl_->quoteToken,"0x313ce567"),0)!=impl_->quoteDecimals)
-                throw std::runtime_error("configured USDG decimals do not match the Robinhood token");
-            for (auto &market : impl_->markets) {
-                auto tokenA=lower(market.token),tokenB=lower(impl_->quoteToken);if(tokenB<tokenA)std::swap(tokenA,tokenB);
-                char feeHex[7];std::snprintf(feeHex,sizeof(feeHex),"%06x",market.fee);
-                const auto factoryData="0x1698ee82"+padAddress(tokenA)+padAddress(tokenB)+std::string(58,'0')+feeHex;
-                const auto factoryPool="0x"+word(rpc.ethCall(impl_->factory,factoryData),0).substr(24);
-                if(lower(factoryPool)!=lower(market.pool))throw std::runtime_error("configured pool is not the registered Uniswap V3 pool for "+market.symbol);
-                const auto token0="0x"+word(rpc.ethCall(market.pool,"0x0dfe1681"),0).substr(24);
-                const auto token1="0x"+word(rpc.ethCall(market.pool,"0xd21220a7"),0).substr(24);
-                const auto quote=lower(impl_->quoteToken),token=lower(market.token);
-                const bool quoteIsToken0=lower(token0)==quote,quoteIsToken1=lower(token1)==quote;
-                if((!quoteIsToken0&&!quoteIsToken1)||lower(quoteIsToken0?token1:token0)!=token)
-                    throw std::runtime_error("configured Uniswap V3 pool token pair does not match "+market.symbol+"/USDG");
-                const auto assetToken=quoteIsToken0?token1:token0;
-                const auto assetDecimals=wordU64(rpc.ethCall(assetToken,"0x313ce567"),0);
-                if(assetDecimals>24)throw std::runtime_error("Robinhood stock token has unsupported decimals");
-                market.assetDecimals=static_cast<std::uint8_t>(assetDecimals);
-                market.quoteIsToken1=quoteIsToken1;
-            }
-            impl_->metadataReady=true;
+    void ensureMetadata(EvmRpc &rpc) {
+        std::lock_guard<std::mutex> lock(metadataMutex);
+        if (metadataReady) return;
+        if(wordU64(rpc.ethCall(quoteToken,"0x313ce567"),0)!=quoteDecimals)
+            throw std::runtime_error("configured USDG decimals do not match the Robinhood token");
+        for (auto &market : markets) {
+            auto tokenA=lower(market.token),tokenB=lower(quoteToken);if(tokenB<tokenA)std::swap(tokenA,tokenB);
+            char feeHex[7];std::snprintf(feeHex,sizeof(feeHex),"%06x",market.fee);
+            const auto factoryData="0x1698ee82"+padAddress(tokenA)+padAddress(tokenB)+std::string(58,'0')+feeHex;
+            const auto factoryPool="0x"+word(rpc.ethCall(factory,factoryData),0).substr(24);
+            if(lower(factoryPool)!=lower(market.pool))throw std::runtime_error("configured pool is not the registered Uniswap V3 pool for "+market.symbol);
+            const auto token0="0x"+word(rpc.ethCall(market.pool,"0x0dfe1681"),0).substr(24);
+            const auto token1="0x"+word(rpc.ethCall(market.pool,"0xd21220a7"),0).substr(24);
+            const auto quote=lower(quoteToken),token=lower(market.token);
+            const bool quoteIsToken0=lower(token0)==quote,quoteIsToken1=lower(token1)==quote;
+            if((!quoteIsToken0&&!quoteIsToken1)||lower(quoteIsToken0?token1:token0)!=token)
+                throw std::runtime_error("configured Uniswap V3 pool token pair does not match "+market.symbol+"/USDG");
+            const auto assetToken=quoteIsToken0?token1:token0;
+            const auto assetDecimals=wordU64(rpc.ethCall(assetToken,"0x313ce567"),0);
+            if(assetDecimals>24)throw std::runtime_error("Robinhood stock token has unsupported decimals");
+            market.assetDecimals=static_cast<std::uint8_t>(assetDecimals);
+            market.quoteIsToken1=quoteIsToken1;
         }
+        metadataReady=true;
     }
-    std::vector<PoolPriceSample> samples;
-    for(const auto &market:impl_->markets){
-        const auto liquidityData=rpc.ethCall(market.pool,"0x1a686502");
-        const auto liquidity=wordU64(liquidityData,0);
+
+    PoolPriceSample sampleMarket(EvmRpc &rpc, Market &market, std::uint64_t blockNumber,
+                                 std::uint64_t blockTime, const std::string &blockHash) const {
+        const auto liquidity=wordU64(rpc.ethCall(market.pool,"0x1a686502"),0);
         if(liquidity==0)throw std::runtime_error("Uniswap V3 pool has no active liquidity for "+market.symbol);
-        const auto slot=rpc.ethCall(market.pool,"0x3850c7bd");
-        const auto spot=slotTick(slot);
+        const auto spot=slotTick(rpc.ethCall(market.pool,"0x3850c7bd"));
         const auto observeData="0x883bdbfd"+std::string(62,'0')+"20"+std::string(63,'0')+"2"+std::string(61,'0')+"12c"+std::string(64,'0');
         const auto observed=rpc.ethCall(market.pool,observeData);
         const auto firstOffset=wordU64(observed,0),secondOffset=wordU64(observed,1);
@@ -263,15 +245,48 @@ std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
         const auto firstIndex=static_cast<std::size_t>(firstOffset/32+1),secondIndex=firstIndex+1;
         const auto tickBefore=wordInt56(observed,firstIndex),tickAfter=wordInt56(observed,secondIndex);
         const auto meanDelta=tickAfter-tickBefore;
-        auto mean=meanDelta/static_cast<std::int64_t>(impl_->windowSeconds);
-        if(meanDelta<0&&meanDelta%static_cast<std::int64_t>(impl_->windowSeconds)!=0)--mean;
+        auto mean=meanDelta/static_cast<std::int64_t>(windowSeconds);
+        if(meanDelta<0&&meanDelta%static_cast<std::int64_t>(windowSeconds)!=0)--mean;
         if(mean < -887272 || mean > 887272)throw std::runtime_error("Uniswap V3 TWAP tick is outside protocol bounds");
-        const auto price=tickPriceE8(static_cast<std::int32_t>(mean),market.quoteIsToken1,market.assetDecimals,impl_->quoteDecimals);
-        const auto spotPrice=tickPriceE8(spot,market.quoteIsToken1,market.assetDecimals,impl_->quoteDecimals);
+        const auto price=tickPriceE8(static_cast<std::int32_t>(mean),market.quoteIsToken1,market.assetDecimals,quoteDecimals);
+        const auto spotPrice=tickPriceE8(spot,market.quoteIsToken1,market.assetDecimals,quoteDecimals);
         const auto deviation=deviationBps(price,spotPrice);
-        samples.push_back({PriceAttestation{market.symbol,price,spotPrice,25,blockTime*1000,round},blockNumber,deviation,liquidity});
+        const std::string round="rhc:"+std::to_string(blockNumber)+":"+blockHash.substr(2);
+        return {PriceAttestation{market.symbol,price,spotPrice,25,blockTime*1000,round},blockNumber,deviation,liquidity};
     }
+};
+
+RobinhoodPoolSampler::RobinhoodPoolSampler(std::string rpcUrl,std::string marketRegistryPath,std::string poolRegistryPath,std::uint32_t twapWindowSeconds)
+    :impl_(std::make_unique<Impl>(std::move(rpcUrl),std::move(marketRegistryPath),std::move(poolRegistryPath),twapWindowSeconds)){}
+RobinhoodPoolSampler::~RobinhoodPoolSampler()=default;
+
+std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
+    std::vector<PoolPriceSample> samples;
+    for (const auto &market : marketIds()) samples.push_back(sampleMarket(market));
     return samples;
+}
+
+std::vector<std::string> RobinhoodPoolSampler::marketIds() const {
+    std::vector<std::string> ids;
+    ids.reserve(impl_->markets.size());
+    for (const auto &market : impl_->markets) ids.push_back(market.symbol);
+    return ids;
+}
+
+PoolPriceSample RobinhoodPoolSampler::sampleMarket(const std::string &marketId) const {
+    EvmRpc rpc(impl_->rpcUrl);
+    const auto chainId=rpc.call("eth_chainId",Json::Value(Json::arrayValue));
+    if(!chainId.isString()||parseHexU64(chainId.asString(),"chain id")!=4663)throw std::runtime_error("configured Robinhood RPC is not chain 4663");
+    impl_->ensureMetadata(rpc);
+    Json::Value blockParams(Json::arrayValue);blockParams.append("latest");blockParams.append(false);
+    const auto head=rpc.call("eth_getBlockByNumber",blockParams);
+    const auto blockNumber=parseHexU64(head["number"].asString(),"block number");
+    const auto blockTime=parseHexU64(head["timestamp"].asString(),"block timestamp");
+    const auto blockHash=head["hash"].asString();
+    if(blockNumber==0||blockTime==0||blockHash.size()!=66)throw std::runtime_error("Robinhood RPC returned invalid latest block");
+    const auto found=std::find_if(impl_->markets.begin(),impl_->markets.end(),[&](const auto &market){return market.symbol==marketId;});
+    if(found==impl_->markets.end())throw std::invalid_argument("unknown Robinhood market "+marketId);
+    return impl_->sampleMarket(rpc,*found,blockNumber,blockTime,blockHash);
 }
 
 std::pair<std::uint64_t, std::uint64_t> RobinhoodPoolSampler::latestBlock() const {
