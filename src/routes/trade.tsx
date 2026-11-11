@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import { Candlesticks, Chart, Panel } from 'react-candlesticks'
-import type { ChartHandle, DataPoint, Theme } from 'react-candlesticks'
+import type { ChartHandle, DataPoint } from 'react-candlesticks'
 import 'react-candlesticks/style.css'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
 import logo from '../assets/afterbell-logo.png'
@@ -57,37 +57,6 @@ const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
 const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 300_000, '1w': 900_000, '1m': 14_400_000, all: 86_400_000 }
 const chartGranularity: Record<ChartRange, 'm1' | 'm5' | 'm15' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm5', '1w': 'm15', '1m': 'h4', all: 'd1' }
-const chartTheme: Theme = {
-  base: 'dark',
-  chart: {
-    backgroundColor: '#0c1016',
-    grid: {
-      time: { color: '#10151c', width: 1 },
-      value: { color: '#151c25', width: 1 },
-    },
-    borders: {
-      left: { color: '#0c1016', width: 0 },
-      right: { color: '#202a36', width: 1 },
-      top: { color: '#0c1016', width: 0 },
-      bottom: { color: '#202a36', width: 1 },
-    },
-  },
-  layers: {
-    candlesticks: {
-      series: {
-        body: {
-          up: { backgroundColor: '#39c98a', borderColor: '#39c98a' },
-          down: { backgroundColor: '#e45b68', borderColor: '#e45b68' },
-        },
-        wick: {
-          up: { color: '#39c98a' },
-          down: { color: '#e45b68' },
-        },
-      },
-    },
-  },
-}
-
 function PriceChart({ market, points, range, onRangeChange }: { market: Market; points: PricePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
   const chartRef = useRef<ChartHandle>(null)
   const fittedRef = useRef<{ ticker: string; range: ChartRange } | null>(null)
@@ -121,8 +90,8 @@ function PriceChart({ market, points, range, onRangeChange }: { market: Market; 
       <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
     </div>
     <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
-      <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#0c1016" theme={chartTheme} initialScrollToLatest enableScroll enableZoom>
-        <Panel><Candlesticks legend={false} /></Panel>
+      <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#0c1016" theme="dark" grid={{ time: { color: '#0c1016', width: 1 }, value: { color: '#0e1218', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
+        <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
       </Chart>
       {candles.length === 0 && <div className="chart-placeholder">Candles will appear as oracle prices arrive.</div>}
       {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
@@ -219,7 +188,7 @@ function TradingPage() {
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([])
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
   const [volumes, setVolumes] = useState<Record<string, string>>({})
-  const [chartRange, setChartRange] = useState<ChartRange>('1d')
+  const [chartRange, setChartRange] = useState<ChartRange>('1h')
   const [metricsLoadedMarket, setMetricsLoadedMarket] = useState<string | null>(null)
   const [availableBalance, setAvailableBalance] = useState<number | null>(null)
   const [balanceRaw, setBalanceRaw] = useState<string | null>(null)
