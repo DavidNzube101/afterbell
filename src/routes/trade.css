@@ -359,3 +359,23 @@
   .trade-app *, .trade-app *::before, .trade-app *::after { transition-duration: .01ms !important; }
   .market-menu, .notification-drawer, .drawer-backdrop, .risk-modal, .share-modal, .risk-modal-backdrop { animation-duration: .01ms !important; }
 }
+
+.connected-wallet-icon { object-fit: cover; border-radius: 6px !important; }
+.oracle-price-chart { position: relative; overflow: hidden; }
+.oracle-price-chart > svg { width: 100%; height: calc(100% - 58px); display: block; margin-top: 6px; overflow: visible; }
+.oracle-chart-price { padding: 18px 20px 0; color: #eaf1f8; font-size: 22px; font-weight: 620; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.oracle-chart-range { display: block; position: absolute; right: 18px; bottom: 14px; color: #647180; font-size: 9px; }
+.chart-placeholder { display: grid; min-height: 210px; place-items: center; padding: 24px; color: #8491a0; font-size: 12px; text-align: center; }
+.empty-table-state { padding: 38px 16px !important; color: #7f8b99 !important; text-align: center; }
+.submit-order:disabled { cursor: not-allowed; opacity: .48; }
+.position-actions .close-position:disabled { cursor: wait; opacity: .55; }
+.wallet-detail-modal { width: min(430px, calc(100vw - 32px)); }
+.wallet-detail-content { display: grid; gap: 14px; padding: 4px 22px 24px; }
+.wallet-detail-chain, .wallet-detail-identity { display: flex; align-items: center; gap: 10px; color: #d9e2ec; font-size: 13px; }
+.wallet-detail-chain img, .wallet-detail-identity img { width: 25px; height: 25px; object-fit: cover; border-radius: 6px; }
+.wallet-detail-chain img { border-radius: 50%; }
+.wallet-detail-address { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #202a36; border-radius: 8px; background: #0c1016; color: #9eabb9; font-size: 11px; }
+.wallet-detail-address span { overflow: hidden; text-overflow: ellipsis; }
+.wallet-detail-address button, .wallet-disconnect { border: 0; border-radius: 7px; background: #171e27; color: #dce5ee; padding: 8px 11px; cursor: pointer; }
+.wallet-disconnect { color: #ff8d98; background: #27181e; }
+.risk-modal-footer a { color: #91bff0; font-size: 11px; text-decoration: none; }

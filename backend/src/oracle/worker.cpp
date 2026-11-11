@@ -1,5 +1,6 @@
 #include "oracle/worker.hpp"
 
+#include "api/dashboard_store.hpp"
 #include "oracle/crypto.hpp"
 #include "oracle/near_publisher.hpp"
 #include "oracle/robinhood_pools.hpp"
@@ -28,6 +29,7 @@ Worker::Worker(WorkerConfig config):config_(std::move(config)) {
     sampler_=std::make_unique<RobinhoodPoolSampler>(config_.robinhoodRpcUrl,config_.marketRegistryPath,config_.poolRegistryPath,config_.twapWindowSeconds);
     const auto signer=ethereumAddress(config_.evmSignerPrivateKey);
     publisher_=std::make_unique<NearPublisher>(config_.nearRpcUrl,config_.nearTransactionRpcUrl,config_.contractId,config_.relayerAccountId,config_.relayerPrivateKey,signer,config_.evmSignerPrivateKey,config_.network);
+    if (!config_.databaseUrl.empty()) dashboardStore_ = std::make_shared<afterbell::api::DashboardStore>(config_.databaseUrl);
     status_["enabled"]=true;status_["status"]="starting";status_["sourceChain"]="robinhood";status_["sourceChainId"]=4663;status_["twapWindowSeconds"]=config_.twapWindowSeconds;
     status_["relayerAccountId"]=config_.relayerAccountId;status_["markets"]=Json::arrayValue;
     status_["lastSampleAtMs"]=Json::nullValue;status_["lastPublishedAtMs"]=Json::nullValue;
@@ -61,7 +63,7 @@ void Worker::run(){
                 Json::Value m;m["symbol"]=sample.marketId;m["blockNumber"]=Json::UInt64(sample.blockNumber);m["price"]=Json::UInt64(sample.price);m["spotPrice"]=Json::UInt64(sample.spotPrice);m["spotTwapDeviationBps"]=Json::UInt64(sample.spotTwapDeviationBps);m["liquidity"]=Json::UInt64(sample.liquidity);
                 if(sample.spotTwapDeviationBps>50){m["status"]="quarantined";m["reason"]="spot_twap_deviation_over_50bps";allOk=false;logEvent("oracle.sample_quarantined",sample.marketId,"spot and TWAP exceed A1 hard bound");}
                 else {
-                    try{const auto hash=publisher_->publish(sample);if(hash.empty()){m["status"]="unchanged";}else{m["status"]="published";m["transactionHash"]=hash;{std::lock_guard<std::mutex> lock(statusMutex_);status_["lastPublishedAtMs"]=Json::UInt64(nowMs());}logEvent("oracle.attestation_published",sample.marketId,hash);}}
+                    try{const auto hash=publisher_->publish(sample);if(hash.empty()){m["status"]="unchanged";}else{m["status"]="published";m["transactionHash"]=hash;{std::lock_guard<std::mutex> lock(statusMutex_);status_["lastPublishedAtMs"]=Json::UInt64(nowMs());}logEvent("oracle.attestation_published",sample.marketId,hash);}if(dashboardStore_)dashboardStore_->recordOracleSample(config_.network,sample.marketId,sample.price,sample.observedAtMs);}
                     catch(const std::exception &e){m["status"]="publish_failed";m["reason"]=e.what();allOk=false;signerChecked=false;logEvent("oracle.publish_failed",sample.marketId,e.what());}
                 }
                 markets.append(std::move(m));

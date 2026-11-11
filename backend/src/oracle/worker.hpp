@@ -10,12 +10,15 @@
 #include <string>
 #include <thread>
 
+namespace afterbell::api { class DashboardStore; }
+
 namespace afterbell::oracle {
 
 class RobinhoodPoolSampler;
 class NearPublisher;
 
 struct WorkerConfig {
+    std::string databaseUrl;
     std::string robinhoodRpcUrl;
     std::string nearRpcUrl;
     std::string nearTransactionRpcUrl;
@@ -46,6 +49,7 @@ class Worker {
     WorkerConfig config_;
     std::unique_ptr<RobinhoodPoolSampler> sampler_;
     std::unique_ptr<NearPublisher> publisher_;
+    std::shared_ptr<afterbell::api::DashboardStore> dashboardStore_;
     std::atomic<bool> stopping_{false};
     std::thread thread_;
     mutable std::mutex statusMutex_;

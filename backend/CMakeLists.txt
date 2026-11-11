@@ -18,6 +18,7 @@ else()
 endif()
 
 add_library(afterbell-indexer-core
+    src/api/dashboard_store.cpp
     src/indexer/event.cpp
     src/indexer/fastnear_client.cpp
     src/indexer/near_rpc.cpp

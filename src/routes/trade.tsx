@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useRef, useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
+import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import logo from '../assets/afterbell-logo.png'
 import shareImage1 from '../assets/share-images/1.png'
 import shareImage2 from '../assets/share-images/2.png'
@@ -8,6 +8,19 @@ import { TickerIcon } from '../components/TickerIcon'
 import { markets, type Market } from '../data/markets'
 import { useMarketRegistry } from '../lib/api'
 import { useWalletSession } from '../lib/wallet-session'
+import { clearNotifications, deleteNotification, dollars, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNotifications, getPositions, getSnapshots, postTrade, priceToRaw, usdc, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint } from '../lib/dashboard'
+import { useToasts } from '../lib/toasts'
+import phantomWalletIcon from '../assets/wallet-icons/phantom.jpeg'
+import solflareWalletIcon from '../assets/wallet-icons/solflare.jpeg'
+import metamaskWalletIcon from '../assets/wallet-icons/metamask.jpeg'
+import coinbaseWalletIcon from '../assets/wallet-icons/coinbase-wallet.png'
+import rainbowWalletIcon from '../assets/wallet-icons/rainbow.png'
+import rabbyWalletIcon from '../assets/wallet-icons/rabby.jpeg'
+import hotWalletIcon from '../assets/wallet-icons/hot-wallet.jpeg'
+import nightlyWalletIcon from '../assets/wallet-icons/nightly.jpeg'
+import solanaChainIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
+import evmChainIcon from '../assets/wallet-icons/chain-icons/etheruem.jpeg'
+import nearChainIcon from '../assets/wallet-icons/chain-icons/near.jpeg'
 import './trade.css'
 
 export const Route = createFileRoute('/trade')({
@@ -48,108 +61,19 @@ function loadCanvasSvg(svg: SVGSVGElement) {
   return loadCanvasImage(url).finally(() => URL.revokeObjectURL(url))
 }
 
-let singleTickerWidget: Promise<void> | undefined
-
-function loadSingleTickerWidget() {
-  if (customElements.get('tv-single-ticker')) return Promise.resolve()
-  if (!singleTickerWidget) {
-    singleTickerWidget = new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script')
-      script.type = 'module'
-      script.src = 'https://widgets.tradingview-widget.com/w/en/tv-single-ticker.js'
-      script.onload = () => { void customElements.whenDefined('tv-single-ticker').then(() => resolve()) }
-      script.onerror = () => reject(new Error('TradingView ticker failed to load'))
-      document.head.appendChild(script)
-    })
-  }
-  return singleTickerWidget
-}
-
-function StockQuote({ ticker }: { ticker: string }) {
-  const quoteRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const container = quoteRef.current
-    if (!container) return
-    let active = true
-    container.replaceChildren()
-    const placeholder = document.createElement('span')
-    placeholder.className = 'stock-quote-placeholder'
-    placeholder.textContent = 'Loading price'
-    container.appendChild(placeholder)
-
-    void loadSingleTickerWidget().then(() => {
-      if (!active || !quoteRef.current) return
-      const widget = document.createElement('tv-single-ticker')
-      widget.setAttribute('symbol', `NASDAQ:${ticker}`)
-      widget.setAttribute('theme', 'dark')
-      widget.setAttribute('hide-market-status', '')
-      container.replaceChildren(widget)
-    }).catch(() => {
-      if (active) placeholder.textContent = 'Price unavailable'
-    })
-
-    return () => {
-      active = false
-      container.replaceChildren()
-    }
-  }, [ticker])
-
-  return <div className="stock-quote"><small>Stock price</small><div className="stock-quote-widget" ref={quoteRef} aria-label={`${ticker} stock price`} /></div>
-}
-
-let advancedChartWidget: Promise<void> | undefined
-
-function loadAdvancedChartWidget() {
-  if (customElements.get('tv-advanced-chart')) return Promise.resolve()
-  if (!advancedChartWidget) {
-    advancedChartWidget = new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script')
-      script.type = 'module'
-      script.src = 'https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js'
-      script.onload = () => { void customElements.whenDefined('tv-advanced-chart').then(() => resolve()) }
-      script.onerror = () => reject(new Error('TradingView chart failed to load'))
-      document.head.appendChild(script)
-    })
-  }
-  return advancedChartWidget
-}
-
-function PriceChart({ market }: { market: Market }) {
-  const symbol = `NASDAQ:${market.ticker}`
-  const chartRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const container = chartRef.current
-    if (!container) return
-    container.replaceChildren()
-
-    let active = true
-    const placeholder = document.createElement('span')
-    placeholder.className = 'chart-placeholder'
-    placeholder.textContent = 'Loading chart'
-    container.appendChild(placeholder)
-
-    void loadAdvancedChartWidget().then(() => {
-      if (!active) return
-      const chart = document.createElement('tv-advanced-chart')
-      chart.setAttribute('symbol', symbol)
-      chart.setAttribute('interval', '15')
-      chart.setAttribute('timezone', 'Etc/UTC')
-      chart.setAttribute('chart-type', 'candles')
-      chart.setAttribute('theme', 'dark')
-      chart.style.width = '100%'
-      chart.style.height = '100%'
-      container.replaceChildren(chart)
-    }).catch(() => {
-      if (active) placeholder.textContent = 'Chart unavailable. Check your connection and reload.'
-    })
-    return () => { active = false; container.replaceChildren() }
-  }, [symbol])
-
+function PriceChart({ market, points }: { market: Market; points: PricePoint[] }) {
+  const coordinates = useMemo(() => {
+    if (points.length < 2) return ''
+    const values = points.map(point => dollars(point.price_e8))
+    const min = Math.min(...values), max = Math.max(...values), span = max - min || 1
+    return values.map((value, index) => `${(index / (values.length - 1)) * 1000},${210 - ((value - min) / span) * 190}`).join(' ')
+  }, [points])
+  const current = points.length ? dollars(points[points.length - 1].price_e8) : 0
   return <div className="chart-shell">
-    <div className="chart-tools"><div className="chart-pair"><span>{market.ticker} / USD</span></div><span className="chart-source">TradingView</span></div>
-    <div ref={chartRef} className="real-market-chart" aria-label={`${market.name} reference equity chart`} />
+    <div className="chart-tools"><div className="chart-pair"><span>{market.ticker} / USDC</span></div><span className="chart-source">A1 oracle</span></div>
+    <div className="real-market-chart oracle-price-chart" aria-label={`${market.name} oracle price chart`}>
+      {points.length > 1 ? <><div className="oracle-chart-price">${current.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><svg viewBox="0 0 1000 230" preserveAspectRatio="none" role="img" aria-label={`${market.ticker} oracle price history`}><defs><linearGradient id="oracle-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#0065d2" stopOpacity=".28"/><stop offset="1" stopColor="#0065d2" stopOpacity="0"/></linearGradient></defs><polygon points={`0,230 ${coordinates} 1000,230`} fill="url(#oracle-chart-fill)"/><polyline points={coordinates} fill="none" stroke="#48a0ff" strokeWidth="2.5" vectorEffect="non-scaling-stroke"/></svg><span className="oracle-chart-range">Oracle samples are retained from when chart tracking was enabled.</span></> : <div className="chart-placeholder">Oracle price history is building. Current mark price is shown above.</div>}
+    </div>
   </div>
 }
 
@@ -192,28 +116,20 @@ function InterfaceSpeed() {
   return <span className={`interface-speed ${grade}`} title="Round-trip request time to the Afterbell API">{networkReadout}</span>
 }
 
-const initialNotifications = [
-  { id: 1, title: 'Margin level changed', message: 'Your NVDA position is approaching its maintenance margin.', time: 'Just now', type: 'risk' },
-  { id: 2, title: 'Agent activity', message: 'Your trading agent opened a position on META.', time: '12 min ago', type: 'agent' },
-  { id: 3, title: 'Withdrawal completed', message: 'Your USDC withdrawal has been delivered to Base.', time: 'Yesterday', type: 'success' },
-]
-
 const riskDisclosureSections = [
-  { title: 'Perpetual contracts are not stocks', body: 'Afterbell contracts provide synthetic, cash-settled price exposure to referenced US equities. They do not give you shares, ownership, voting rights, dividends, corporate-action entitlements, or a claim against NVIDIA, Tesla, Apple, Alphabet, Meta, or any other issuer. Contract prices can differ from the prices of the referenced equity, especially outside regular market hours.' },
-  { title: 'Leverage, margin and liquidation', body: 'Leverage magnifies both gains and losses. A small move in the reference price can materially reduce your margin. Positions may be liquidated automatically when their equity falls below required maintenance levels; a liquidation may occur before you can respond, and execution may be worse than expected. You can lose all collateral assigned to a position. Fees, funding payments and price impact also affect results.' },
-  { title: 'Pricing and execution', body: 'Prices depend on external market data, oracle publication, signed execution quotes and the operation of keepers. Data can be delayed, unavailable, inaccurate or manipulated. Oracle or quote-signer compromise or error may result in incorrect prices or execution. Freshness checks, deviation limits and circuit breakers reduce some risks but cannot eliminate them. Trading may pause or execute at prices that differ from a displayed reference price. After-hours equity and token prices may be thin, volatile or disconnected from regular-session prices.' },
-  { title: 'Shared liquidity vault', body: 'The vault is the counterparty to positions. Liquidity providers bear trading, utilization, oracle, liquidation, bad-debt and smart-contract risks. Vault shares are not deposits, are not guaranteed to maintain a fixed value, and withdrawals may be delayed or limited by protocol rules. Losses can reduce vault assets and the value of LP shares.' },
-  { title: 'Wallets, smart contracts and networks', body: 'You authorize actions with your connected wallet. You are responsible for reviewing each signature, transaction, destination and agent permission. Blockchain transactions may be irreversible. Contract defects, compromised keys, network outages, congestion, forks, wallet failures or third-party service failures can result in delayed, failed or lost transactions or assets. Protocol administration, configuration changes and operational services also create risk; code limits and time delays are safeguards, not guarantees against errors or compromise.' },
-  { title: 'Stablecoins, cross-chain funding and agents', body: 'USDC and other supported digital assets may lose value, become unavailable, or be affected by issuer, reserve, bridge, token-contract or redemption risk. Cross-chain deposits and withdrawals depend on NEAR Intents and external networks; they may be delayed, fail or be refunded under their applicable processes. An AI agent can act only within its on-chain permissions, but its decisions may still lose money. Monitor its activity and revoke its permissions when you no longer want it to trade.' },
-  { title: 'No guarantees; access restrictions', body: 'Trading involves substantial risk and may not be suitable for you. Do not trade with funds you cannot afford to lose. Past performance does not predict future results, and no strategy, agent or protocol feature guarantees profit or prevents loss. Use of Afterbell is subject to applicable laws and geographic restrictions; do not access the service where it is prohibited.' },
+  { title: 'Synthetic equity exposure', body: 'Afterbell markets are leveraged, cash-settled perpetual contracts that reference selected US equities. A contract is not a share and gives no ownership, voting, dividend, distribution, or corporate-action rights in the referenced company. Prices can diverge from the underlying equity, particularly outside regular US market hours.' },
+  { title: 'Leverage, collateral and liquidation', body: 'Leverage increases both gains and losses. Positions use shared USDC collateral and can be liquidated when their equity falls below the required maintenance margin. Liquidation can happen quickly, at an unfavorable price, and may consume all collateral allocated to a position. Fees, funding payments, slippage, and market impact reduce returns.' },
+  { title: 'Oracle prices and trade execution', body: 'Displayed marks and execution quotes depend on external Robinhood Chain market data, an oracle publisher, NEAR contract state, and backend relaying and keeper services. Data can be delayed, unavailable, wrong, or manipulated. Freshness limits, deviation checks, circuit breakers, and signed quotes reduce some risks but cannot guarantee a correct price or successful execution. An oracle signer, quote signer, RPC provider, or service compromise may cause loss. Orders may fail, remain unfilled, or execute differently from an expected reference price.' },
+  { title: 'Shared vault and liquidity providers', body: 'The shared liquidity vault is the counterparty to positions. Vault liquidity providers bear market, utilization, oracle, liquidation, bad-debt, stablecoin, and contract risks. Vault shares are not bank deposits and have no guaranteed value. Withdrawals may be restricted or delayed by available liquidity and protocol rules, and losses can reduce vault assets and share value.' },
+  { title: 'Wallet ownership, agents and transactions', body: 'Your wallet controls your Afterbell account and authorizes account actions. Review each signature, transaction, and agent permission. Agent accounts are logical records with limited permissions, but an agent can still lose funds within those limits. You are responsible for monitoring agent activity and revoking access when appropriate. Blockchain actions may be irreversible. Contract defects, compromised keys, protocol administration, chain outages, congestion, RPC failures, wallet errors, and other service interruptions can delay or prevent actions or result in loss.' },
+  { title: 'USDC and cross-chain transfers', body: 'USDC is a digital asset, not a bank balance, and may lose its peg or be affected by issuer, reserve, token-contract, bridge, or redemption events. Deposits and withdrawals that use cross-chain services depend on NEAR Intents, solvers, and external networks; they can be delayed, fail, or be refunded under those services’ processes. Check the asset, network, and destination before confirming a transfer.' },
+  { title: 'No assurance of profit or availability', body: 'Trading can result in partial or total loss and may not be suitable for you. Do not use money you cannot afford to lose. Past performance does not predict future results. No market, order type, risk control, agent, or protocol feature guarantees profit or prevents loss. Service and market availability can change, and use is subject to applicable law and geographic restrictions.' },
 ]
 
 type SharedPosition = { ticker: string; side: 'Long' | 'Short'; size: string; margin: string; leverage: string; entry: string; mark: string; pnl: string; change: string }
 
-const mockPositions: SharedPosition[] = [
-  { ticker: 'NVDA', side: 'Long', size: '$1,240.00', margin: '$413.33', leverage: '3.0×', entry: '$139.42', mark: '$142.87', pnl: '+$30.69', change: '+7.43%' },
-  { ticker: 'META', side: 'Short', size: '$760.00', margin: '$380.00', leverage: '2.0×', entry: '$719.10', mark: '$712.66', pnl: '+$6.81', change: '+1.79%' },
-]
+function money(value: number) { return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+function elapsed(timestamp: number) { const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000)); return minutes < 1 ? 'Just now' : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago` }
 
 const shareBackgrounds = [
   { id: 'gradient-1', label: 'Blue glow', kind: 'gradient' },
@@ -226,7 +142,8 @@ const shareBackgrounds = [
 ]
 
 function TradingPage() {
-  const { session, disconnect } = useWalletSession()
+  const { session, disconnect, signMessage } = useWalletSession()
+  const { showToast } = useToasts()
   useEffect(() => {
     if (!session) window.location.assign('/')
   }, [session])
@@ -242,7 +159,18 @@ function TradingPage() {
   const [marketMenu, setMarketMenu] = useState(false)
   const [marketSearch, setMarketSearch] = useState('')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
-  const [notifications, setNotifications] = useState(initialNotifications)
+  const [notifications, setNotifications] = useState<NotificationRecord[]>([])
+  const [positions, setPositions] = useState<PositionRecord[]>([])
+  const [limitOrders, setLimitOrders] = useState<LimitOrderRecord[]>([])
+  const [history, setHistory] = useState<ActivityRecord[]>([])
+  const [pricePoints, setPricePoints] = useState<PricePoint[]>([])
+  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
+  const [volumes, setVolumes] = useState<Record<string, string>>({})
+  const [availableBalance, setAvailableBalance] = useState<number | null>(null)
+  const [walletModalOpen, setWalletModalOpen] = useState(false)
+  const [limitPrice, setLimitPrice] = useState('')
+  const [estimatedFee, setEstimatedFee] = useState<number | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   const [riskOpen, setRiskOpen] = useState(false)
   const [sharePosition, setSharePosition] = useState<SharedPosition | null>(null)
   const [shareBackground, setShareBackground] = useState('gradient-1')
@@ -256,16 +184,90 @@ function TradingPage() {
   const dragState = useRef<{ axis: 'x' | 'y'; start: number; initial: number } | null>(null)
   const market = availableMarkets.find(item => item.ticker === selectedMarket) ?? availableMarkets[0]
   const filteredMarkets = availableMarkets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase()))
-  const positionValue = Number(payment || 0) * leverage
+  const snapshot = snapshots.find(item => item.market_id === market.ticker)
+  const latestPrice = snapshot?.mark_price_e8 ? dollars(snapshot.mark_price_e8) : 0
+  const maxLeverage = snapshot?.max_leverage_bps ? Number(snapshot.max_leverage_bps) / 10_000 : 10
+  const tradingEnabled = Boolean(availableMarkets.find(item => item.ticker === market.ticker)?.tradingEnabled && snapshot?.enabled && !snapshot.close_only)
 
   useEffect(() => {
-    if (!notificationsOpen && !riskOpen && !sharePosition) return
+    if (snapshot?.max_leverage_bps && leverage > maxLeverage) {
+      setLeverage(maxLeverage)
+      setSize((Number(payment || 0) * maxLeverage).toFixed(2))
+    }
+  }, [snapshot?.max_leverage_bps, maxLeverage])
+
+  async function refreshDashboard() {
+    if (!session) return
+    const tasks = [getSnapshots().then(setSnapshots), getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))), getMarketHistory(market.ticker).then(data => setPricePoints(data.points)), getPositions(session.accountId).then(data => setPositions(data.positions)), getLimits(session.accountId).then(data => setLimitOrders(data.orders)), getHistory(session.accountId).then(data => setHistory(data.events)), getNotifications(session.accountId).then(data => setNotifications(data.notifications)), fetch(`/api/v1/account/balance?account_id=${encodeURIComponent(session.accountId)}`).then(response => response.ok ? response.json() : Promise.reject()).then(data => setAvailableBalance(usdc(data.balance_usdc)))]
+    await Promise.allSettled(tasks)
+  }
+  useEffect(() => { void refreshDashboard(); const timer = window.setInterval(() => void refreshDashboard(), 15000); return () => window.clearInterval(timer) }, [session?.accountId, market.ticker])
+
+  const walletIcon = session?.walletName.toLowerCase().includes('phantom') ? phantomWalletIcon : session?.walletName.toLowerCase().includes('solflare') ? solflareWalletIcon : session?.walletName.toLowerCase().includes('metamask') ? metamaskWalletIcon : session?.walletName.toLowerCase().includes('coinbase') ? coinbaseWalletIcon : session?.walletName.toLowerCase().includes('rainbow') ? rainbowWalletIcon : session?.walletName.toLowerCase().includes('rabby') ? rabbyWalletIcon : session?.walletName.toLowerCase().includes('hot') ? hotWalletIcon : nightlyWalletIcon
+  const chainIcon = session?.chain === 'solana' ? solanaChainIcon : session?.chain === 'evm' ? evmChainIcon : nearChainIcon
+  const chainName = session?.chain === 'solana' ? 'Solana' : session?.chain === 'evm' ? 'EVM' : 'NEAR'
+
+  async function authorizeAndSubmit(path: string, body: Record<string, unknown>, signatureNonce: string | number, quoteRecipient?: string) {
+    const configuredContract = import.meta.env.VITE_A1_CONTRACT_ID || (import.meta.env.VITE_NEAR_NETWORK === 'mainnet' ? 'a1.afterbell.near' : 'afterbellfx-dev-faucet.testnet')
+    const signature = await signMessage(walletPayload(String(body.message), signatureNonce, quoteRecipient || configuredContract))
+    return postTrade(path, { ...body, owner_signature: signature })
+  }
+
+  async function submitOrder() {
+    if (!session || submitting) return
+    setSubmitting(true)
+    try {
+      const notional = Math.round(Number(size) * 1e6)
+      const base = { account_id: session.accountId, market_id: market.ticker, side, notional_usdc: String(notional), leverage_bps: Math.round(leverage * 10000), max_slippage_bps: 100 }
+      if (orderType === 'limit') {
+        if (!Number(limitPrice) || Number(limitPrice) <= 0) throw new Error('Enter a valid limit price.')
+        const draft = { account_id: session.accountId, order_id: `o_${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`, market_id: market.ticker, side, notional_usdc: String(notional), leverage_bps: Math.round(leverage * 10000), limit_price: priceToRaw(Number(limitPrice)), expires_at_ms: Date.now() + 86_400_000 }
+        const quote = await postTrade<Record<string, any>>('/v1/trade/limits/quote', draft)
+        if (quote.fee_usdc != null) setEstimatedFee(usdc(quote.fee_usdc))
+        await authorizeAndSubmit('/v1/trade/limits', { ...draft, ...quote }, quote.nonce)
+      } else {
+        const quote = await postTrade<Record<string, any>>('/v1/trade/quote', base)
+        setEstimatedFee(usdc(quote.fee_usdc))
+        await authorizeAndSubmit('/v1/trade/open', quote, quote.nonce)
+      }
+      showToast('success', `${side === 'long' ? 'Long' : 'Short'} order submitted.`)
+      await refreshDashboard()
+    } catch (error) { showToast('error', error instanceof Error ? error.message : 'Order could not be submitted.') }
+    finally { setSubmitting(false) }
+  }
+
+  async function closePosition(position: PositionRecord) {
+    if (!session || submitting) return
+    setSubmitting(true)
+    try {
+      const quote = await postTrade<Record<string, any>>('/v1/trade/close/quote', { account_id: session.accountId, position_id: position.position_id, max_slippage_bps: 100 })
+      await authorizeAndSubmit('/v1/trade/close', { ...quote, market_id: position.market_id, side: position.is_long ? 'long' : 'short', notional_usdc: position.notional_usdc }, quote.nonce)
+      showToast('success', `${position.market_id} position closed.`)
+      await refreshDashboard()
+    } catch (error) { showToast('error', error instanceof Error ? error.message : 'Position could not be closed.') }
+    finally { setSubmitting(false) }
+  }
+
+  async function cancelLimit(order: LimitOrderRecord) {
+    if (!session || submitting) return
+    setSubmitting(true)
+    try {
+      const quote = await postTrade<Record<string, any>>('/v1/trade/limits/cancel/quote', { account_id: session.accountId, order_id: order.order_id })
+      await authorizeAndSubmit('/v1/trade/limits/cancel', { ...quote, account_id: session.accountId, order_id: order.order_id, market_id: order.market_id, side: order.is_long ? 'long' : 'short', notional_usdc: order.notional_usdc }, quote.nonce)
+      showToast('success', 'Limit order cancelled.')
+      await refreshDashboard()
+    } catch (error) { showToast('error', error instanceof Error ? error.message : 'Limit order could not be cancelled.') }
+    finally { setSubmitting(false) }
+  }
+
+  useEffect(() => {
+    if (!notificationsOpen && !riskOpen && !sharePosition && !walletModalOpen) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setNotificationsOpen(false); setRiskOpen(false); setSharePosition(null); setShareNotice('') }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [notificationsOpen, riskOpen, sharePosition])
+  }, [notificationsOpen, riskOpen, sharePosition, walletModalOpen])
 
   useEffect(() => {
     if (!marketMenu) return
@@ -403,8 +405,8 @@ function TradingPage() {
           <Icon name="bell" />
           {notifications.length > 0 && <span className="notification-count">{notifications.length}</span>}
         </button>
-        <button className="account-button" title={`${session?.walletName ?? 'Wallet'} · ${session?.chain ?? 'disconnected'} · Disconnect`} onClick={() => { void disconnect(); window.location.assign('/') }}>
-          <span className="account-avatar wallet-chain-avatar">{session?.chain === 'solana' ? 'SOL' : session?.chain === 'evm' ? 'EVM' : 'NEAR'}</span>
+        <button className="account-button" title={`${session?.walletName ?? 'Wallet'} · ${chainName}`} onClick={() => setWalletModalOpen(true)}>
+          <img className="account-avatar wallet-chain-avatar connected-wallet-icon" src={walletIcon} alt=""/>
           <span className="account-address">{session ? `${session.address.slice(0, 6)}...${session.address.slice(-4)}` : 'Connect wallet'}</span>
           <Icon name="chevron" />
         </button>
@@ -417,20 +419,29 @@ function TradingPage() {
           <button className="market-selector" aria-expanded={marketMenu} onClick={() => { setMarketMenu(open => !open); setMarketSearch('') }}><span className="stock-avatar"><TickerIcon ticker={market.ticker} size={20}/></span><span className="market-selector-text"><b>{market.ticker}</b></span><Icon name="chevron"/></button>
           {marketMenu && <div className="market-menu"><label className="market-search"><Icon name="search"/><input autoFocus value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search stocks" aria-label="Search stocks"/></label><div className="market-menu-list">{filteredMarkets.map(item => <button key={item.ticker} className={item.ticker === market.ticker ? 'selected' : ''} onClick={() => { setSelectedMarket(item.ticker); setMarketMenu(false); setMarketSearch('') }}><span className="stock-avatar small"><TickerIcon ticker={item.ticker} size={17}/></span><span><b>{item.ticker}</b><small>{item.name} / US equity</small></span></button>)}{filteredMarkets.length === 0 && <p className="market-empty">No stocks found.</p>}</div></div>}
         </div>
-        <div className="overview-price"><small className="metric-label" tabIndex={0} aria-describedby="tip-mark-price">Perp mark price<span className="metric-tooltip" id="tip-mark-price" role="tooltip">The reference price used to value open positions and help determine liquidations. It can differ from the price available to trade.</span></small><strong>Unavailable</strong><span>Awaiting market feed</span></div>
-        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-volume">24h volume<span className="metric-tooltip" id="tip-volume" role="tooltip">The total value of trades recorded in this market over the past 24 hours.</span></small><strong>Unavailable</strong></div>
-        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-open-interest">Open interest<span className="metric-tooltip" id="tip-open-interest" role="tooltip">The current total value of open positions in this market.</span></small><strong>Unavailable</strong></div>
-        <div className="overview-metric funding"><small className="metric-label" tabIndex={0} aria-describedby="tip-funding">Funding / 8h<span className="metric-tooltip" id="tip-funding" role="tooltip">The funding rate applied for each 8-hour interval. Funding payments help keep the contract price aligned with its reference market.</span></small><strong>Unavailable</strong></div>
-        <StockQuote ticker={market.ticker}/>
+        <div className="overview-price"><small className="metric-label" tabIndex={0} aria-describedby="tip-mark-price">Perp mark price<span className="metric-tooltip" id="tip-mark-price" role="tooltip">The current A1 oracle mark used for position valuation and risk checks.</span></small><strong>{latestPrice ? money(latestPrice) : 'Unavailable'}</strong><span>{snapshot?.observed_at_ms ? `Updated ${elapsed(snapshot.observed_at_ms)}` : 'Waiting for oracle price'}</span></div>
+        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-volume">24h volume<span className="metric-tooltip" id="tip-volume" role="tooltip">Notional value of recorded opens and closes in the last 24 hours.</span></small><strong>{volumes[market.ticker] ? money(usdc(volumes[market.ticker])) : '$0.00'}</strong></div>
+        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-open-interest">Open interest<span className="metric-tooltip" id="tip-open-interest" role="tooltip">Combined open long and short notional on A1.</span></small><strong>{snapshot ? money(usdc(snapshot.open_interest_usdc)) : 'Unavailable'}</strong></div>
+        <div className="overview-metric funding"><small className="metric-label" tabIndex={0} aria-describedby="tip-funding">Funding / 8h<span className="metric-tooltip" id="tip-funding" role="tooltip">Current hourly funding rate projected across eight hours.</span></small><strong>{snapshot ? `${(snapshot.funding_rate_bps_8h / 100).toFixed(4)}%` : 'Unavailable'}</strong></div>
+        <div className="stock-quote"><small>{market.ticker}-USDC</small><strong>{latestPrice ? money(latestPrice) : 'Unavailable'}</strong></div>
       </section>
 
       <div className="trading-grid" style={{ '--order-width': `${orderWidth}px`, '--chart-height': `${chartHeight}px` } as CSSProperties}>
-        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market}/>
+        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market} points={pricePoints}/>
           <button className="resize-handle resize-horizontal" aria-label="Resize chart and positions panels" onPointerDown={event => startResize('y', event, chartHeight)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={endResize}><span/></button>
           <div className="positions-panel">
-            <div className="positions-heading"><div className="position-tabs">{['Positions', 'Open orders', 'History'].map(tab => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}{tab === 'Positions' && <span className="tab-count">2</span>}</button>)}</div></div>
-            <div className="position-table-wrap"><table className="position-table"><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>Margin</th><th>Leverage</th><th>Entry price</th><th>Mark price</th><th>Unrealized PnL</th><th/></tr></thead><tbody>
-              {mockPositions.map(position => <tr key={position.ticker}><td><span className="table-market"><span className="stock-avatar tiny"><TickerIcon ticker={position.ticker} size={13}/></span><b>{position.ticker}</b><small>US equity</small></span></td><td><span className={position.side === 'Long' ? 'long-side' : 'short-side'}>{position.side === 'Long' ? '↗' : '↘'} {position.side}</span></td><td>{position.size}</td><td>{position.margin}</td><td>{position.leverage}</td><td>{position.entry}</td><td>{position.mark}</td><td><span className="green-pnl">{position.pnl} <small>({position.change})</small></span></td><td><div className="position-actions"><button className="share-position" aria-label={`Share ${position.ticker} trade`} onClick={() => { setSharePosition(position); setShareNotice('') }}>Share</button><button className="close-position" onClick={() => setNotice('Position closing will be available when trading is connected.')}>Close</button></div></td></tr>)}
+            <div className="positions-heading"><div className="position-tabs">{['Positions', 'Open orders', 'History'].map(tab => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}{tab === 'Positions' && <span className="tab-count">{positions.length}</span>}</button>)}</div></div>
+            <div className="position-table-wrap"><table className="position-table"><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>{activeTab === 'Open orders' ? 'Limit price' : 'Margin'}</th><th>{activeTab === 'History' ? 'Event' : 'Leverage'}</th><th>{activeTab === 'History' ? 'Time' : 'Entry price'}</th><th>{activeTab === 'History' ? 'Transaction' : 'Mark price'}</th><th>{activeTab === 'History' ? 'Status' : 'Unrealized PnL'}</th><th/></tr></thead><tbody>
+              {activeTab === 'Positions' && positions.map(position => {
+                const ticker = position.market_id, sideLabel = position.is_long ? 'Long' : 'Short'
+                const pnl = usdc(position.unrealized_pnl_usdc), notional = usdc(position.notional_usdc), entry = dollars(position.entry_price), mark = dollars(position.mark_price)
+                const margin = usdc(position.margin_usdc ?? String(Math.ceil(Number(position.notional_usdc) * 10000 / position.leverage_bps)))
+                const share: SharedPosition = { ticker, side: sideLabel, size: money(notional), margin: money(margin), leverage: `${(position.leverage_bps / 10000).toFixed(1)}×`, entry: money(entry), mark: money(mark), pnl: `${pnl >= 0 ? '+' : ''}${money(pnl)}`, change: `${notional ? (pnl / notional * 100).toFixed(2) : '0.00'}%` }
+                return <tr key={position.position_id}><td><span className="table-market"><span className="stock-avatar tiny"><TickerIcon ticker={ticker} size={13}/></span><b>{ticker}</b><small>USDC</small></span></td><td><span className={position.is_long ? 'long-side' : 'short-side'}>{position.is_long ? '↗ Long' : '↘ Short'}</span></td><td>{money(notional)}</td><td>{money(margin)}</td><td>{share.leverage}</td><td>{money(entry)}</td><td>{mark ? money(mark) : 'Unavailable'}</td><td><span className={pnl >= 0 ? 'green-pnl' : 'short-side'}>{share.pnl} <small>({share.change})</small></span></td><td><div className="position-actions"><button className="share-position" aria-label={`Share ${ticker} trade`} onClick={() => { setSharePosition(share); setShareNotice('') }}>Share</button><button className="close-position" disabled={submitting} onClick={() => void closePosition(position)}>Close</button></div></td></tr>
+              })}
+              {activeTab === 'Open orders' && limitOrders.map(order => <tr key={order.order_id}><td><span className="table-market"><span className="stock-avatar tiny"><TickerIcon ticker={order.market_id} size={13}/></span><b>{order.market_id}</b><small>USDC</small></span></td><td><span className={order.is_long ? 'long-side' : 'short-side'}>{order.is_long ? '↗ Long' : '↘ Short'}</span></td><td>{money(usdc(order.notional_usdc))}</td><td>{money(dollars(order.limit_price))}</td><td>{(order.leverage_bps / 10000).toFixed(1)}×</td><td>Limit</td><td>—</td><td>Pending</td><td><button className="close-position" disabled={submitting} onClick={() => void cancelLimit(order)}>Cancel</button></td></tr>)}
+              {activeTab === 'History' && history.map(item => <tr key={item.id}><td><span className="table-market"><span className="stock-avatar tiny">{item.market_id && <TickerIcon ticker={item.market_id} size={13}/>}</span><b>{item.market_id || 'Account'}</b><small>USDC</small></span></td><td>{item.side || '—'}</td><td>{money(usdc(item.amount_usdc))}</td><td>—</td><td>{item.event_type.replaceAll('_', ' ')}</td><td>{elapsed(item.created_at_ms)}</td><td>{item.transaction_hash ? `${item.transaction_hash.slice(0, 8)}…` : '—'}</td><td>Finalized</td><td/></tr>)}
+              {((activeTab === 'Positions' && positions.length === 0) || (activeTab === 'Open orders' && limitOrders.length === 0) || (activeTab === 'History' && history.length === 0)) && <tr><td colSpan={9} className="empty-table-state">{activeTab === 'Positions' ? 'No open positions.' : activeTab === 'Open orders' ? 'No open orders.' : 'No account activity yet.'}</td></tr>}
             </tbody></table></div>
             {notice && <div className="trade-notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
           </div>
@@ -440,22 +451,21 @@ function TradingPage() {
           <div className="order-card-heading"><h1>Place order</h1></div>
           <div className="side-switch"><button className={side === 'long' ? 'active long-active' : ''} onClick={() => setSide('long')}><span>↗</span> Long</button><button className={side === 'short' ? 'active short-active' : ''} onClick={() => setSide('short')}><span>↘</span> Short</button></div>
           <div className="order-types"><button className={orderType === 'market' ? 'active' : ''} onClick={() => setOrderType('market')}>Market</button><button className={orderType === 'limit' ? 'active' : ''} onClick={() => setOrderType('limit')}>Limit</button><button className="order-info help-trigger" aria-label="Market and limit order help" aria-describedby="tip-order-types">i<span className="trade-tooltip" id="tip-order-types" role="tooltip">Market orders execute promptly at available prices. Limit orders execute only at your limit price or better, and may not fill.</span></button></div>
-          {orderType === 'limit' && <label className="field-label">Limit price<div className="input-wrap"><span>$</span><input inputMode="decimal" placeholder="Enter limit price" aria-label="Limit price"/></div></label>}
-          <label className="field-label">Order size<div className="input-wrap"><span>$</span><input inputMode="decimal" value={size} onChange={e => setSize(e.target.value)} aria-label="Order size"/><span className="input-unit"><UsdcIcon/>USDC</span></div><small className="input-subtext">Notional size</small></label>
-          <label className="field-label payment-label"><span>Margin</span><span className="available-label">Available <b>$1,240.00</b> <button onClick={() => setPayment('1240')}>Max</button></span><div className="input-wrap"><span>$</span><input inputMode="decimal" value={payment} onChange={e => setPayment(e.target.value)} aria-label="Margin amount"/><span className="input-unit"><UsdcIcon/>USDC</span></div></label>
-          <div className={`leverage-control ${side}`} style={{ '--leverage-progress': `${((leverage - 1) / 9) * 100}%` } as CSSProperties}><div className="leverage-heading"><span>Leverage</span><strong>{leverage.toFixed(1)}×</strong></div><input type="range" min="1" max="10" step="0.5" value={leverage} onChange={e => setLeverage(Number(e.target.value))} aria-label="Leverage"/><div className="range-labels">{[1, 3, 5, 7, 10].map(value => <span className={leverage >= value ? 'reached' : ''} key={value}>{value}×</span>)}</div></div>
-          <label className="tp-sl-toggle"><input type="checkbox"/><span className="custom-check"/><span>Take profit / Stop loss</span><button className="help-trigger" type="button" aria-label="Take profit and stop loss help" aria-describedby="tip-tp-sl">i<span className="trade-tooltip" id="tip-tp-sl" role="tooltip">Set trigger prices to close a position automatically when reached. The final execution price may differ from your trigger.</span></button></label>
-          <div className="order-summary"><div><span>Entry price</span><b>See chart</b></div><div><span>Position value</span><b>${positionValue.toFixed(2)}</b></div><div><span>Liquidation price</span><b>Unavailable</b></div><div><span>Trading fee</span><b>Unavailable</b></div></div>
-          <button className={`submit-order ${side}`} onClick={() => setNotice('Order preview only. Connect trading to submit.')}>{side === 'long' ? 'Open long' : 'Open short'} <span>${positionValue.toFixed(2)}</span></button>
-          <p className="order-disclaimer">Orders are simulated in this preview.</p>
+          {orderType === 'limit' && <label className="field-label">Limit price<div className="input-wrap"><span>$</span><input inputMode="decimal" value={limitPrice} onChange={event => setLimitPrice(event.target.value)} placeholder="Enter limit price" aria-label="Limit price"/></div></label>}
+          <label className="field-label">Order size<div className="input-wrap"><span>$</span><input inputMode="decimal" value={size} onChange={e => { setSize(e.target.value); setPayment((Number(e.target.value || 0) / leverage).toFixed(2)) }} aria-label="Order size"/><span className="input-unit"><UsdcIcon/>USDC</span></div><small className="input-subtext">Notional size</small></label>
+          <label className="field-label payment-label"><span>Margin</span><span className="available-label">Available <b>{availableBalance === null ? '—' : money(availableBalance)}</b> <button onClick={() => { if (availableBalance !== null) { setPayment(availableBalance.toFixed(2)); setSize((availableBalance * leverage).toFixed(2)) } }}>Max</button></span><div className="input-wrap"><span>$</span><input inputMode="decimal" value={payment} onChange={e => { setPayment(e.target.value); setSize((Number(e.target.value || 0) * leverage).toFixed(2)) }} aria-label="Margin amount"/><span className="input-unit"><UsdcIcon/>USDC</span></div></label>
+          <div className={`leverage-control ${side}`} style={{ '--leverage-progress': `${((leverage - 1) / Math.max(1, maxLeverage - 1)) * 100}%` } as CSSProperties}><div className="leverage-heading"><span>Leverage</span><strong>{leverage.toFixed(1)}×</strong></div><input type="range" min="1" max={maxLeverage} step="0.5" value={Math.min(leverage, maxLeverage)} onChange={e => { const value = Number(e.target.value); setLeverage(value); setSize((Number(payment || 0) * value).toFixed(2)) }} aria-label={`Leverage, maximum ${maxLeverage} times`}/><div className="range-labels">{[1, 3, 5, 7, 10].filter(value => value <= maxLeverage || value === 1).map(value => <span className={leverage >= value ? 'reached' : ''} key={value}>{value}×</span>)}</div></div>
+          <div className="order-summary"><div><span>Entry price</span><b>{latestPrice ? money(latestPrice) : 'Unavailable'}</b></div><div><span>Position value</span><b>{money(Number(size || 0))}</b></div><div><span>Liquidation</span><b>Uses A1 maintenance rules</b></div><div><span>Trading fee</span><b>{estimatedFee === null ? 'Calculated in quote' : money(estimatedFee)}</b></div></div>
+          <button className={`submit-order ${side}`} disabled={submitting || !tradingEnabled} onClick={() => void submitOrder()}>{submitting ? 'Confirming…' : tradingEnabled ? (side === 'long' ? 'Open long' : 'Open short') : 'Market unavailable'} <span>{money(Number(size || 0))}</span></button>
         </aside>
       </div>
     </div>
     <footer className="trade-statusbar"><InterfaceSpeed/><span className="status-spacer"/><button className="footer-link" onClick={() => setRiskOpen(true)}>Risk disclosure</button><a className="footer-link" href="https://docs.afterbellfx.xyz" target="_blank" rel="noreferrer">Docs</a><span>© Afterbell 2026</span></footer>
 
-    {notificationsOpen && <><button className="drawer-backdrop" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}/><aside className="notification-drawer" aria-label="Notifications"><div className="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button className="drawer-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div><div className="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={notifications.length === 0} onClick={() => setNotifications([])}>Clear all</button></div><div className="notification-list">{notifications.map(item => <article className="notification-item" key={item.id}><div className="notification-body"><div className="notification-title-row"><h3>{item.title}</h3><time>{item.time}</time></div><p>{item.message}</p></div><button className="notification-delete" aria-label="Delete notification" title="Delete notification" onClick={() => setNotifications(current => current.filter(notification => notification.id !== item.id))}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></button></article>)}{notifications.length === 0 && <div className="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>}</div></aside></>}
+    {notificationsOpen && <><button className="drawer-backdrop" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}/><aside className="notification-drawer" aria-label="Notifications"><div className="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button className="drawer-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div><div className="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={notifications.length === 0} onClick={() => session && void clearNotifications(session.accountId).then(() => setNotifications([])).catch(error => showToast('error', error.message))}>Clear all</button></div><div className="notification-list">{notifications.map(item => <article className="notification-item" key={item.id}><div className="notification-body"><div className="notification-title-row"><h3>{item.title}</h3><time>{elapsed(item.created_at_ms)}</time></div><p>{item.message}</p></div><button className="notification-delete" aria-label="Delete notification" title="Delete notification" onClick={() => session && void deleteNotification(session.accountId, item.id).then(() => setNotifications(current => current.filter(notification => notification.id !== item.id))).catch(error => showToast('error', error.message))}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></button></article>)}{notifications.length === 0 && <div className="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>}</div></aside></>}
 
-    {riskOpen && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRiskOpen(false) }}><section className="risk-modal" role="dialog" aria-modal="true" aria-labelledby="risk-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">PLEASE READ BEFORE TRADING</span><h2 id="risk-title">Risk disclosure</h2><p>Understand the product and its risks before you trade.</p></div><button className="drawer-close" aria-label="Close risk disclosure" onClick={() => setRiskOpen(false)}>×</button></header><div className="risk-modal-content">{riskDisclosureSections.map(section => <section key={section.title}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div><footer className="risk-modal-footer"><span>Questions? Visit our documentation.</span><button onClick={() => setRiskOpen(false)}>I understand</button></footer></section></div>}
+    {walletModalOpen && session && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setWalletModalOpen(false) }}><section className="wallet-detail-modal risk-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title"><header className="risk-modal-header"><div><h2 id="wallet-modal-title">Connected wallet</h2></div><button className="drawer-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header><div className="wallet-detail-content"><div className="wallet-detail-chain"><img src={chainIcon} alt=""/><span>{chainName} wallet</span></div><div className="wallet-detail-identity"><img src={walletIcon} alt=""/><span>{session.walletName}</span></div><div className="wallet-detail-address"><span>{session.address}</span><button onClick={() => void navigator.clipboard.writeText(session.address).then(() => showToast('success', 'Wallet address copied.')).catch(() => showToast('error', 'Could not copy the wallet address.'))}>Copy</button></div><button className="wallet-disconnect" onClick={() => { void disconnect(); window.location.assign('/') }}>Disconnect</button></div></section></div>}
+    {riskOpen && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRiskOpen(false) }}><section className="risk-modal" role="dialog" aria-modal="true" aria-labelledby="risk-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">PLEASE READ BEFORE TRADING</span><h2 id="risk-title">Risk disclosure</h2><p>Understand the product and its risks before you trade.</p></div><button className="drawer-close" aria-label="Close risk disclosure" onClick={() => setRiskOpen(false)}>×</button></header><div className="risk-modal-content">{riskDisclosureSections.map(section => <section key={section.title}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div><footer className="risk-modal-footer"><a href="https://docs.afterbellfx.xyz" target="_blank" rel="noreferrer">Read the product documentation.</a><button onClick={() => setRiskOpen(false)}>I understand</button></footer></section></div>}
     {sharePosition && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) { setSharePosition(null); setShareNotice('') } }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><header className="risk-modal-header"><div><h2 id="share-title">Share your trade</h2><p>A snapshot of this position, ready to share.</p></div><button className="drawer-close" aria-label="Close share trade dialog" onClick={() => { setSharePosition(null); setShareNotice('') }}>×</button></header><div className="share-modal-content"><article ref={shareCardRef} className={`share-trade-card ${shareBackground}`} style={shareBackground.startsWith('image-') || shareBackground === 'custom-image' ? { backgroundImage: `linear-gradient(90deg, #0b111ad9, #0b111a9c), url(${shareBackground === 'custom-image' ? customShareBackground : shareBackgrounds.find(option => option.id === shareBackground)?.image})` } : undefined}><div className="share-card-brand"><img src={logo} alt=""/><span>Afterbell</span><span className={`share-card-side ${sharePosition.side.toLowerCase()}`}>{sharePosition.side}</span></div><div className="share-card-main"><div className="share-card-market"><span className="stock-avatar"><TickerIcon ticker={sharePosition.ticker} size={20}/></span><div><b>{sharePosition.ticker}-USDC</b></div></div><div className="share-card-profit"><strong>{sharePosition.pnl}</strong><span>{sharePosition.change}</span></div></div><div className="share-card-details"><div><span>Position size</span><b>{sharePosition.size}</b></div><div><span>Leverage</span><b>{sharePosition.leverage}</b></div><div><span>Entry price</span><b>{sharePosition.entry}</b></div><div><span>Mark price</span><b>{sharePosition.mark}</b></div></div><div className="share-card-footer">afterbellfx.xyz</div></article><div className="share-background-picker"><div className="share-background-heading">Background</div><div className="share-background-options">{shareBackgrounds.map(option => <button key={option.id} className={`share-background-option ${option.id} ${shareBackground === option.id ? 'selected' : ''}`} aria-label={option.label} aria-pressed={shareBackground === option.id} title={option.label} style={option.kind === 'image' ? { backgroundImage: `linear-gradient(#080c1280, #080c1280), url(${option.image})` } : undefined} onClick={() => setShareBackground(option.id)} />)}<label className={`share-background-option custom-image ${shareBackground === 'custom-image' ? 'selected' : ''}`} title="Upload custom image" aria-label="Upload custom image" style={customShareBackground ? { backgroundImage: `linear-gradient(#080c1280, #080c1280), url(${customShareBackground})` } : undefined}><input type="file" accept="image/*" onChange={chooseCustomShareBackground}/><span>+</span></label></div></div>{shareNotice && <p className="share-notice" role="status">{shareNotice}</p>}</div><footer className="share-modal-footer"><button className="share-action-button" onClick={() => void downloadTradeCard()}>Download</button></footer></section></div>}
   </main>
 }

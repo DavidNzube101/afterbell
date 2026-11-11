@@ -10,7 +10,7 @@
 .markets-search svg { width: 15px; height: 15px; flex: 0 0 auto; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .markets-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #e6edf4; font: inherit; font-size: 11px; }
 .markets-search input::placeholder { color: #657382; }
-.markets-table-head, .supported-market-row { display: grid; grid-template-columns: minmax(250px, 1.7fr) minmax(110px, .8fr) minmax(160px, 1fr) minmax(125px, .7fr); align-items: center; gap: 18px; }
+.markets-table-head, .supported-market-row { display: grid; grid-template-columns: minmax(195px, 1.6fr) minmax(76px, .6fr) repeat(4, minmax(83px, .7fr)) minmax(115px, .9fr) minmax(112px, .85fr); align-items: center; gap: 10px; }
 .markets-table-head { min-height: 39px; padding: 0 20px; border-bottom: 1px solid #1c2631; color: #677584; font-size: 9px; }
 .supported-market-row { min-height: 74px; padding: 0 20px; border-bottom: 1px solid #1a232e; transition: background .15s ease; }
 .supported-market-row:last-child { border-bottom: 0; }
@@ -32,6 +32,7 @@
 .market-open-link.short { border-color: #2a171d; background: #2a171d; color: #ff9ba5; }
 .market-open-link.short:hover { border-color: #3a2028; background: #3a2028; color: #ffb3ba; }
 .markets-no-results { padding: 42px 20px; color: #8290a0; font-size: 12px; text-align: center; }
+.supported-market-row > span:not(.market-type):not(.market-network) { color: #a0acb9; font-size: 10px; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 760px) {
   .markets-page .trade-header { height: 58px; display: flex; gap: 15px; padding: 0 15px; }
@@ -51,6 +52,7 @@
   .markets-search { height: 34px; }
   .markets-table-head { display: none; }
   .supported-market-row { min-height: 68px; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 10px; padding: 10px 11px; }
+  .supported-market-row > :nth-child(3), .supported-market-row > :nth-child(4), .supported-market-row > :nth-child(5), .supported-market-row > :nth-child(6), .supported-market-row > :nth-child(7) { display: none; }
   .supported-market-name { grid-row: span 2; gap: 9px; }
   .market-brand-icon { width: 34px; height: 34px; border-radius: 9px; }
   .market-type { align-self: end; justify-self: end; color: #8f9baa; font-size: 9px; }

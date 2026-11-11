@@ -355,6 +355,51 @@ Json::Value Service::ownerStatus(const std::string &accountId) const {
     return response;
 }
 
+Json::Value Service::marketSnapshot(const std::string &marketId) const {
+    if (marketId.empty() || marketId.size() > 16) throw std::invalid_argument("invalid market_id");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("market read RPC is on the wrong NEAR network");
+    Json::Value args; args["market_id"] = marketId;
+    const auto config = viewCall(rpc, config_.contractId, "perp_market", args);
+    const auto price = viewCall(rpc, config_.contractId, "market_price", args);
+    const auto health = viewCall(rpc, config_.contractId, "oracle_health", args);
+    const auto exposure = viewCall(rpc, config_.contractId, "perp_exposure", args);
+    const auto hourlyFunding = viewCall(rpc, config_.contractId, "perp_funding_rate_bps_per_hour", args);
+    Json::Value result;
+    result["market_id"] = marketId;
+    result["enabled"] = !config.isNull() && config["enabled"].asBool();
+    result["close_only"] = !config.isNull() && config["close_only"].asBool();
+    result["mark_price_e8"] = price.isNull() ? Json::Value() : price["price"];
+    result["observed_at_ms"] = price.isNull() ? Json::Value() : price["observed_at_ms"];
+    result["sequence"] = price.isNull() ? Json::Value() : price["sequence"];
+    result["confidence_bps"] = health["confidence_bps"];
+    result["spot_twap_deviation_bps"] = health["spot_twap_deviation_bps"];
+    result["circuit_broken"] = health["circuit_broken"];
+    const auto longOpen = exposure.isNull() ? 0 : u128(exposure["long_notional_usdc"], "long open interest");
+    const auto shortOpen = exposure.isNull() ? 0 : u128(exposure["short_notional_usdc"], "short open interest");
+    result["long_open_notional_usdc"] = decimal(longOpen);
+    result["short_open_notional_usdc"] = decimal(shortOpen);
+    result["open_interest_usdc"] = decimal(longOpen + shortOpen);
+    const auto funding = hourlyFunding.isUInt() ? hourlyFunding.asUInt() : hourlyFunding.asUInt64();
+    result["funding_rate_bps_hourly"] = Json::UInt64(funding);
+    result["funding_rate_bps_8h"] = Json::UInt64(funding * 8);
+    if (!config.isNull()) {
+        result["max_leverage_bps"] = config["max_leverage_bps"];
+        result["max_position_usdc"] = config["max_position_usdc"];
+    }
+    return result;
+}
+
+Json::Value Service::accountBalance(const std::string &accountId) const {
+    if (accountId.empty() || accountId.size() > 128) throw std::invalid_argument("invalid account_id");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("balance read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = accountId;
+    Json::Value result; result["account_id"] = accountId;
+    result["balance_usdc"] = viewCall(rpc, config_.contractId, "balance_of", args);
+    return result;
+}
+
 Json::Value Service::ownerRegistrationPayload(const Json::Value &request) const {
     if (!request["account_id"].isString() || !request["owner"].isObject()) throw std::invalid_argument("account_id and owner are required");
     const auto accountId = request["account_id"].asString();

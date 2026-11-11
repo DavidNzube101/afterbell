@@ -94,7 +94,7 @@ export function useMarketRegistry() {
   }, [])
 
   return {
-    markets: registry?.markets.length ? registry.markets : fallbackMarkets,
+    markets: (registry?.markets.length ? registry.markets : fallbackMarkets) as Array<Market & { tradingEnabled?: boolean }>,
     registry,
     error,
     isLive: registry !== null,

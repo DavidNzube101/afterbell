@@ -2,6 +2,7 @@
 
 #include "http/request_logger.hpp"
 #include "api/profile_store.hpp"
+#include "api/dashboard_store.hpp"
 #include "indexer/worker.hpp"
 #include "oracle/worker.hpp"
 #include "trading/service.hpp"
@@ -208,6 +209,16 @@ void logStartup(unsigned short port, const std::string &network,
     std::cerr << Json::writeString(writer, event) << '\n';
 }
 
+void logActivityBestEffort(const std::shared_ptr<afterbell::api::DashboardStore> &store,
+                           const std::string &network, const std::string &accountId,
+                           const std::string &eventType, const std::string &title,
+                           const std::string &message, const std::string &market,
+                           const std::string &side, const std::string &amount,
+                           const std::string &transactionHash) {
+    try { store->recordActivity(network, accountId, eventType, title, message, market, side, amount, transactionHash); }
+    catch (const std::exception &error) { std::cerr << "dashboard activity persistence failed after confirmed transaction: " << error.what() << '\n'; }
+}
+
 } // namespace
 
 int main() {
@@ -219,6 +230,7 @@ int main() {
         if (!databaseUrl) throw std::runtime_error("DATABASE_URL is required");
         auto profileStore = std::make_shared<afterbell::api::ProfileStore>(
             env("WAITLIST_DATABASE_URL").value_or(*databaseUrl));
+        auto dashboardStore = std::make_shared<afterbell::api::DashboardStore>(*databaseUrl);
         const auto network = env("NEAR_NETWORK");
         const auto contractId = env("A1_CONTRACT_ID");
         if (!network || !contractId) {
@@ -252,6 +264,7 @@ int main() {
                                                  : "rh_uniswap_pools.json";
             }
             afterbell::oracle::WorkerConfig oracleConfig{
+                *databaseUrl,
                 requiredEnv("ROBINHOOD_RPC_URL"),
                 nearRpcUrl,
                 nearTransactionRpcUrlForNetwork(*network, nearRpcUrl),
@@ -368,17 +381,80 @@ int main() {
             {drogon::Get});
         drogon::app().registerHandler(
             "/v1/markets",
-            [markets, network = *network, contractId = *contractId](
+            [markets, network = *network, contractId = *contractId, runTrading](
                 const drogon::HttpRequestPtr &,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 Json::Value body;
                 body["network"] = network;
                 body["contractId"] = contractId;
                 body["markets"] = markets;
-                body["tradingEnabled"] = false;
+                body["tradingEnabled"] = runTrading;
+                for (auto &market : body["markets"]) {
+                    market["tradingEnabled"] = runTrading;
+                }
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/markets/snapshot",
+            [markets, tradingService](const drogon::HttpRequestPtr &, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                Json::Value body(Json::arrayValue);
+                for (const auto &market : markets) {
+                    const auto id = market["symbol"].asString();
+                    try {
+                        if (!tradingService) throw std::runtime_error("Perpetual trading reads are disabled");
+                        body.append(tradingService->marketSnapshot(id));
+                    }
+                    catch (const std::exception &error) { Json::Value item; item["market_id"] = id; item["error"] = error.what(); body.append(item); }
+                }
+                callback(drogon::HttpResponse::newHttpJsonResponse(body));
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/markets/history",
+            [dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try {
+                    const auto market = request->getParameter("market_id");
+                    const auto range = request->getParameter("range");
+                    const std::uint64_t duration = range == "1d" ? 86'400'000ULL : range == "1w" ? 604'800'000ULL : range == "1h" ? 3'600'000ULL : 86'400'000ULL;
+                    const auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                    Json::Value body; body["market_id"] = market; body["range"] = range; body["points"] = dashboardStore->marketHistory(network, market, now - duration);
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("market_history_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/markets/volume",
+            [markets, dashboardStore, network = *network](const drogon::HttpRequestPtr &, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                Json::Value body(Json::arrayValue);
+                for (const auto &market : markets) { Json::Value item; item["market_id"] = market["symbol"]; item["volume_usdc_raw"] = dashboardStore->marketVolume24h(network, market["symbol"].asString()); body.append(item); }
+                callback(drogon::HttpResponse::newHttpJsonResponse(body));
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/account/balance",
+            [tradingService](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Trading reads are unavailable"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->accountBalance(request->getParameter("account_id")))); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("balance_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/trade/history",
+            [dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { const auto account = request->getParameter("account_id"); dashboardStore->syncDepositNotifications(network, account); Json::Value body; body["events"] = dashboardStore->activityHistory(network, account); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("history_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/notifications",
+            [dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                const auto account = request->getParameter("account_id");
+                try {
+                    if (request->method() == drogon::Get) { dashboardStore->syncDepositNotifications(network, account); Json::Value body; body["notifications"] = dashboardStore->notifications(network, account); callback(drogon::HttpResponse::newHttpJsonResponse(body)); return; }
+                    dashboardStore->clearNotifications(network, account); Json::Value body; body["cleared"] = true; callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("notifications_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
+            }, {drogon::Get, drogon::Delete});
+        drogon::app().registerHandler(
+            "/v1/notifications/{id}",
+            [dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback, const std::string &id) {
+                try { Json::Value body; body["deleted"] = dashboardStore->deleteNotification(network, request->getParameter("account_id"), id); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("notification_delete_failed", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
+            }, {drogon::Delete});
         drogon::app().registerHandler(
             "/v1/account/owner/status",
             [accountService](const drogon::HttpRequestPtr &request,
@@ -449,7 +525,7 @@ int main() {
             }, {drogon::Post});
         drogon::app().registerHandler(
             "/v1/account/agent/create",
-            [accountService](const drogon::HttpRequestPtr &request,
+            [accountService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request,
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!accountService) {
                     auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("account_setup_unavailable", "Account setup is not configured"));
@@ -458,7 +534,10 @@ int main() {
                 try {
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
-                    callback(drogon::HttpResponse::newHttpJsonResponse(accountService->createAgentRecord(*input)));
+                    auto body = accountService->createAgentRecord(*input);
+                    if (body["status"] == "created") logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "agent_created",
+                        "Trading agent created", "A trading agent was authorized for your Afterbell account.", "", "", "0", body["transaction_hash"].asString());
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) {
                     auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("agent_creation_failed", error.what()));
                     response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
@@ -556,7 +635,7 @@ int main() {
             {drogon::Post});
         drogon::app().registerHandler(
             "/v1/trade/open",
-            [tradingService](const drogon::HttpRequestPtr &request,
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request,
                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!tradingService) {
                     Json::Value body = errorBody("trading_disabled", "Trade execution is not enabled on this service");
@@ -569,6 +648,9 @@ int main() {
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
                     auto body = tradingService->submitOpen(*input);
+                    logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "position_opened",
+                        "Position opened", (*input)["side"].asString() + " " + (*input)["market_id"].asString() + " position",
+                        (*input)["market_id"].asString(), (*input)["side"].asString(), (*input)["notional_usdc"].asString(), body["transaction_hash"].asString());
                     callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) {
                     Json::Value body = errorBody("trade_rejected", error.what());
@@ -628,7 +710,7 @@ int main() {
             {drogon::Post});
         drogon::app().registerHandler(
             "/v1/trade/close",
-            [tradingService](const drogon::HttpRequestPtr &request,
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request,
                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!tradingService) {
                     Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
@@ -640,7 +722,11 @@ int main() {
                 try {
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
-                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->submitClose(*input)));
+                    auto body = tradingService->submitClose(*input);
+                    logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "position_closed",
+                        "Position closed", "Position " + (*input)["position_id"].asString() + " closed",
+                        (*input)["market_id"].asString(), (*input)["side"].asString(), (*input)["notional_usdc"].asString(), body["transaction_hash"].asString());
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) {
                     Json::Value body = errorBody("close_rejected", error.what());
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
@@ -652,7 +738,7 @@ int main() {
 
         drogon::app().registerHandler(
             "/v1/trade/limits",
-            [tradingService](const drogon::HttpRequestPtr &request,
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request,
                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!tradingService) {
                     Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
@@ -666,7 +752,11 @@ int main() {
                     }
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
-                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->submitLimitOrder(*input)));
+                    auto body = tradingService->submitLimitOrder(*input);
+                    logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "limit_order_created",
+                        "Limit order created", (*input)["side"].asString() + " limit order placed for " + (*input)["market_id"].asString(),
+                        (*input)["market_id"].asString(), (*input)["side"].asString(), (*input)["notional_usdc"].asString(), body["transaction_hash"].asString());
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) {
                     Json::Value body = errorBody("limit_order_rejected", error.what());
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
@@ -716,7 +806,7 @@ int main() {
             {drogon::Post});
         drogon::app().registerHandler(
             "/v1/trade/limits/cancel",
-            [tradingService](const drogon::HttpRequestPtr &request,
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request,
                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 if (!tradingService) {
                     Json::Value body = errorBody("trading_disabled", "Trading API is disabled");
@@ -726,7 +816,11 @@ int main() {
                 try {
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
-                    callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->cancelLimitOrder(*input)));
+                    auto body = tradingService->cancelLimitOrder(*input);
+                    logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "limit_order_cancelled",
+                        "Limit order cancelled", "Limit order " + (*input)["order_id"].asString() + " cancelled",
+                        (*input)["market_id"].asString(), (*input)["side"].asString(), (*input)["notional_usdc"].asString(), body["transaction_hash"].asString());
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) {
                     Json::Value body = errorBody("limit_cancel_rejected", error.what());
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);

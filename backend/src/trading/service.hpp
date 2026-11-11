@@ -38,6 +38,8 @@ class Service {
     Json::Value createLimitCancelMessage(const Json::Value &request) const;
     Json::Value cancelLimitOrder(const Json::Value &request);
     Json::Value ownerStatus(const std::string &accountId) const;
+    Json::Value marketSnapshot(const std::string &marketId) const;
+    Json::Value accountBalance(const std::string &accountId) const;
     Json::Value ownerRegistrationPayload(const Json::Value &request) const;
     Json::Value registerOwner(const Json::Value &request);
     Json::Value agentSetupPayload(const Json::Value &request) const;
