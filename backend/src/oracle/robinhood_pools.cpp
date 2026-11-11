@@ -12,6 +12,7 @@
 #include <iterator>
 #include <memory>
 #include <map>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -178,11 +179,18 @@ class EvmRpc {
 } // namespace
 
 struct RobinhoodPoolSampler::Impl {
-    struct Market { std::string symbol,token,pool;std::uint32_t fee; };
+    struct Market {
+        std::string symbol,token,pool;
+        std::uint32_t fee;
+        std::uint8_t assetDecimals{};
+        bool quoteIsToken1{};
+    };
     std::string rpcUrl,quoteToken,factory;
     std::uint8_t quoteDecimals;
     std::uint32_t windowSeconds;
     std::vector<Market> markets;
+    std::mutex metadataMutex;
+    bool metadataReady{};
     Impl(std::string endpoint,std::string marketPath,std::string poolPath,std::uint32_t window):rpcUrl(std::move(endpoint)),windowSeconds(window) {
         Json::Value marketRoot,poolRoot;Json::CharReaderBuilder builder;std::string errors;
         auto parse=[&](const std::string &path,Json::Value &into){std::ifstream file(path);if(!file)throw std::runtime_error("could not open oracle market configuration");std::string contents((std::istreambuf_iterator<char>(file)),{});auto reader=std::unique_ptr<Json::CharReader>(builder.newCharReader());if(!reader->parse(contents.data(),contents.data()+contents.size(),&into,&errors))throw std::runtime_error("oracle market configuration JSON is invalid");};
@@ -215,26 +223,34 @@ std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
     const auto blockHash=head["hash"].asString();
     if(blockNumber==0||blockTime==0||blockHash.size()!=66)throw std::runtime_error("Robinhood RPC returned invalid latest block");
     const std::string round="rhc:"+std::to_string(blockNumber)+":"+blockHash.substr(2);
-    if(wordU64(rpc.ethCall(impl_->quoteToken,"0x313ce567"),0)!=impl_->quoteDecimals)
-        throw std::runtime_error("configured USDG decimals do not match the Robinhood token");
+    {
+        std::lock_guard<std::mutex> lock(impl_->metadataMutex);
+        if (!impl_->metadataReady) {
+            if(wordU64(rpc.ethCall(impl_->quoteToken,"0x313ce567"),0)!=impl_->quoteDecimals)
+                throw std::runtime_error("configured USDG decimals do not match the Robinhood token");
+            for (auto &market : impl_->markets) {
+                auto tokenA=lower(market.token),tokenB=lower(impl_->quoteToken);if(tokenB<tokenA)std::swap(tokenA,tokenB);
+                char feeHex[7];std::snprintf(feeHex,sizeof(feeHex),"%06x",market.fee);
+                const auto factoryData="0x1698ee82"+padAddress(tokenA)+padAddress(tokenB)+std::string(58,'0')+feeHex;
+                const auto factoryPool="0x"+word(rpc.ethCall(impl_->factory,factoryData),0).substr(24);
+                if(lower(factoryPool)!=lower(market.pool))throw std::runtime_error("configured pool is not the registered Uniswap V3 pool for "+market.symbol);
+                const auto token0="0x"+word(rpc.ethCall(market.pool,"0x0dfe1681"),0).substr(24);
+                const auto token1="0x"+word(rpc.ethCall(market.pool,"0xd21220a7"),0).substr(24);
+                const auto quote=lower(impl_->quoteToken),token=lower(market.token);
+                const bool quoteIsToken0=lower(token0)==quote,quoteIsToken1=lower(token1)==quote;
+                if((!quoteIsToken0&&!quoteIsToken1)||lower(quoteIsToken0?token1:token0)!=token)
+                    throw std::runtime_error("configured Uniswap V3 pool token pair does not match "+market.symbol+"/USDG");
+                const auto assetToken=quoteIsToken0?token1:token0;
+                const auto assetDecimals=wordU64(rpc.ethCall(assetToken,"0x313ce567"),0);
+                if(assetDecimals>24)throw std::runtime_error("Robinhood stock token has unsupported decimals");
+                market.assetDecimals=static_cast<std::uint8_t>(assetDecimals);
+                market.quoteIsToken1=quoteIsToken1;
+            }
+            impl_->metadataReady=true;
+        }
+    }
     std::vector<PoolPriceSample> samples;
     for(const auto &market:impl_->markets){
-        auto tokenA=lower(market.token),tokenB=lower(impl_->quoteToken);if(tokenB<tokenA)std::swap(tokenA,tokenB);
-        char feeHex[7];std::snprintf(feeHex,sizeof(feeHex),"%06x",market.fee);
-        const auto factoryData="0x1698ee82"+padAddress(tokenA)+padAddress(tokenB)+std::string(58,'0')+feeHex;
-        const auto factoryPool="0x"+word(rpc.ethCall(impl_->factory,factoryData),0).substr(24);
-        if(lower(factoryPool)!=lower(market.pool))throw std::runtime_error("configured pool is not the registered Uniswap V3 pool for "+market.symbol);
-        const auto token0Data=rpc.ethCall(market.pool,"0x0dfe1681");
-        const auto token1Data=rpc.ethCall(market.pool,"0xd21220a7");
-        const auto token0="0x"+word(token0Data,0).substr(24),token1="0x"+word(token1Data,0).substr(24);
-        const auto quote=lower(impl_->quoteToken),token=lower(market.token);
-        const bool quoteIsToken0=lower(token0)==quote,quoteIsToken1=lower(token1)==quote;
-        if((!quoteIsToken0&&!quoteIsToken1)||lower(quoteIsToken0?token1:token0)!=token)
-            throw std::runtime_error("configured Uniswap V3 pool token pair does not match "+market.symbol+"/USDG");
-        const auto assetToken=quoteIsToken0?token1:token0;
-        const auto decimalsData=rpc.ethCall(assetToken,"0x313ce567");
-        const auto assetDecimals=wordU64(decimalsData,0);
-        if(assetDecimals>24)throw std::runtime_error("Robinhood stock token has unsupported decimals");
         const auto liquidityData=rpc.ethCall(market.pool,"0x1a686502");
         const auto liquidity=wordU64(liquidityData,0);
         if(liquidity==0)throw std::runtime_error("Uniswap V3 pool has no active liquidity for "+market.symbol);
@@ -250,8 +266,8 @@ std::vector<PoolPriceSample> RobinhoodPoolSampler::sampleAll() const {
         auto mean=meanDelta/static_cast<std::int64_t>(impl_->windowSeconds);
         if(meanDelta<0&&meanDelta%static_cast<std::int64_t>(impl_->windowSeconds)!=0)--mean;
         if(mean < -887272 || mean > 887272)throw std::runtime_error("Uniswap V3 TWAP tick is outside protocol bounds");
-        const auto price=tickPriceE8(static_cast<std::int32_t>(mean),quoteIsToken1,static_cast<std::uint8_t>(assetDecimals),impl_->quoteDecimals);
-        const auto spotPrice=tickPriceE8(spot,quoteIsToken1,static_cast<std::uint8_t>(assetDecimals),impl_->quoteDecimals);
+        const auto price=tickPriceE8(static_cast<std::int32_t>(mean),market.quoteIsToken1,market.assetDecimals,impl_->quoteDecimals);
+        const auto spotPrice=tickPriceE8(spot,market.quoteIsToken1,market.assetDecimals,impl_->quoteDecimals);
         const auto deviation=deviationBps(price,spotPrice);
         samples.push_back({PriceAttestation{market.symbol,price,spotPrice,25,blockTime*1000,round},blockNumber,deviation,liquidity});
     }

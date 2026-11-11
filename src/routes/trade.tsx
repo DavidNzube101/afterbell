@@ -93,7 +93,6 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
   return <div className="chart-shell">
     <div className="chart-tools">
       <div className="chart-pair"><span>{market.ticker} / USDC</span></div>
-      <span className="chart-volume-source">Robinhood volume (USDG)</span>
       <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
     </div>
     <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
@@ -101,7 +100,7 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
         <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
         <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
       </Chart>
-      {candles.length === 0 && <div className="chart-placeholder">Candles will appear as oracle prices arrive.</div>}
+      {candles.length === 0 && <div className="chart-placeholder">Waiting for fresh market price data.</div>}
       {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
     </div>
   </div>

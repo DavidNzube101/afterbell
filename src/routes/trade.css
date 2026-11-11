@@ -93,7 +93,6 @@
 .chart-shell { min-width: 0; min-height: 260px; overflow: hidden; padding: 0 16px 0; }
 .chart-tools { height: 52px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--trade-line-soft); }
 .chart-pair { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 620; }
-.chart-volume-source { margin-left: auto; margin-right: 12px; color: #778594; font-size: 9px; font-weight: 500; }
 .chart-pair-muted { padding: 4px 7px; border: 1px solid #293545; border-radius: 5px; color: #8b98a7; font-size: 9px; font-weight: 500; }
 .chart-actions { display: flex; align-items: center; gap: 9px; }
 .chart-range-button { min-width: 30px; height: 27px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #788595; font-size: 9px; font-weight: 550; }
