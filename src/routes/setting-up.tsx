@@ -35,53 +35,63 @@ function UsernameField({
   initialValue: string
   onAvailabilityChange: (status: UsernameAvailability) => void
 }) {
-  const [value, setValue] = useState(initialValue)
   const [availability, setAvailability] = useState<UsernameAvailability>('idle')
   const availabilityRef = useRef<UsernameAvailability>('idle')
+  const checkTimerRef = useRef<number | null>(null)
+  const checkControllerRef = useRef<AbortController | null>(null)
 
   const updateAvailability = (status: UsernameAvailability) => {
-    if (availabilityRef.current === status) return
+    const previous = availabilityRef.current
+    if (previous === status) return
     availabilityRef.current = status
     setAvailability(status)
-    onAvailabilityChange(status)
+    if (status !== 'checking' || previous === 'available') onAvailabilityChange(status)
   }
 
-  useEffect(() => {
-    if (!/^[a-z0-9_]{3,20}$/.test(value.trim())) {
+  const scheduleAvailabilityCheck = useCallback((value: string) => {
+    if (checkTimerRef.current !== null) window.clearTimeout(checkTimerRef.current)
+    checkControllerRef.current?.abort()
+    if (!/^[a-z0-9_]{3,20}$/.test(value)) {
       updateAvailability('idle')
       return
     }
     const controller = new AbortController()
+    checkControllerRef.current = controller
     updateAvailability('checking')
-    const timer = window.setTimeout(() => {
-      void checkAccountUsername(accountId, value.trim(), controller.signal)
+    checkTimerRef.current = window.setTimeout(() => {
+      void checkAccountUsername(accountId, value, controller.signal)
         .then(result => updateAvailability(result.valid && result.available ? 'available' : 'taken'))
         .catch(error => {
           if (!(error instanceof DOMException && error.name === 'AbortError')) updateAvailability('error')
         })
-    }, 600)
+    }, 700)
+  }, [accountId, onAvailabilityChange])
+
+  useEffect(() => {
+    scheduleAvailabilityCheck(initialValue.trim())
     return () => {
-      window.clearTimeout(timer)
-      controller.abort()
+      if (checkTimerRef.current !== null) window.clearTimeout(checkTimerRef.current)
+      checkControllerRef.current?.abort()
     }
-  }, [accountId, value, onAvailabilityChange])
+  }, [scheduleAvailabilityCheck, initialValue])
 
   const saveUsernameDraft = () => {
     try {
       const key = `afterbell.onboarding-draft.v1:${accountId}`
       const draft = JSON.parse(localStorage.getItem(key) || '{}')
-      localStorage.setItem(key, JSON.stringify({ ...draft, username: value }))
+      localStorage.setItem(key, JSON.stringify({ ...draft, username: valueRef.current }))
     } catch { /* Draft persistence is best-effort. */ }
   }
 
   return <>
     <div className="username-input-wrap">
       <span>@</span>
-      <input id="onboarding-username" placeholder="yourname" autoComplete="off" value={value}
+      <input id="onboarding-username" placeholder="yourname" autoComplete="off" defaultValue={initialValue}
         onChange={event => {
           const next = event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20)
+          if (event.target.value !== next) event.target.value = next
           valueRef.current = next
-          setValue(next)
+          scheduleAvailabilityCheck(next)
         }}
         onBlur={saveUsernameDraft} />
     </div>
@@ -121,6 +131,7 @@ function SettingUpPage() {
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>(draft?.selectedMarkets ?? ['NVDA', 'AAPL'])
   const [leverage, setLeverage] = useState<number>(draft?.leverage ?? 3)
   const usernameRef = useRef<string>(draft?.username ?? '')
+  const initialUsernameRef = useRef<string>(draft?.username ?? '')
   const [reclaimEmail, setReclaimEmail] = useState<string>(draft?.reclaimEmail ?? '')
   const [agentName, setAgentName] = useState<string>(draft?.agentName ?? 'My agent')
   const [positionLimit, setPositionLimit] = useState<string>(draft?.positionLimit ?? '1000')
@@ -334,7 +345,7 @@ function SettingUpPage() {
 
             {usernameMode === 'new' ? <div className="username-form-preview">
               <label htmlFor="onboarding-username">Username</label>
-              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} initialValue={usernameRef.current} onAvailabilityChange={handleUsernameAvailability} />}
+              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} initialValue={initialUsernameRef.current} onAvailabilityChange={handleUsernameAvailability} />}
             </div> : <div className="username-form-preview reclaim-preview">
               <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
               <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" value={reclaimEmail} onChange={event => setReclaimEmail(event.target.value)} /></div>
