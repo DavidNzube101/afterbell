@@ -304,6 +304,7 @@ int main() {
                     env("ORACLE_RELAYER_PRIVATE_KEY").value_or(""),
                     env("PERP_QUOTE_SIGNER_PRIVATE_KEY").value_or(""),
                     env("OWNER_REGISTRATION_STORAGE_DEPOSIT_YOCTO").value_or("10000000000000000000000"),
+                    env("AGENT_RECORD_STORAGE_CREDIT_TARGET_YOCTO").value_or("50000000000000000000000"),
                     static_cast<std::uint16_t>(tradeFeeBps),
                 });
             accountService = service;

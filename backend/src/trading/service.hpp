@@ -19,6 +19,7 @@ struct Config {
     std::string relayerPrivateKey;
     std::string quoteSignerPrivateKey;
     std::string ownerRegistrationDepositYocto;
+    std::string agentRecordStorageCreditTargetYocto;
     std::uint16_t feeBps;
 };
 

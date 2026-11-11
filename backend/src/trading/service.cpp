@@ -499,11 +499,11 @@ Json::Value Service::createAgentRecord(const Json::Value &request) {
     args["nonce"] = Json::UInt64(u64(request["nonce"], "nonce"));
     args["signature"] = request["signature"];
     std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
-    if (config_.ownerRegistrationDepositYocto.empty())
+    if (config_.agentRecordStorageCreditTargetYocto.empty())
         throw std::runtime_error("A1 record storage sponsorship is not configured");
-    const auto storageCreditTarget = u128(Json::Value(config_.ownerRegistrationDepositYocto), "record storage credit target");
-    if (storageCreditTarget == 0 || storageCreditTarget > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 10'000)
-        throw std::runtime_error("record storage credit target must be between 0 and 0.01 NEAR");
+    const auto storageCreditTarget = u128(Json::Value(config_.agentRecordStorageCreditTargetYocto), "agent record storage credit target");
+    if (storageCreditTarget == 0 || storageCreditTarget > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 50'000)
+        throw std::runtime_error("agent record storage credit target must be between 0 and 0.05 NEAR");
     Json::Value storageArgs; storageArgs["account_id"] = accountId;
     const auto currentCredit = u128(
         viewCall(rpc, config_.contractId, "storage_credit_of", storageArgs),
