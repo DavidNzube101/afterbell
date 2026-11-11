@@ -55,8 +55,8 @@ function loadCanvasSvg(svg: SVGSVGElement) {
 
 const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
 type ChartRange = typeof chartRanges[number]
-const candleIntervalMs: Record<ChartRange, number> = { '1h': 900_000, '1d': 3_600_000, '1w': 14_400_000, '1m': 86_400_000, all: 86_400_000 }
-const chartGranularity: Record<ChartRange, 'm15' | 'h1' | 'h4' | 'd1'> = { '1h': 'm15', '1d': 'h1', '1w': 'h4', '1m': 'd1', all: 'd1' }
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 300_000, '1w': 3_600_000, '1m': 14_400_000, all: 86_400_000 }
+const chartGranularity: Record<ChartRange, 'm1' | 'm5' | 'h1' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm5', '1w': 'h1', '1m': 'h4', all: 'd1' }
 const chartTheme: Theme = {
   base: 'dark',
   layers: {
@@ -91,7 +91,7 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       const amount = Number(BigInt(point.volume_usdg_raw)) / 1_000_000
       if (Number.isFinite(amount)) volumes.set(bucket, (volumes.get(bucket) ?? 0) + amount)
     }
-    for (const point of points) {
+    for (const point of [...points].sort((left, right) => left.timestamp_ms - right.timestamp_ms)) {
       const value = dollars(point.price_e8)
       if (!Number.isFinite(value) || value <= 0) continue
       const bucket = Math.floor(point.timestamp_ms / interval) * interval
@@ -99,8 +99,18 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       if (current) { current.high = Math.max(current.high, value); current.low = Math.min(current.low, value); current.close = value }
       else buckets.set(bucket, { open: value, high: value, low: value, close: value, volume: 0 })
     }
-    return Array.from(buckets, ([timestamp, candle]) => ({ time: new Date(timestamp).toISOString(), ...candle, volume: volumes.get(timestamp) ?? 0 }))
-      .sort((left, right) => left.time.localeCompare(right.time)) as DataPoint[]
+    const timestamps = Array.from(buckets.keys()).sort((left, right) => left - right)
+    if (timestamps.length === 0) return []
+    const candles: DataPoint[] = []
+    let previousClose: number | null = null
+    for (let timestamp = timestamps[0]; timestamp <= timestamps[timestamps.length - 1]; timestamp += interval) {
+      const observed = buckets.get(timestamp)
+      if (observed) previousClose = observed.close
+      if (previousClose === null) continue
+      const candle = observed ?? { open: previousClose, high: previousClose, low: previousClose, close: previousClose, volume: 0 }
+      candles.push({ time: new Date(timestamp).toISOString(), ...candle, volume: volumes.get(timestamp) ?? 0 })
+    }
+    return candles
   }, [points, volumePoints, range])
 
   useEffect(() => {
@@ -123,18 +133,7 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
         <span>{latest ? 'Collecting more A1 price updates to build the chart.' : 'Waiting for fresh market price data.'}</span>
       </div> : <>
         <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme={chartTheme} grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
-          <Panel id="price" heightRatio={3}><Candlesticks legend={false} series={{
-            body: {
-              up: { width: 0.1, backgroundColor: '#18bd83', borderColor: '#18bd83' },
-              down: { width: 0.1, backgroundColor: '#f05260', borderColor: '#f05260' },
-              flat: { width: 0.1, backgroundColor: '#8492a3', borderColor: '#8492a3' },
-            },
-            wick: {
-              up: { width: 1, color: '#18bd83' },
-              down: { width: 1, color: '#f05260' },
-              flat: { width: 1, color: '#8492a3' },
-            },
-          }} /></Panel>
+          <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
           <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
         </Chart>
         {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
