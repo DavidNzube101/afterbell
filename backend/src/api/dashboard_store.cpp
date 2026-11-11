@@ -52,7 +52,7 @@ Json::Value rowsAsJson(PGresult *result) {
         value["side"] = PQgetvalue(result, row, 5);
         value["amount_usdc"] = PQgetvalue(result, row, 6);
         value["transaction_hash"] = PQgetvalue(result, row, 7);
-        value["created_at_ms"] = std::stoull(PQgetvalue(result, row, 8));
+        value["created_at_ms"] = Json::UInt64(std::stoull(PQgetvalue(result, row, 8)));
         output.append(std::move(value));
     }
     PQclear(result);
@@ -120,7 +120,7 @@ Json::Value DashboardStore::marketHistory(const std::string &network, const std:
     for (int row = 0; row < PQntuples(result); ++row) {
         Json::Value point;
         point["price_e8"] = PQgetvalue(result, row, 0);
-        point["timestamp_ms"] = std::stoull(PQgetvalue(result, row, 1));
+        point["timestamp_ms"] = Json::UInt64(std::stoull(PQgetvalue(result, row, 1)));
         output.append(std::move(point));
     }
     PQclear(result);
