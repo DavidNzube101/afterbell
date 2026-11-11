@@ -15,6 +15,7 @@
 #include <memory>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -111,6 +112,54 @@ std::uint64_t tradingNonce(afterbell::indexer::NearRpc &rpc,
     std::uint64_t nonce = 0;
     for (unsigned i = 0; i < 8; ++i) nonce |= std::uint64_t(raw[i]) << (8 * i);
     return nonce;
+}
+
+std::vector<std::uint8_t> lpWithdrawalStateKey(const std::string &account) {
+    static constexpr std::string_view prefix = "afterbell:a1:lp:withdraw:";
+    std::vector<std::uint8_t> key(prefix.begin(), prefix.end());
+    const auto length = static_cast<std::uint32_t>(account.size());
+    for (unsigned i = 0; i < 4; ++i) key.push_back(static_cast<std::uint8_t>(length >> (8 * i)));
+    key.insert(key.end(), account.begin(), account.end());
+    return key;
+}
+
+Json::Value stateJson(afterbell::indexer::NearRpc &rpc, const std::string &contract,
+                      const std::vector<std::uint8_t> &key) {
+    Json::Value query; query["request_type"] = "view_state"; query["finality"] = "final";
+    query["account_id"] = contract;
+    query["prefix_base64"] = afterbell::oracle::base64Encode(key.data(), key.size());
+    const auto result = rpc.call("query", query);
+    if (!result["values"].isArray() || result["values"].empty()) return Json::Value();
+    const auto bytes = afterbell::oracle::base64Decode(result["values"][0]["value"].asString());
+    Json::CharReaderBuilder builder; Json::Value value; std::string errors;
+    auto reader = std::unique_ptr<Json::CharReader>(builder.newCharReader());
+    if (!reader->parse(reinterpret_cast<const char *>(bytes.data()),
+                       reinterpret_cast<const char *>(bytes.data() + bytes.size()), &value, &errors))
+        throw std::runtime_error("A1 liquidity withdrawal state is malformed");
+    return value;
+}
+
+unsigned __int128 stateU128(afterbell::indexer::NearRpc &rpc, const std::string &contract,
+                            const std::string &keyText) {
+    const auto *begin = reinterpret_cast<const std::uint8_t *>(keyText.data());
+    Json::Value query; query["request_type"] = "view_state"; query["finality"] = "final";
+    query["account_id"] = contract; query["prefix_base64"] = afterbell::oracle::base64Encode(begin, keyText.size());
+    const auto result = rpc.call("query", query);
+    if (!result["values"].isArray() || result["values"].empty()) return 0;
+    const auto bytes = afterbell::oracle::base64Decode(result["values"][0]["value"].asString());
+    if (bytes.size() != 16) throw std::runtime_error("A1 liquidity share state is malformed");
+    unsigned __int128 value = 0;
+    for (unsigned i = 0; i < 16; ++i) value |= static_cast<unsigned __int128>(bytes[i]) << (8 * i);
+    return value;
+}
+
+void validateUserAccount(const std::string &account) {
+    if (account.empty() || account.size() > 128 || account.rfind("protocol:", 0) == 0 || account.rfind("agent:", 0) == 0)
+        throw std::invalid_argument("invalid user account_id");
+}
+
+std::uint64_t actionExpiry(afterbell::indexer::NearRpc &rpc) {
+    return blockTimeMs(rpc) + 60'000;
 }
 
 void appendU32(std::vector<std::uint8_t> &out, std::uint32_t value) {
@@ -397,6 +446,160 @@ Json::Value Service::accountBalance(const std::string &accountId) const {
     Json::Value args; args["account_id"] = accountId;
     Json::Value result; result["account_id"] = accountId;
     result["balance_usdc"] = viewCall(rpc, config_.contractId, "balance_of", args);
+    return result;
+}
+
+Json::Value Service::nearWalletBalance(const std::string &address) const {
+    if (address.empty() || address.size() > 64 || address.find_first_of(" \t\r\n") != std::string::npos)
+        throw std::invalid_argument("invalid NEAR wallet address");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("wallet balance RPC is on the wrong NEAR network");
+    Json::Value params; params["request_type"] = "view_account"; params["finality"] = "final"; params["account_id"] = address;
+    const auto account = rpc.call("query", params);
+    Json::Value result; result["address"] = address; result["network"] = config_.network;
+    result["amount_yocto"] = account["amount"]; result["locked_yocto"] = account["locked"];
+    return result;
+}
+
+Json::Value Service::liquidityOverview(const std::string &accountId) const {
+    validateUserAccount(accountId);
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = accountId;
+    const auto owner = viewCall(rpc, config_.contractId, "owner_of", args);
+    if (owner.isNull()) throw std::invalid_argument("account owner is not registered");
+    Json::Value result; result["account_id"] = accountId;
+    result["balance_usdc"] = viewCall(rpc, config_.contractId, "balance_of", args);
+    result["lp_shares"] = viewCall(rpc, config_.contractId, "lp_shares_of", args);
+    result["vault_nav_usdc"] = viewCall(rpc, config_.contractId, "vault_nav_usdc", Json::Value(Json::objectValue));
+    result["available_liquidity_usdc"] = viewCall(rpc, config_.contractId, "vault_available_payout", Json::Value(Json::objectValue));
+    result["vault_balance_usdc"] = viewCall(rpc, config_.contractId, "vault_balance", Json::Value(Json::objectValue));
+    result["total_lp_shares"] = decimal(stateU128(rpc, config_.contractId, "afterbell:a1:lp:total_shares"));
+    result["withdrawal_request"] = stateJson(rpc, config_.contractId, lpWithdrawalStateKey(accountId));
+    return result;
+}
+
+Json::Value Service::liquidityDepositPayload(const Json::Value &request) const {
+    if (!request["account_id"].isString()) throw std::invalid_argument("account_id is required");
+    const auto account = request["account_id"].asString(); validateUserAccount(account);
+    const auto amount = u128(request["amount_usdc"], "amount_usdc");
+    if (amount == 0) throw std::invalid_argument("deposit amount must be positive");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = account;
+    if (viewCall(rpc, config_.contractId, "owner_of", args).isNull()) throw std::invalid_argument("account owner is not registered");
+    const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
+    const auto expiry = actionExpiry(rpc);
+    Json::Value response; response["account_id"] = account; response["amount_usdc"] = decimal(amount);
+    response["nonce"] = Json::UInt64(nonce); response["expires_at_ms"] = Json::UInt64(expiry);
+    response["recipient"] = config_.contractId;
+    response["message"] = "afterbell:v1\ncontract:" + config_.contractId + "\naction:deposit_vault\naccount:" + account + "\namount:" + decimal(amount) + "\nnonce:" + std::to_string(nonce) + "\nexpires_at_ms:" + std::to_string(expiry);
+    return response;
+}
+
+Json::Value Service::submitLiquidityDeposit(const Json::Value &request) {
+    if (!request["account_id"].isString() || !request["signature"].isString()) throw std::invalid_argument("account_id and signature are required");
+    const auto account = request["account_id"].asString(); validateUserAccount(account);
+    const auto amount = u128(request["amount_usdc"], "amount_usdc");
+    const auto nonce = u64(request["nonce"], "nonce");
+    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
+    if (nonce != tradingNonce(rpc, config_.contractId, account) + 1 || expiry <= blockTimeMs(rpc) || expiry > blockTimeMs(rpc) + 120'000)
+        throw std::runtime_error("liquidity authorization expired or is stale; request a new signature");
+    const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
+    if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
+    Json::Value args; args["account_id"] = account; args["amount"] = decimal(amount);
+    args["nonce"] = Json::UInt64(nonce); args["expires_at_ms"] = Json::UInt64(expiry); args["signature"] = request["signature"];
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    auto result = relayCall(config_, "deposit_vault", args);
+    result["account_id"] = account; result["amount_usdc"] = decimal(amount);
+    return result;
+}
+
+Json::Value Service::liquidityWithdrawalPayload(const Json::Value &request) const {
+    if (!request["account_id"].isString()) throw std::invalid_argument("account_id is required");
+    const auto account = request["account_id"].asString(); validateUserAccount(account);
+    const auto shares = u128(request["shares"], "shares");
+    const auto minAmount = u128(request["min_amount_usdc"], "min_amount_usdc");
+    if (shares == 0) throw std::invalid_argument("withdrawal shares must be positive");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
+    Json::Value args; args["account_id"] = account;
+    if (viewCall(rpc, config_.contractId, "owner_of", args).isNull()) throw std::invalid_argument("account owner is not registered");
+    const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
+    const auto expiry = actionExpiry(rpc);
+    Json::Value response; response["account_id"] = account; response["shares"] = decimal(shares);
+    response["min_amount_usdc"] = decimal(minAmount); response["nonce"] = Json::UInt64(nonce);
+    response["expires_at_ms"] = Json::UInt64(expiry); response["recipient"] = config_.contractId;
+    response["message"] = "afterbell:v1\ncontract:" + config_.contractId + "\naction:request_vault_withdrawal\naccount:" + account + "\namount:" + decimal(shares) + ":" + decimal(minAmount) + "\nnonce:" + std::to_string(nonce) + "\nexpires_at_ms:" + std::to_string(expiry);
+    return response;
+}
+
+Json::Value Service::submitLiquidityWithdrawal(const Json::Value &request) {
+    if (!request["account_id"].isString() || !request["signature"].isString()) throw std::invalid_argument("account_id and signature are required");
+    const auto account = request["account_id"].asString(); validateUserAccount(account);
+    const auto shares = u128(request["shares"], "shares");
+    const auto minAmount = u128(request["min_amount_usdc"], "min_amount_usdc");
+    const auto nonce = u64(request["nonce"], "nonce"); const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    const auto chainNow = blockTimeMs(rpc);
+    if (rpc.chainId() != config_.network || nonce != tradingNonce(rpc, config_.contractId, account) + 1 || expiry <= chainNow || expiry > chainNow + 120'000)
+        throw std::runtime_error("liquidity authorization expired or is stale; request a new signature");
+    const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
+    if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
+    Json::Value args; args["account_id"] = account; args["shares"] = decimal(shares); args["min_amount_usdc"] = decimal(minAmount);
+    args["nonce"] = Json::UInt64(nonce); args["expires_at_ms"] = Json::UInt64(expiry); args["signature"] = request["signature"];
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    auto result = relayCall(config_, "request_vault_withdrawal", args); result["account_id"] = account;
+    return result;
+}
+
+Json::Value Service::completeLiquidityWithdrawal(const std::string &accountId) {
+    validateUserAccount(accountId);
+    Json::Value args; args["account_id"] = accountId;
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    auto result = relayCall(config_, "complete_vault_withdrawal", args); result["account_id"] = accountId;
+    return result;
+}
+
+Json::Value Service::accountWithdrawalPayload(const Json::Value &request) const {
+    if (!request["account_id"].isString() || !request["receiver_id"].isString()) throw std::invalid_argument("account_id and receiver_id are required");
+    const auto account = request["account_id"].asString(); validateUserAccount(account);
+    const auto amount = u128(request["amount_usdc"], "amount_usdc");
+    if (amount == 0) throw std::invalid_argument("withdrawal amount must be positive");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    Json::Value args; args["account_id"] = account; args["receiver_id"] = request["receiver_id"];
+    args["amount"] = decimal(amount); args["expires_at_ms"] = Json::UInt64(actionExpiry(rpc)); args["max_fee"] = "0";
+    auto payload = viewCall(rpc, config_.contractId, "withdrawal_signing_payload", args);
+    Json::Value nonceArgs; nonceArgs["account_id"] = account;
+    const auto nonce = viewCall(rpc, config_.contractId, "withdrawal_nonce", nonceArgs).asUInt64() + 1;
+    payload["action_nonce"] = Json::UInt64(nonce); payload["amount_usdc"] = decimal(amount);
+    payload["account_id"] = account; payload["receiver_id"] = request["receiver_id"];
+    payload["expires_at_ms"] = args["expires_at_ms"];
+    return payload;
+}
+
+Json::Value Service::submitAccountWithdrawal(const Json::Value &request) {
+    for (const auto *field : {"account_id", "receiver_id", "signature"})
+        if (!request[field].isString() || request[field].asString().empty()) throw std::invalid_argument(std::string(field) + " is required");
+    const auto account = request["account_id"].asString(); validateUserAccount(account);
+    const auto amount = u128(request["amount_usdc"], "amount_usdc");
+    const auto nonce = u64(request["action_nonce"], "action_nonce");
+    const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
+    afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
+    const auto chainNow = blockTimeMs(rpc);
+    Json::Value nonceArgs; nonceArgs["account_id"] = account;
+    const auto previousNonce = viewCall(rpc, config_.contractId, "withdrawal_nonce", nonceArgs).asUInt64();
+    if (rpc.chainId() != config_.network || nonce != previousNonce + 1 || expiry <= chainNow || expiry > chainNow + 120'000)
+        throw std::runtime_error("withdrawal authorization expired or is stale; request a new signature");
+    const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
+    if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
+    Json::Value args; args["account_id"] = account; args["receiver_id"] = request["receiver_id"];
+    args["amount"] = decimal(amount); args["nonce"] = Json::UInt64(nonce); args["expires_at_ms"] = Json::UInt64(expiry);
+    args["max_fee"] = "0"; args["signature"] = request["signature"];
+    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
+    auto result = relayCall(config_, "withdraw", args); result["account_id"] = account;
     return result;
 }
 

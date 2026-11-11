@@ -33,6 +33,10 @@
 .header-bell { position: relative; }
 .header-bell.is-open { border-color: #2b3e52; background: #162231; color: #eaf2fb; }
 .notification-count { position: absolute; top: 0; right: -2px; min-width: 15px; height: 15px; display: grid; place-items: center; padding: 0 3px; border: 2px solid #0c1118; border-radius: 10px; background: #0065d2; color: white; font-size: 8px; font-weight: 650; }
+.account-balance-widget { min-height: 36px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #111821; border-radius: 9px; background: #111821; color: #e6edf4; font-size: 11px; font-weight: 580; font-variant-numeric: tabular-nums; }
+.account-balance-widget:hover { background: #18212b; border-color: #18212b; }
+.account-balance-widget .usdc-icon { width: 18px; height: 18px; }
+.balance-widget-skeleton { width: 56px; height: 10px; display: inline-block; border-radius: 4px; background: linear-gradient(90deg,#1a2530,#2a3744,#1a2530); background-size: 200% 100%; animation: metric-shimmer 1.35s ease-in-out infinite; }
 .account-button { min-height: 38px; display: flex; align-items: center; gap: 10px; padding: 4px 8px 4px 5px; border: 1px solid var(--trade-line); border-radius: 10px; background: #111821; }
 .account-button > svg { width: 15px; height: 15px; color: #82909f; }
 .account-avatar { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(145deg,#126fd1,#183b67); color: white; font-size: 12px; font-weight: 700; }
@@ -84,18 +88,22 @@
 .red { color: var(--trade-red) !important; }
 .trading-grid { display: grid; grid-template-columns: minmax(0, 1fr) 8px var(--order-width, 342px); align-items: stretch; gap: 0; }
 .market-workspace { min-width: 0; display: grid; grid-template-rows: var(--chart-height, 485px) 10px minmax(190px, 1fr); gap: 0; }
-.chart-shell, .positions-panel, .order-card { border: 1px solid var(--trade-line); border-radius: 13px; background: var(--trade-panel); }
+.chart-shell, .positions-panel, .order-card { border: 1px solid var(--trade-panel); border-radius: 13px; background: var(--trade-panel); }
+.chart-shell { border-color: #0c1016; background: #0c1016; }
 .chart-shell { min-width: 0; min-height: 260px; overflow: hidden; padding: 0 16px 0; }
 .chart-tools { height: 52px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--trade-line-soft); }
 .chart-pair { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 620; }
 .chart-pair-muted { padding: 4px 7px; border: 1px solid #293545; border-radius: 5px; color: #8b98a7; font-size: 9px; font-weight: 500; }
-.chart-source { color: #778594; font-size: 10px; }
 .chart-actions { display: flex; align-items: center; gap: 9px; }
+.chart-range-button { min-width: 30px; height: 27px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #788595; font-size: 9px; font-weight: 550; }
+.chart-range-button:hover, .chart-range-button.active { background: #182330; color: #e8eef5; }
 .chart-select, .chart-icon { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #9aa5b2 !important; font-size: 11px; }
 .chart-select:hover, .chart-icon:hover { background: #19232e; color: white !important; }
 .chart-select svg, .chart-icon svg { width: 13px; height: 13px; }
 .chart-separator { width: 1px; height: 18px; background: #27313d; }
-.real-market-chart { width: 100%; height: calc(100% - 52px); display: block; border: 0; background: #0c1016; }
+.real-market-chart { position: relative; width: 100%; height: calc(100% - 52px); display: block; border: 0; background: #0c1016; }
+.real-market-chart > .oracle-candlestick-chart { width: 100%; height: 100%; overflow: hidden; background: #0c1016; color: #8592a1; font-family: Inter, system-ui, sans-serif; }
+.real-market-chart > .oracle-candlestick-chart > div { width: 100%; height: 100%; }
 .real-market-chart tv-advanced-chart { display: block; width: 100%; height: 100%; --tv-widget-background-color: #0c1016; --tv-widget-text-color: #d0d9e3; --tv-widget-scales-font-color: #8b98a7; }
 .chart-placeholder { display: grid; height: 100%; place-items: center; color: #7d8997; font-size: 11px; }
 .resize-handle { position: relative; z-index: 3; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; touch-action: none; }
@@ -165,7 +173,7 @@
 .available-label b { color: #b9c4cf; font-weight: 500; }
 .available-label button { margin-left: 5px; padding: 0; border: 0; background: transparent; color: #63aaff !important; font-size: 9px; }
 .leverage-control { --leverage-accent: #2788ef; margin-top: 19px; }
-.leverage-control.short { --leverage-accent: #b47cff; }
+.leverage-control.short { --leverage-accent: #e45b68; }
 .leverage-heading { display: flex; align-items: center; justify-content: space-between; color: #a4afba; font-size: 10px; }
 .leverage-heading strong { color: var(--leverage-accent); font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; text-shadow: 0 0 16px color-mix(in srgb, var(--leverage-accent) 38%, transparent); }
 .leverage-control input[type=range] { appearance: none; width: 100%; height: 6px; display: block; margin: 19px 0 12px; border-radius: 999px; outline: none; background: linear-gradient(to right, var(--leverage-accent) 0%, var(--leverage-accent) var(--leverage-progress), #283441 var(--leverage-progress), #283441 100%); cursor: pointer; }
@@ -356,26 +364,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .metric-skeleton { animation: none; }
   .trade-app *, .trade-app *::before, .trade-app *::after { transition-duration: .01ms !important; }
   .market-menu, .notification-drawer, .drawer-backdrop, .risk-modal, .share-modal, .risk-modal-backdrop { animation-duration: .01ms !important; }
 }
 
 .connected-wallet-icon { object-fit: cover; border-radius: 6px !important; }
-.oracle-price-chart { position: relative; overflow: hidden; }
-.oracle-price-chart > svg { width: 100%; height: calc(100% - 58px); display: block; margin-top: 6px; overflow: visible; }
-.oracle-chart-price { padding: 18px 20px 0; color: #eaf1f8; font-size: 22px; font-weight: 620; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
-.oracle-chart-range { display: block; position: absolute; right: 18px; bottom: 14px; color: #647180; font-size: 9px; }
+.chart-ohlc { position: absolute; z-index: 2; top: 9px; left: 12px; display: flex; gap: 10px; pointer-events: none; color: #7e8b99; font-size: 9px; font-variant-numeric: tabular-nums; }
+.chart-ohlc b { color: #c4ced8; font-weight: 500; }
+.metric-skeleton { width: 75px; height: 14px; display: inline-block; border-radius: 4px; background: linear-gradient(90deg, #18212b 0%, #263241 48%, #18212b 100%); background-size: 200% 100%; animation: metric-shimmer 1.35s ease-in-out infinite; vertical-align: middle; }
+.metric-skeleton-small { width: 55px; height: 9px; }
+@keyframes metric-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .chart-placeholder { display: grid; min-height: 210px; place-items: center; padding: 24px; color: #8491a0; font-size: 12px; text-align: center; }
 .empty-table-state { padding: 38px 16px !important; color: #7f8b99 !important; text-align: center; }
 .submit-order:disabled { cursor: not-allowed; opacity: .48; }
 .position-actions .close-position:disabled { cursor: wait; opacity: .55; }
-.wallet-detail-modal { width: min(430px, calc(100vw - 32px)); }
-.wallet-detail-content { display: grid; gap: 14px; padding: 4px 22px 24px; }
-.wallet-detail-chain, .wallet-detail-identity { display: flex; align-items: center; gap: 10px; color: #d9e2ec; font-size: 13px; }
-.wallet-detail-chain img, .wallet-detail-identity img { width: 25px; height: 25px; object-fit: cover; border-radius: 6px; }
-.wallet-detail-chain img { border-radius: 50%; }
-.wallet-detail-address { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #202a36; border-radius: 8px; background: #0c1016; color: #9eabb9; font-size: 11px; }
-.wallet-detail-address span { overflow: hidden; text-overflow: ellipsis; }
-.wallet-detail-address button, .wallet-disconnect { border: 0; border-radius: 7px; background: #171e27; color: #dce5ee; padding: 8px 11px; cursor: pointer; }
-.wallet-disconnect { color: #ff8d98; background: #27181e; }
 .risk-modal-footer a { color: #91bff0; font-size: 11px; text-decoration: none; }

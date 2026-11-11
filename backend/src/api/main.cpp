@@ -415,8 +415,8 @@ int main() {
                 try {
                     const auto market = request->getParameter("market_id");
                     const auto range = request->getParameter("range");
-                    const std::uint64_t duration = range == "1d" ? 86'400'000ULL : range == "1w" ? 604'800'000ULL : range == "1h" ? 3'600'000ULL : 86'400'000ULL;
                     const auto now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                    const std::uint64_t duration = range == "1h" ? 3'600'000ULL : range == "1d" ? 86'400'000ULL : range == "1w" ? 604'800'000ULL : range == "1m" ? 2'592'000'000ULL : range == "all" ? now : 86'400'000ULL;
                     Json::Value body; body["market_id"] = market; body["range"] = range; body["points"] = dashboardStore->marketHistory(network, market, now - duration);
                     callback(drogon::HttpResponse::newHttpJsonResponse(body));
                 } catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("market_history_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
@@ -434,6 +434,70 @@ int main() {
                 try { if (!tradingService) throw std::runtime_error("Trading reads are unavailable"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->accountBalance(request->getParameter("account_id")))); }
                 catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("balance_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
             }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/account/near-balance",
+            [tradingService](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Wallet balance reads are unavailable"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->nearWalletBalance(request->getParameter("address")))); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("wallet_balance_unavailable", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/account/deposit/instructions",
+            [contractId = *contractId, network = *network, tokenId = env("NEAR_USDC_TOKEN_ID").value_or("")](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                const auto accountId = request->getParameter("account_id");
+                if (accountId.empty() || accountId.size() > 128 || accountId.rfind("protocol:", 0) == 0 || accountId.rfind("agent:", 0) == 0 || tokenId.empty()) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("deposit_instructions_unavailable", "Deposit configuration is unavailable for this account")); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); return;
+                }
+                Json::Value body; body["account_id"] = accountId; body["contract_id"] = contractId; body["token_id"] = tokenId; body["network"] = network;
+                callback(drogon::HttpResponse::newHttpJsonResponse(body));
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/liquidity/overview",
+            [tradingService](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->liquidityOverview(request->getParameter("account_id")))); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_unavailable", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/liquidity/deposit/payload",
+            [tradingService](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->liquidityDepositPayload(*input))); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_deposit_payload_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/liquidity/deposit",
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); auto body = tradingService->submitLiquidityDeposit(*input); logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "liquidity_added", "Liquidity added", "USDC was added to the shared vault.", "", "", (*input)["amount_usdc"].asString(), body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_deposit_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/liquidity/withdrawal/payload",
+            [tradingService](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->liquidityWithdrawalPayload(*input))); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_withdrawal_payload_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/liquidity/withdrawal",
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); auto body = tradingService->submitLiquidityWithdrawal(*input); logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "liquidity_withdrawal_requested", "Liquidity withdrawal requested", "Your LP shares are in the withdrawal cooldown.", "", "", (*input)["shares"].asString(), body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_withdrawal_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/liquidity/withdrawal/complete",
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input || !(*input)["account_id"].isString()) throw std::invalid_argument("account_id is required"); const auto account = (*input)["account_id"].asString(); auto body = tradingService->completeLiquidityWithdrawal(account); logActivityBestEffort(dashboardStore, network, account, "liquidity_withdrawal_completed", "Liquidity withdrawal completed", "USDC was returned to your Afterbell balance.", "", "", "0", body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_withdrawal_completion_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/withdrawal/payload",
+            [tradingService](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Withdrawals are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->accountWithdrawalPayload(*input))); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("withdrawal_payload_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/account/withdrawal",
+            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try { if (!tradingService) throw std::runtime_error("Withdrawals are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); auto body = tradingService->submitAccountWithdrawal(*input); logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "withdrawal_submitted", "Withdrawal submitted", "USDC withdrawal to your NEAR address was submitted.", "", "", (*input)["amount_usdc"].asString(), body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("withdrawal_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
+            }, {drogon::Post});
         drogon::app().registerHandler(
             "/v1/trade/history",
             [dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {

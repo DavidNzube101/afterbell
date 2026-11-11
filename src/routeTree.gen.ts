@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as LpRouteImport } from './routes/lp'
 import { Route as MarketsRouteImport } from './routes/markets'
 import { Route as SettingUpRouteImport } from './routes/setting-up'
 import { Route as TradeRouteImport } from './routes/trade'
@@ -17,6 +18,11 @@ import { Route as TradeRouteImport } from './routes/trade'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LpRoute = LpRouteImport.update({
+  id: '/lp',
+  path: '/lp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MarketsRoute = MarketsRouteImport.update({
@@ -37,12 +43,14 @@ const TradeRoute = TradeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/lp': typeof LpRoute
   '/markets': typeof MarketsRoute
   '/setting-up': typeof SettingUpRoute
   '/trade': typeof TradeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/lp': typeof LpRoute
   '/markets': typeof MarketsRoute
   '/setting-up': typeof SettingUpRoute
   '/trade': typeof TradeRoute
@@ -50,20 +58,22 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/lp': typeof LpRoute
   '/markets': typeof MarketsRoute
   '/setting-up': typeof SettingUpRoute
   '/trade': typeof TradeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/markets' | '/setting-up' | '/trade'
+  fullPaths: '/' | '/lp' | '/markets' | '/setting-up' | '/trade'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/markets' | '/setting-up' | '/trade'
-  id: '__root__' | '/' | '/markets' | '/setting-up' | '/trade'
+  to: '/' | '/lp' | '/markets' | '/setting-up' | '/trade'
+  id: '__root__' | '/' | '/lp' | '/markets' | '/setting-up' | '/trade'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LpRoute: typeof LpRoute
   MarketsRoute: typeof MarketsRoute
   SettingUpRoute: typeof SettingUpRoute
   TradeRoute: typeof TradeRoute
@@ -76,6 +86,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lp': {
+      id: '/lp'
+      path: '/lp'
+      fullPath: '/lp'
+      preLoaderRoute: typeof LpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/markets': {
@@ -104,6 +121,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LpRoute: LpRoute,
   MarketsRoute: MarketsRoute,
   SettingUpRoute: SettingUpRoute,
   TradeRoute: TradeRoute,

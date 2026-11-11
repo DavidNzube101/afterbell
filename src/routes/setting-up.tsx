@@ -2,22 +2,12 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
 import ottoLogo from '../assets/afterbell-otto-logo.png'
-import solanaIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
-import evmIcon from '../assets/wallet-icons/chain-icons/etheruem.jpeg'
-import nearIcon from '../assets/wallet-icons/chain-icons/near.jpeg'
-import phantomIcon from '../assets/wallet-icons/phantom.jpeg'
-import solflareIcon from '../assets/wallet-icons/solflare.jpeg'
-import metamaskIcon from '../assets/wallet-icons/metamask.jpeg'
-import coinbaseIcon from '../assets/wallet-icons/coinbase-wallet.png'
-import rainbowIcon from '../assets/wallet-icons/rainbow.png'
-import rabbyIcon from '../assets/wallet-icons/rabby.jpeg'
-import hotIcon from '../assets/wallet-icons/hot-wallet.jpeg'
-import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
 import { markets } from '../data/markets'
 import { useWalletSession } from '../lib/wallet-session'
 import { useToasts } from '../lib/toasts'
 import { createAgentKey, type AgentPublicKey } from '../lib/agent-key'
 import { checkAccountUsername, claimAccountUsername, getAgentSetupPayload, reclaimAccountUsername, submitAgentSetup } from '../lib/account'
+import { WalletDetailsModal } from '../components/WalletDetailsModal'
 import './setting-up.css'
 
 export const Route = createFileRoute('/setting-up')({ component: SettingUpPage })
@@ -240,18 +230,6 @@ function SettingUpPage() {
     }
   }
 
-  const chainIcon = session?.chain === 'near' ? nearIcon : session?.chain === 'evm' ? evmIcon : solanaIcon
-  const walletIcon = session ? ({
-    'Phantom': phantomIcon,
-    'Solflare': solflareIcon,
-    'MetaMask': metamaskIcon,
-    'Coinbase Wallet': coinbaseIcon,
-    'Rainbow': rainbowIcon,
-    'Rabby': rabbyIcon,
-    'HOT Wallet': hotIcon,
-    'Nightly Wallet': nightlyIcon,
-  } as Record<string, string>)[session.walletName] : undefined
-
   if (!session) return null
 
   return <main className="onboarding-screen">
@@ -334,12 +312,6 @@ function SettingUpPage() {
       <p className="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
     </section>
 
-    {walletModalOpen && <div className="onboarding-wallet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setWalletModalOpen(false) }}>
-      <section className="onboarding-wallet-modal" role="dialog" aria-modal="true" aria-label="Wallet details">
-        <header><button type="button" className="onboarding-wallet-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header>
-        <dl><div><dt>Chain</dt><dd className="onboarding-wallet-value"><img src={chainIcon} alt="" />{session.chain === 'near' ? 'NEAR' : session.chain === 'evm' ? 'EVM' : 'Solana'}</dd></div><div><dt>Wallet</dt><dd className="onboarding-wallet-value">{walletIcon && <img src={walletIcon} alt="" />}{session.walletName}</dd></div><div><dt>Address</dt><dd className="onboarding-wallet-address">{session.address}</dd></div></dl>
-        <footer><button type="button" className="onboarding-wallet-copy" onClick={() => void copyAddress(session.address)}>Copy address</button><button type="button" className="onboarding-wallet-disconnect" onClick={() => void disconnectWallet()}>Disconnect</button></footer>
-      </section>
-    </div>}
+    {walletModalOpen && session && <WalletDetailsModal session={session} onClose={() => setWalletModalOpen(false)} onCopy={copyAddress} onDisconnect={disconnectWallet} />}
   </main>
 }

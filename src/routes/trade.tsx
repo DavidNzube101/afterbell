@@ -1,26 +1,22 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
+import { Candlesticks, Chart, Panel } from 'react-candlesticks'
+import type { DataPoint, Theme } from 'react-candlesticks'
+import 'react-candlesticks/style.css'
+import { AccountBalanceModal } from '../components/AccountBalanceModal'
 import logo from '../assets/afterbell-logo.png'
 import shareImage1 from '../assets/share-images/1.png'
 import shareImage2 from '../assets/share-images/2.png'
 import shareImage3 from '../assets/share-images/3.png'
 import { TickerIcon } from '../components/TickerIcon'
+import { UsdcIcon } from '../components/UsdcIcon'
+import { WalletDetailsModal } from '../components/WalletDetailsModal'
 import { markets, type Market } from '../data/markets'
 import { useMarketRegistry } from '../lib/api'
 import { useWalletSession } from '../lib/wallet-session'
-import { clearNotifications, deleteNotification, dollars, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNotifications, getPositions, getSnapshots, postTrade, priceToRaw, usdc, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint } from '../lib/dashboard'
+import { getChainName, getWalletIcon } from '../lib/wallet-icons'
+import { clearNotifications, deleteNotification, dollars, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, postTrade, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint } from '../lib/dashboard'
 import { useToasts } from '../lib/toasts'
-import phantomWalletIcon from '../assets/wallet-icons/phantom.jpeg'
-import solflareWalletIcon from '../assets/wallet-icons/solflare.jpeg'
-import metamaskWalletIcon from '../assets/wallet-icons/metamask.jpeg'
-import coinbaseWalletIcon from '../assets/wallet-icons/coinbase-wallet.png'
-import rainbowWalletIcon from '../assets/wallet-icons/rainbow.png'
-import rabbyWalletIcon from '../assets/wallet-icons/rabby.jpeg'
-import hotWalletIcon from '../assets/wallet-icons/hot-wallet.jpeg'
-import nightlyWalletIcon from '../assets/wallet-icons/nightly.jpeg'
-import solanaChainIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
-import evmChainIcon from '../assets/wallet-icons/chain-icons/etheruem.jpeg'
-import nearChainIcon from '../assets/wallet-icons/chain-icons/near.jpeg'
 import './trade.css'
 
 export const Route = createFileRoute('/trade')({
@@ -41,10 +37,6 @@ function Icon({ name }: { name: 'chart' | 'chevron' | 'bell' | 'search' }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>
 }
 
-function UsdcIcon() {
-  return <svg className="usdc-icon" role="img" aria-label="USDC" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#2775CA"/><path d="M20.2 18.4c0-2.2-1.3-3-4-3.3-1.9-.3-2.3-.8-2.3-1.7s.7-1.5 2-1.5c1.2 0 1.8.4 2.1 1.4.1.2.2.3.4.3h1c.3 0 .4-.2.4-.4-.3-1.4-1.4-2.5-2.9-2.6V9c0-.2-.2-.4-.5-.4h-.9c-.3 0-.4.2-.5.4v1.5c-1.9.3-3.1 1.5-3.1 3.1 0 2.1 1.3 2.9 4 3.2 1.8.3 2.4.7 2.4 1.7 0 1-.9 1.7-2.1 1.7-1.7 0-2.2-.7-2.4-1.6-.1-.3-.3-.4-.5-.4h-1c-.3 0-.4.2-.4.4.3 1.6 1.2 2.6 3.2 2.9V23c0 .2.2.4.5.4h.9c.3 0 .4-.2.5-.4v-1.5c1.9-.3 3.2-1.6 3.2-3.1z" fill="#fff"/><path d="M12.8 24.9c-4.9-1.8-7.4-7.2-5.6-12 .9-2.6 3-4.6 5.6-5.6.3-.1.4-.3.4-.6v-.9c0-.2-.1-.4-.4-.5h-.2C6.8 7.2 3.5 13.1 5.3 19c1.1 3.5 3.8 6.1 7.3 7.3.3.1.5 0 .6-.3v-1.1c0-.1-.2-.3-.4-.4zm6.5-19.6c-.3-.1-.5 0-.6.3v.9c0 .3.1.5.4.6 4.9 1.8 7.4 7.2 5.6 12-.9 2.6-3 4.6-5.6 5.6-.3.1-.4.3-.4.6v.9c0 .2.1.4.4.5h.2c5.9-1.9 9.2-8.2 7.3-14.1-1.1-3.6-3.9-6.2-7.3-7.3z" fill="#fff"/></svg>
-}
-
 function loadCanvasImage(source: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image()
@@ -61,18 +53,69 @@ function loadCanvasSvg(svg: SVGSVGElement) {
   return loadCanvasImage(url).finally(() => URL.revokeObjectURL(url))
 }
 
-function PriceChart({ market, points }: { market: Market; points: PricePoint[] }) {
-  const coordinates = useMemo(() => {
-    if (points.length < 2) return ''
-    const values = points.map(point => dollars(point.price_e8))
-    const min = Math.min(...values), max = Math.max(...values), span = max - min || 1
-    return values.map((value, index) => `${(index / (values.length - 1)) * 1000},${210 - ((value - min) / span) * 190}`).join(' ')
-  }, [points])
-  const current = points.length ? dollars(points[points.length - 1].price_e8) : 0
+const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
+type ChartRange = typeof chartRanges[number]
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 60_000, '1d': 60_000, '1w': 900_000, '1m': 14_400_000, all: 86_400_000 }
+const chartGranularity: Record<ChartRange, 'm1' | 'm15' | 'h4' | 'd1'> = { '1h': 'm1', '1d': 'm1', '1w': 'm15', '1m': 'h4', all: 'd1' }
+const chartTheme: Theme = {
+  base: 'dark',
+  chart: {
+    backgroundColor: '#0c1016',
+    grid: {
+      time: { color: '#17202a', width: 1 },
+      value: { color: '#17202a', width: 1 },
+    },
+    borders: {
+      left: { color: '#0c1016', width: 0 },
+      right: { color: '#202a36', width: 1 },
+      top: { color: '#0c1016', width: 0 },
+      bottom: { color: '#202a36', width: 1 },
+    },
+  },
+  layers: {
+    candlesticks: {
+      series: {
+        body: {
+          up: { backgroundColor: '#39c98a', borderColor: '#39c98a' },
+          down: { backgroundColor: '#e45b68', borderColor: '#e45b68' },
+        },
+        wick: {
+          up: { color: '#39c98a' },
+          down: { color: '#e45b68' },
+        },
+      },
+    },
+  },
+}
+
+function PriceChart({ market, points, range, onRangeChange }: { market: Market; points: PricePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
+  const candles = useMemo(() => {
+    const buckets = new Map<number, { open: number; high: number; low: number; close: number }>()
+    const interval = candleIntervalMs[range]
+    for (const point of points) {
+      const value = dollars(point.price_e8)
+      if (!Number.isFinite(value) || value <= 0) continue
+      const bucket = Math.floor(point.timestamp_ms / interval) * interval
+      const current = buckets.get(bucket)
+      if (current) { current.high = Math.max(current.high, value); current.low = Math.min(current.low, value); current.close = value }
+      else buckets.set(bucket, { open: value, high: value, low: value, close: value })
+    }
+    return Array.from(buckets, ([timestamp, candle]) => ({ time: new Date(timestamp).toISOString(), volume: 0, ...candle }))
+      .sort((left, right) => left.time.localeCompare(right.time)) as DataPoint[]
+  }, [points, range])
+
+  const latest = candles[candles.length - 1]
   return <div className="chart-shell">
-    <div className="chart-tools"><div className="chart-pair"><span>{market.ticker} / USDC</span></div><span className="chart-source">A1 oracle</span></div>
-    <div className="real-market-chart oracle-price-chart" aria-label={`${market.name} oracle price chart`}>
-      {points.length > 1 ? <><div className="oracle-chart-price">${current.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><svg viewBox="0 0 1000 230" preserveAspectRatio="none" role="img" aria-label={`${market.ticker} oracle price history`}><defs><linearGradient id="oracle-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#0065d2" stopOpacity=".28"/><stop offset="1" stopColor="#0065d2" stopOpacity="0"/></linearGradient></defs><polygon points={`0,230 ${coordinates} 1000,230`} fill="url(#oracle-chart-fill)"/><polyline points={coordinates} fill="none" stroke="#48a0ff" strokeWidth="2.5" vectorEffect="non-scaling-stroke"/></svg><span className="oracle-chart-range">Oracle samples are retained from when chart tracking was enabled.</span></> : <div className="chart-placeholder">Oracle price history is building. Current mark price is shown above.</div>}
+    <div className="chart-tools">
+      <div className="chart-pair"><span>{market.ticker} / USDC</span></div>
+      <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
+    </div>
+    <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
+      <Chart className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#0c1016" theme={chartTheme} initialScrollToLatest enableScroll enableZoom>
+        <Panel><Candlesticks /></Panel>
+      </Chart>
+      {candles.length === 0 && <div className="chart-placeholder">Candles will appear as oracle prices arrive.</div>}
+      {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
     </div>
   </div>
 }
@@ -166,7 +209,13 @@ function TradingPage() {
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([])
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
   const [volumes, setVolumes] = useState<Record<string, string>>({})
+  const [chartRange, setChartRange] = useState<ChartRange>('1d')
+  const [metricsLoadedMarket, setMetricsLoadedMarket] = useState<string | null>(null)
   const [availableBalance, setAvailableBalance] = useState<number | null>(null)
+  const [balanceRaw, setBalanceRaw] = useState<string | null>(null)
+  const [nearWalletBalanceRaw, setNearWalletBalanceRaw] = useState<string | null>(null)
+  const [depositInstructions, setDepositInstructions] = useState<{ contract_id: string; token_id: string; network: string } | null>(null)
+  const [balanceModalOpen, setBalanceModalOpen] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [limitPrice, setLimitPrice] = useState('')
   const [estimatedFee, setEstimatedFee] = useState<number | null>(null)
@@ -176,6 +225,7 @@ function TradingPage() {
   const [shareBackground, setShareBackground] = useState('gradient-1')
   const [customShareBackground, setCustomShareBackground] = useState<string | null>(null)
   const shareCardRef = useRef<HTMLElement>(null)
+  const metricsRequestMarketRef = useRef<string | null>(null)
   const [shareNotice, setShareNotice] = useState('')
   const [notice, setNotice] = useState('')
   const [orderWidth, setOrderWidth] = useState(342)
@@ -198,14 +248,49 @@ function TradingPage() {
 
   async function refreshDashboard() {
     if (!session) return
-    const tasks = [getSnapshots().then(setSnapshots), getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))), getMarketHistory(market.ticker).then(data => setPricePoints(data.points)), getPositions(session.accountId).then(data => setPositions(data.positions)), getLimits(session.accountId).then(data => setLimitOrders(data.orders)), getHistory(session.accountId).then(data => setHistory(data.events)), getNotifications(session.accountId).then(data => setNotifications(data.notifications)), fetch(`/api/v1/account/balance?account_id=${encodeURIComponent(session.accountId)}`).then(response => response.ok ? response.json() : Promise.reject()).then(data => setAvailableBalance(usdc(data.balance_usdc)))]
+    if (metricsRequestMarketRef.current !== market.ticker) {
+      metricsRequestMarketRef.current = market.ticker
+      setMetricsLoadedMarket(null)
+    }
+    const tasks = [
+      getSnapshots().then(data => setSnapshots(data)),
+      getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))),
+      getMarketHistory(market.ticker, chartRange).then(data => setPricePoints(data.points)),
+      getPositions(session.accountId).then(data => setPositions(data.positions)),
+      getLimits(session.accountId).then(data => setLimitOrders(data.orders)),
+      getHistory(session.accountId).then(data => setHistory(data.events)),
+      getNotifications(session.accountId).then(data => setNotifications(data.notifications)),
+      fetch(`/api/v1/account/balance?account_id=${encodeURIComponent(session.accountId)}`).then(response => response.ok ? response.json() : Promise.reject()).then(data => { const raw = String(data.balance_usdc); setBalanceRaw(raw); setAvailableBalance(usdc(raw)) }),
+      getDepositInstructions(session.accountId).then(setDepositInstructions),
+      session.chain === 'near' ? getNearWalletBalance(session.address).then(data => setNearWalletBalanceRaw(data.amount_yocto)) : Promise.resolve(),
+    ]
     await Promise.allSettled(tasks)
+    if (metricsRequestMarketRef.current === market.ticker) setMetricsLoadedMarket(market.ticker)
   }
-  useEffect(() => { void refreshDashboard(); const timer = window.setInterval(() => void refreshDashboard(), 15000); return () => window.clearInterval(timer) }, [session?.accountId, market.ticker])
+  useEffect(() => { void refreshDashboard(); const timer = window.setInterval(() => void refreshDashboard(), 15000); return () => window.clearInterval(timer) }, [session?.accountId, market.ticker, chartRange])
 
-  const walletIcon = session?.walletName.toLowerCase().includes('phantom') ? phantomWalletIcon : session?.walletName.toLowerCase().includes('solflare') ? solflareWalletIcon : session?.walletName.toLowerCase().includes('metamask') ? metamaskWalletIcon : session?.walletName.toLowerCase().includes('coinbase') ? coinbaseWalletIcon : session?.walletName.toLowerCase().includes('rainbow') ? rainbowWalletIcon : session?.walletName.toLowerCase().includes('rabby') ? rabbyWalletIcon : session?.walletName.toLowerCase().includes('hot') ? hotWalletIcon : nightlyWalletIcon
-  const chainIcon = session?.chain === 'solana' ? solanaChainIcon : session?.chain === 'evm' ? evmChainIcon : nearChainIcon
-  const chainName = session?.chain === 'solana' ? 'Solana' : session?.chain === 'evm' ? 'EVM' : 'NEAR'
+  const walletIcon = session ? getWalletIcon(session.walletName) : undefined
+  const chainName = session ? getChainName(session.chain) : 'NEAR'
+
+  async function copyWalletAddress(address: string) {
+    try { await navigator.clipboard.writeText(address); showToast('success', 'Wallet address copied.') }
+    catch { showToast('error', 'Could not copy the wallet address.') }
+  }
+
+  async function disconnectWallet() {
+    await disconnect()
+    window.location.assign('/')
+  }
+
+  async function withdrawFromAccount(amount: string, receiver: string) {
+    if (!session) throw new Error('Connect your wallet first.')
+    const amountRaw = usdcToRaw(amount)
+    const payload = await getAccountWithdrawalPayload(session.accountId, receiver, amountRaw)
+    const signature = await signMessage({ message: payload.message, nonce: payload.nonce, recipient: payload.recipient })
+    const result = await submitAccountWithdrawal({ ...payload, signature })
+    showToast('success', `Withdrawal submitted. Transaction ${result.transaction_hash.slice(0, 8)}…`)
+    void refreshDashboard()
+  }
 
   async function authorizeAndSubmit(path: string, body: Record<string, unknown>, signatureNonce: string | number, quoteRecipient?: string) {
     const configuredContract = import.meta.env.VITE_A1_CONTRACT_ID || (import.meta.env.VITE_NEAR_NETWORK === 'mainnet' ? 'a1.afterbell.near' : 'afterbellfx-dev-faucet.testnet')
@@ -399,11 +484,14 @@ function TradingPage() {
     </section>
     <header className="trade-header">
       <a href="/" className="trade-brand"><img className="trade-logo" src={logo} alt=""/><span>Afterbell</span></a>
-      <nav className="trade-nav" aria-label="Main navigation"><a className="nav-active" href="/trade">Trade</a><a href="/markets">Markets</a><a href="#agent">AI agent</a></nav>
+      <nav className="trade-nav" aria-label="Main navigation"><a className="nav-active" href="/trade">Trade</a><a href="/markets">Markets</a><a href="/lp">LP</a><a href="#agent">AI agent</a></nav>
       <div className="header-right">
         <button className={`icon-button header-bell ${notificationsOpen ? 'is-open' : ''}`} aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(open => !open)}>
           <Icon name="bell" />
           {notifications.length > 0 && <span className="notification-count">{notifications.length}</span>}
+        </button>
+        <button className="account-balance-widget" aria-label="Open USDC account balance" onClick={() => setBalanceModalOpen(true)}>
+          <UsdcIcon size={19}/><span>{availableBalance === null ? <span className="balance-widget-skeleton"/> : money(availableBalance)}</span>
         </button>
         <button className="account-button" title={`${session?.walletName ?? 'Wallet'} · ${chainName}`} onClick={() => setWalletModalOpen(true)}>
           <img className="account-avatar wallet-chain-avatar connected-wallet-icon" src={walletIcon} alt=""/>
@@ -419,15 +507,15 @@ function TradingPage() {
           <button className="market-selector" aria-expanded={marketMenu} onClick={() => { setMarketMenu(open => !open); setMarketSearch('') }}><span className="stock-avatar"><TickerIcon ticker={market.ticker} size={20}/></span><span className="market-selector-text"><b>{market.ticker}</b></span><Icon name="chevron"/></button>
           {marketMenu && <div className="market-menu"><label className="market-search"><Icon name="search"/><input autoFocus value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search stocks" aria-label="Search stocks"/></label><div className="market-menu-list">{filteredMarkets.map(item => <button key={item.ticker} className={item.ticker === market.ticker ? 'selected' : ''} onClick={() => { setSelectedMarket(item.ticker); setMarketMenu(false); setMarketSearch('') }}><span className="stock-avatar small"><TickerIcon ticker={item.ticker} size={17}/></span><span><b>{item.ticker}</b><small>{item.name} / US equity</small></span></button>)}{filteredMarkets.length === 0 && <p className="market-empty">No stocks found.</p>}</div></div>}
         </div>
-        <div className="overview-price"><small className="metric-label" tabIndex={0} aria-describedby="tip-mark-price">Perp mark price<span className="metric-tooltip" id="tip-mark-price" role="tooltip">The current A1 oracle mark used for position valuation and risk checks.</span></small><strong>{latestPrice ? money(latestPrice) : 'Unavailable'}</strong><span>{snapshot?.observed_at_ms ? `Updated ${elapsed(snapshot.observed_at_ms)}` : 'Waiting for oracle price'}</span></div>
-        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-volume">24h volume<span className="metric-tooltip" id="tip-volume" role="tooltip">Notional value of recorded opens and closes in the last 24 hours.</span></small><strong>{volumes[market.ticker] ? money(usdc(volumes[market.ticker])) : '$0.00'}</strong></div>
-        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-open-interest">Open interest<span className="metric-tooltip" id="tip-open-interest" role="tooltip">Combined open long and short notional on A1.</span></small><strong>{snapshot ? money(usdc(snapshot.open_interest_usdc)) : 'Unavailable'}</strong></div>
-        <div className="overview-metric funding"><small className="metric-label" tabIndex={0} aria-describedby="tip-funding">Funding / 8h<span className="metric-tooltip" id="tip-funding" role="tooltip">Current hourly funding rate projected across eight hours.</span></small><strong>{snapshot ? `${(snapshot.funding_rate_bps_8h / 100).toFixed(4)}%` : 'Unavailable'}</strong></div>
-        <div className="stock-quote"><small>{market.ticker}-USDC</small><strong>{latestPrice ? money(latestPrice) : 'Unavailable'}</strong></div>
+        <div className="overview-price"><small className="metric-label" tabIndex={0} aria-describedby="tip-mark-price">Perp mark price<span className="metric-tooltip" id="tip-mark-price" role="tooltip">The current market mark used for position valuation and risk checks.</span></small><strong>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton"/> : latestPrice ? money(latestPrice) : 'Unavailable'}</strong><span>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton metric-skeleton-small"/> : snapshot?.observed_at_ms ? `Updated ${elapsed(snapshot.observed_at_ms)}` : 'Waiting for oracle price'}</span></div>
+        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-volume">24h volume<span className="metric-tooltip" id="tip-volume" role="tooltip">Notional value of recorded opens and closes in the last 24 hours.</span></small><strong>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton"/> : volumes[market.ticker] ? money(usdc(volumes[market.ticker])) : '$0.00'}</strong></div>
+        <div className="overview-metric"><small className="metric-label" tabIndex={0} aria-describedby="tip-open-interest">Open interest<span className="metric-tooltip" id="tip-open-interest" role="tooltip">Combined open long and short notional on A1.</span></small><strong>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton"/> : snapshot ? money(usdc(snapshot.open_interest_usdc)) : 'Unavailable'}</strong></div>
+        <div className="overview-metric funding"><small className="metric-label" tabIndex={0} aria-describedby="tip-funding">Funding / 8h<span className="metric-tooltip" id="tip-funding" role="tooltip">Current hourly funding rate projected across eight hours.</span></small><strong>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton"/> : snapshot ? `${(snapshot.funding_rate_bps_8h / 100).toFixed(4)}%` : 'Unavailable'}</strong></div>
+        <div className="stock-quote"><small>{market.ticker}-USDC</small><strong>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton"/> : latestPrice ? money(latestPrice) : 'Unavailable'}</strong></div>
       </section>
 
       <div className="trading-grid" style={{ '--order-width': `${orderWidth}px`, '--chart-height': `${chartHeight}px` } as CSSProperties}>
-        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market} points={pricePoints}/>
+        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market} points={pricePoints} range={chartRange} onRangeChange={setChartRange}/>
           <button className="resize-handle resize-horizontal" aria-label="Resize chart and positions panels" onPointerDown={event => startResize('y', event, chartHeight)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={endResize}><span/></button>
           <div className="positions-panel">
             <div className="positions-heading"><div className="position-tabs">{['Positions', 'Open orders', 'History'].map(tab => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}{tab === 'Positions' && <span className="tab-count">{positions.length}</span>}</button>)}</div></div>
@@ -464,7 +552,8 @@ function TradingPage() {
 
     {notificationsOpen && <><button className="drawer-backdrop" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}/><aside className="notification-drawer" aria-label="Notifications"><div className="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button className="drawer-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div><div className="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={notifications.length === 0} onClick={() => session && void clearNotifications(session.accountId).then(() => setNotifications([])).catch(error => showToast('error', error.message))}>Clear all</button></div><div className="notification-list">{notifications.map(item => <article className="notification-item" key={item.id}><div className="notification-body"><div className="notification-title-row"><h3>{item.title}</h3><time>{elapsed(item.created_at_ms)}</time></div><p>{item.message}</p></div><button className="notification-delete" aria-label="Delete notification" title="Delete notification" onClick={() => session && void deleteNotification(session.accountId, item.id).then(() => setNotifications(current => current.filter(notification => notification.id !== item.id))).catch(error => showToast('error', error.message))}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></button></article>)}{notifications.length === 0 && <div className="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>}</div></aside></>}
 
-    {walletModalOpen && session && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setWalletModalOpen(false) }}><section className="wallet-detail-modal risk-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title"><header className="risk-modal-header"><div><h2 id="wallet-modal-title">Connected wallet</h2></div><button className="drawer-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header><div className="wallet-detail-content"><div className="wallet-detail-chain"><img src={chainIcon} alt=""/><span>{chainName} wallet</span></div><div className="wallet-detail-identity"><img src={walletIcon} alt=""/><span>{session.walletName}</span></div><div className="wallet-detail-address"><span>{session.address}</span><button onClick={() => void navigator.clipboard.writeText(session.address).then(() => showToast('success', 'Wallet address copied.')).catch(() => showToast('error', 'Could not copy the wallet address.'))}>Copy</button></div><button className="wallet-disconnect" onClick={() => { void disconnect(); window.location.assign('/') }}>Disconnect</button></div></section></div>}
+    {walletModalOpen && session && <WalletDetailsModal session={session} onClose={() => setWalletModalOpen(false)} onCopy={copyWalletAddress} onDisconnect={disconnectWallet} />}
+    {balanceModalOpen && session && <AccountBalanceModal session={session} balanceRaw={balanceRaw} nearBalanceRaw={nearWalletBalanceRaw} deposit={depositInstructions} onClose={() => setBalanceModalOpen(false)} onCopy={copyWalletAddress} onWithdraw={withdrawFromAccount}/>}
     {riskOpen && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setRiskOpen(false) }}><section className="risk-modal" role="dialog" aria-modal="true" aria-labelledby="risk-title"><header className="risk-modal-header"><div><span className="risk-eyebrow">PLEASE READ BEFORE TRADING</span><h2 id="risk-title">Risk disclosure</h2><p>Understand the product and its risks before you trade.</p></div><button className="drawer-close" aria-label="Close risk disclosure" onClick={() => setRiskOpen(false)}>×</button></header><div className="risk-modal-content">{riskDisclosureSections.map(section => <section key={section.title}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div><footer className="risk-modal-footer"><a href="https://docs.afterbellfx.xyz" target="_blank" rel="noreferrer">Read the product documentation.</a><button onClick={() => setRiskOpen(false)}>I understand</button></footer></section></div>}
     {sharePosition && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) { setSharePosition(null); setShareNotice('') } }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><header className="risk-modal-header"><div><h2 id="share-title">Share your trade</h2><p>A snapshot of this position, ready to share.</p></div><button className="drawer-close" aria-label="Close share trade dialog" onClick={() => { setSharePosition(null); setShareNotice('') }}>×</button></header><div className="share-modal-content"><article ref={shareCardRef} className={`share-trade-card ${shareBackground}`} style={shareBackground.startsWith('image-') || shareBackground === 'custom-image' ? { backgroundImage: `linear-gradient(90deg, #0b111ad9, #0b111a9c), url(${shareBackground === 'custom-image' ? customShareBackground : shareBackgrounds.find(option => option.id === shareBackground)?.image})` } : undefined}><div className="share-card-brand"><img src={logo} alt=""/><span>Afterbell</span><span className={`share-card-side ${sharePosition.side.toLowerCase()}`}>{sharePosition.side}</span></div><div className="share-card-main"><div className="share-card-market"><span className="stock-avatar"><TickerIcon ticker={sharePosition.ticker} size={20}/></span><div><b>{sharePosition.ticker}-USDC</b></div></div><div className="share-card-profit"><strong>{sharePosition.pnl}</strong><span>{sharePosition.change}</span></div></div><div className="share-card-details"><div><span>Position size</span><b>{sharePosition.size}</b></div><div><span>Leverage</span><b>{sharePosition.leverage}</b></div><div><span>Entry price</span><b>{sharePosition.entry}</b></div><div><span>Mark price</span><b>{sharePosition.mark}</b></div></div><div className="share-card-footer">afterbellfx.xyz</div></article><div className="share-background-picker"><div className="share-background-heading">Background</div><div className="share-background-options">{shareBackgrounds.map(option => <button key={option.id} className={`share-background-option ${option.id} ${shareBackground === option.id ? 'selected' : ''}`} aria-label={option.label} aria-pressed={shareBackground === option.id} title={option.label} style={option.kind === 'image' ? { backgroundImage: `linear-gradient(#080c1280, #080c1280), url(${option.image})` } : undefined} onClick={() => setShareBackground(option.id)} />)}<label className={`share-background-option custom-image ${shareBackground === 'custom-image' ? 'selected' : ''}`} title="Upload custom image" aria-label="Upload custom image" style={customShareBackground ? { backgroundImage: `linear-gradient(#080c1280, #080c1280), url(${customShareBackground})` } : undefined}><input type="file" accept="image/*" onChange={chooseCustomShareBackground}/><span>+</span></label></div></div>{shareNotice && <p className="share-notice" role="status">{shareNotice}</p>}</div><footer className="share-modal-footer"><button className="share-action-button" onClick={() => void downloadTradeCard()}>Download</button></footer></section></div>}
   </main>

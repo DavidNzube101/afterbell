@@ -3,21 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { siRobinhood } from 'simple-icons'
 import logo from '../assets/afterbell-logo.png'
 import { TickerIcon } from '../components/TickerIcon'
+import { WalletDetailsModal } from '../components/WalletDetailsModal'
 import { useMarketRegistry } from '../lib/api'
 import { useWalletSession } from '../lib/wallet-session'
+import { getChainName, getWalletIcon } from '../lib/wallet-icons'
 import { getMarketVolumes, getSnapshots, dollars, usdc, type MarketSnapshot } from '../lib/dashboard'
 import { useToasts } from '../lib/toasts'
-import phantomWalletIcon from '../assets/wallet-icons/phantom.jpeg'
-import solflareWalletIcon from '../assets/wallet-icons/solflare.jpeg'
-import metamaskWalletIcon from '../assets/wallet-icons/metamask.jpeg'
-import coinbaseWalletIcon from '../assets/wallet-icons/coinbase-wallet.png'
-import rainbowWalletIcon from '../assets/wallet-icons/rainbow.png'
-import rabbyWalletIcon from '../assets/wallet-icons/rabby.jpeg'
-import hotWalletIcon from '../assets/wallet-icons/hot-wallet.jpeg'
-import nightlyWalletIcon from '../assets/wallet-icons/nightly.jpeg'
-import solanaChainIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
-import evmChainIcon from '../assets/wallet-icons/chain-icons/etheruem.jpeg'
-import nearChainIcon from '../assets/wallet-icons/chain-icons/near.jpeg'
 import './trade.css'
 import './markets.css'
 
@@ -36,9 +27,18 @@ function MarketsPage() {
     const load = () => { void getSnapshots().then(setSnapshots).catch(() => undefined); void getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))).catch(() => undefined) }
     load(); const timer = window.setInterval(load, 15000); return () => window.clearInterval(timer)
   }, [])
-  const walletIcon = session?.walletName.toLowerCase().includes('phantom') ? phantomWalletIcon : session?.walletName.toLowerCase().includes('solflare') ? solflareWalletIcon : session?.walletName.toLowerCase().includes('metamask') ? metamaskWalletIcon : session?.walletName.toLowerCase().includes('coinbase') ? coinbaseWalletIcon : session?.walletName.toLowerCase().includes('rainbow') ? rainbowWalletIcon : session?.walletName.toLowerCase().includes('rabby') ? rabbyWalletIcon : session?.walletName.toLowerCase().includes('hot') ? hotWalletIcon : nightlyWalletIcon
-  const chainIcon = session?.chain === 'solana' ? solanaChainIcon : session?.chain === 'evm' ? evmChainIcon : nearChainIcon
-  const chainName = session?.chain === 'solana' ? 'Solana' : session?.chain === 'evm' ? 'EVM' : 'NEAR'
+  const walletIcon = session ? getWalletIcon(session.walletName) : undefined
+  const chainName = session ? getChainName(session.chain) : 'NEAR'
+
+  async function copyWalletAddress(address: string) {
+    try { await navigator.clipboard.writeText(address); showToast('success', 'Wallet address copied.') }
+    catch { showToast('error', 'Could not copy the wallet address.') }
+  }
+
+  async function disconnectWallet() {
+    await disconnect()
+    window.location.assign('/')
+  }
   const filteredMarkets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return markets.filter(market => `${market.ticker} ${market.name} us equity robinhood chain`.toLowerCase().includes(normalizedQuery))
@@ -47,7 +47,7 @@ function MarketsPage() {
   return <div className="trade-app markets-page">
     <header className="trade-header">
       <a href="/" className="trade-brand"><img className="trade-logo" src={logo} alt=""/><span>Afterbell</span></a>
-      <nav className="trade-nav" aria-label="Main navigation"><a href="/trade">Trade</a><a className="nav-active" href="/markets">Markets</a><a href="#agent">AI agent</a></nav>
+      <nav className="trade-nav" aria-label="Main navigation"><a href="/trade">Trade</a><a className="nav-active" href="/markets">Markets</a><a href="/lp">LP</a><a href="#agent">AI agent</a></nav>
       <div className="header-right"><button className="account-button" title={`${session?.walletName ?? 'Wallet'} · ${chainName}`} onClick={() => setWalletModalOpen(true)}><img className="account-avatar wallet-chain-avatar connected-wallet-icon" src={walletIcon} alt=""/><span className="account-address">{session ? `${session.address.slice(0, 6)}...${session.address.slice(-4)}` : 'Connect wallet'}</span></button></div>
     </header>
 
@@ -75,6 +75,6 @@ function MarketsPage() {
     </main>
 
     <footer className="trade-statusbar"><span className="status-spacer"/><a className="footer-link" href="https://docs.afterbellfx.xyz" target="_blank" rel="noreferrer">Docs</a><span>© Afterbell 2026</span></footer>
-    {walletModalOpen && session && <div className="risk-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setWalletModalOpen(false) }}><section className="wallet-detail-modal risk-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title"><header className="risk-modal-header"><div><h2 id="wallet-modal-title">Connected wallet</h2></div><button className="drawer-close" aria-label="Close wallet details" onClick={() => setWalletModalOpen(false)}>×</button></header><div className="wallet-detail-content"><div className="wallet-detail-chain"><img src={chainIcon} alt=""/><span>{chainName} wallet</span></div><div className="wallet-detail-identity"><img src={walletIcon} alt=""/><span>{session.walletName}</span></div><div className="wallet-detail-address"><span>{session.address}</span><button onClick={() => void navigator.clipboard.writeText(session.address).then(() => showToast('success', 'Wallet address copied.')).catch(() => showToast('error', 'Could not copy the wallet address.'))}>Copy</button></div><button className="wallet-disconnect" onClick={() => { void disconnect(); window.location.assign('/') }}>Disconnect</button></div></section></div>}
+    {walletModalOpen && session && <WalletDetailsModal session={session} onClose={() => setWalletModalOpen(false)} onCopy={copyWalletAddress} onDisconnect={disconnectWallet} />}
   </div>
 }

@@ -40,6 +40,15 @@ class Service {
     Json::Value ownerStatus(const std::string &accountId) const;
     Json::Value marketSnapshot(const std::string &marketId) const;
     Json::Value accountBalance(const std::string &accountId) const;
+    Json::Value nearWalletBalance(const std::string &address) const;
+    Json::Value liquidityOverview(const std::string &accountId) const;
+    Json::Value liquidityDepositPayload(const Json::Value &request) const;
+    Json::Value submitLiquidityDeposit(const Json::Value &request);
+    Json::Value liquidityWithdrawalPayload(const Json::Value &request) const;
+    Json::Value submitLiquidityWithdrawal(const Json::Value &request);
+    Json::Value completeLiquidityWithdrawal(const std::string &accountId);
+    Json::Value accountWithdrawalPayload(const Json::Value &request) const;
+    Json::Value submitAccountWithdrawal(const Json::Value &request);
     Json::Value ownerRegistrationPayload(const Json::Value &request) const;
     Json::Value registerOwner(const Json::Value &request);
     Json::Value agentSetupPayload(const Json::Value &request) const;
