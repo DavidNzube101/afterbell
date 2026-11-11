@@ -123,7 +123,18 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
         <span>{latest ? 'Collecting more A1 price updates to build the chart.' : 'Waiting for fresh market price data.'}</span>
       </div> : <>
         <Chart ref={chartRef} className="oracle-candlestick-chart" width="auto" height="auto" data={candles} granularity={chartGranularity[range]} backgroundColor="#10161f" theme={chartTheme} grid={{ time: { color: '#10161f', width: 1 }, value: { color: '#121923', width: 1 } }} scaleSmoothing initialScrollToLatest enableScroll enableZoom>
-          <Panel id="price" heightRatio={3}><Candlesticks legend={false} /></Panel>
+          <Panel id="price" heightRatio={3}><Candlesticks legend={false} series={{
+            body: {
+              up: { width: 8, backgroundColor: '#18bd83', borderColor: '#18bd83' },
+              down: { width: 8, backgroundColor: '#f05260', borderColor: '#f05260' },
+              flat: { width: 8, backgroundColor: '#8492a3', borderColor: '#8492a3' },
+            },
+            wick: {
+              up: { width: 1, color: '#18bd83' },
+              down: { width: 1, color: '#f05260' },
+              flat: { width: 1, color: '#8492a3' },
+            },
+          }} /></Panel>
           <Panel id="volume" heightRatio={1}><VolumeBars legend={false} /></Panel>
         </Chart>
         {latest && <div className="chart-ohlc" aria-label="Latest candle"><span>O <b>{latest.open.toFixed(2)}</b></span><span>H <b>{latest.high.toFixed(2)}</b></span><span>L <b>{latest.low.toFixed(2)}</b></span><span>C <b>{latest.close.toFixed(2)}</b></span></div>}
