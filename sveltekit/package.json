@@ -12,6 +12,14 @@
   "dependencies": {
     "@sveltejs/adapter-vercel": "^7.0.2",
     "@sveltejs/kit": "^3.2.0",
+    "@near-js/transactions": "^2.5.1",
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/hot-wallet": "^10.1.4",
+    "@near-wallet-selector/meteor-wallet": "^10.1.4",
+    "@near-wallet-selector/nightly": "^10.1.4",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
+    "simple-icons": "^16.36.0",
     "svelte": "^5.57.3"
   },
   "devDependencies": {
