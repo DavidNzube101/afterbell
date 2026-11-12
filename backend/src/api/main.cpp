@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -20,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -399,14 +401,23 @@ int main() {
             "/v1/markets/snapshot",
             [markets, tradingService](const drogon::HttpRequestPtr &, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 Json::Value body(Json::arrayValue);
+                std::vector<std::future<Json::Value>> snapshots;
+                snapshots.reserve(markets.size());
                 for (const auto &market : markets) {
                     const auto id = market["symbol"].asString();
-                    try {
-                        if (!tradingService) throw std::runtime_error("Perpetual trading reads are disabled");
-                        body.append(tradingService->marketSnapshot(id));
-                    }
-                    catch (const std::exception &error) { Json::Value item; item["market_id"] = id; item["error"] = error.what(); body.append(item); }
+                    snapshots.push_back(std::async(std::launch::async, [tradingService, id] {
+                        try {
+                            if (!tradingService) throw std::runtime_error("Perpetual trading reads are disabled");
+                            return tradingService->marketSnapshot(id);
+                        } catch (const std::exception &error) {
+                            Json::Value item;
+                            item["market_id"] = id;
+                            item["error"] = error.what();
+                            return item;
+                        }
+                    }));
                 }
+                for (auto &snapshot : snapshots) body.append(snapshot.get());
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             }, {drogon::Get});
         drogon::app().registerHandler(

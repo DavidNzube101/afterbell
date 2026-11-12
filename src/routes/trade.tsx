@@ -371,7 +371,7 @@ function TradingPage() {
       setMetricsLoadedMarket(null)
     }
     const tasks = [
-      getSnapshots().then(data => setSnapshots(data)),
+      getSnapshots().then(data => setSnapshots(Array.isArray(data) ? data : [])),
       getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))),
       getMarketHistory(market.ticker, chartRange).then(data => { setPricePoints(data.points); setVolumePoints(data.volume_points ?? []); setHistoryStartMs(data.history_start_ms) }),
       getPositions(session.accountId).then(data => setPositions(data.positions)),

@@ -27,7 +27,15 @@ export type NotificationRecord = ActivityRecord
 export type LiquidityOverview = { account_id: string; balance_usdc: string; lp_shares: string; total_lp_shares: string; vault_nav_usdc: string; available_liquidity_usdc: string; vault_balance_usdc: string; withdrawal_request: null | { shares: string; min_amount_usdc: string; requested_at_ms: number } }
 export type SignedActionPayload = { account_id: string; message: string; nonce: number; expires_at_ms: number; recipient: string; amount_usdc?: string; shares?: string; min_amount_usdc?: string }
 
-export const getSnapshots = () => request<MarketSnapshot[]>('/v1/markets/snapshot')
+export async function getSnapshots(): Promise<MarketSnapshot[]> {
+  const data = await request<unknown>('/v1/markets/snapshot')
+  if (!Array.isArray(data)) throw new Error('Market snapshot API returned an invalid response')
+  return data.filter((item): item is MarketSnapshot =>
+    typeof item === 'object' && item !== null &&
+    typeof (item as MarketSnapshot).market_id === 'string' &&
+    !('error' in item)
+  )
+}
 export const getMarketHistory = (market: string, range = '1d') => request<{ points: PricePoint[]; volume_points: VolumePoint[]; history_start_ms: number | null }>(`/v1/markets/history?${params({ market_id: market, range })}`)
 export const getMarketVolumes = () => request<Array<{ market_id: string; volume_usdc_raw: string }>>('/v1/markets/volume')
 export const getLiquidityOverview = (account: string) => request<LiquidityOverview>(`/v1/liquidity/overview?${params({ account_id: account })}`)
