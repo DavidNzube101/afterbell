@@ -79,7 +79,12 @@
 				username = result.username; localStorage.setItem(claimedUsernameKey(current.accountId), 'true'); step = 1; dismissToast(toast); showToast('success', `Welcome back, ${result.username}.`)
 			} else {
 				const availability = await checkAccountUsername(current.accountId, username.trim())
-				if (!availability.valid || !availability.available) throw new Error('That username is taken or reserved. Choose another one.')
+				if (!availability.valid) throw new Error('Use 3–20 lowercase letters, numbers, or underscores for your username.')
+				if (!availability.available) {
+					if (availability.reason === 'wallet_has_username') throw new Error(`This wallet already has the username @${availability.existingUsername}. Use that name, or connect another wallet.`)
+					if (availability.reason === 'waitlist_reserved') throw new Error('That username is reserved. Choose “Reclaim waitlist name” to claim it.')
+					throw new Error('That username is already taken. Choose another one.')
+				}
 				const result = await claimAccountUsername({ account_id: current.accountId, username: username.trim() })
 				username = result.username; localStorage.setItem(claimedUsernameKey(current.accountId), 'true'); step = 1; dismissToast(toast); showToast('success', result.status === 'already_claimed' ? 'Your username is ready.' : 'Username claimed.')
 			}

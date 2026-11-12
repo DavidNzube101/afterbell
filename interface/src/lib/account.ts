@@ -25,9 +25,19 @@ export async function checkAccountUsername(accountId: string, username: string, 
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new Error('Could not check username availability.')
   }
-  const result = await response.json().catch(() => ({})) as ApiError & { valid?: boolean; available?: boolean }
+  const result = await response.json().catch(() => ({})) as ApiError & {
+    valid?: boolean
+    available?: boolean
+    reason?: 'available' | 'already_claimed' | 'wallet_has_username' | 'taken' | 'waitlist_reserved'
+    existing_username?: string
+  }
   if (!response.ok) throw new Error(result.error?.message || `Username check failed (${response.status}).`)
-  return { valid: result.valid === true, available: result.available === true }
+  return {
+    valid: result.valid === true,
+    available: result.available === true,
+    reason: result.reason,
+    existingUsername: result.existing_username,
+  }
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {

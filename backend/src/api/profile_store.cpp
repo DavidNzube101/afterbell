@@ -93,16 +93,31 @@ Json::Value ProfileStore::checkUsername(const std::string &accountId, const std:
 
     Connection connection(databaseUrl_);
     auto *result = connection.query(
-        "SELECT NOT EXISTS ("
-        "SELECT 1 FROM afterbell_user_profiles p WHERE lower(p.username) = lower($1) AND p.account_id <> $2 "
-        "UNION ALL "
-        "SELECT 1 FROM waitlist_signups w WHERE lower(w.username) = lower($1) "
-        "AND NOT EXISTS (SELECT 1 FROM afterbell_user_profiles p WHERE p.account_id = $2 AND lower(p.username) = lower($1))"
-        ") AND NOT EXISTS (SELECT 1 FROM afterbell_user_profiles p WHERE p.account_id = $2 AND lower(p.username) <> lower($1))",
-        {username, accountId});
+        "SELECT username FROM afterbell_user_profiles WHERE account_id = $1 LIMIT 1",
+        {accountId});
     response["valid"] = true;
-    response["available"] = PQntuples(result) == 1 && std::string(PQgetvalue(result, 0, 0)) == "t";
+    if (PQntuples(result) != 0) {
+        const std::string currentUsername = PQgetvalue(result, 0, 0);
+        PQclear(result);
+        const bool sameUsername = currentUsername == username;
+        response["available"] = sameUsername;
+        response["reason"] = sameUsername ? "already_claimed" : "wallet_has_username";
+        response["existing_username"] = currentUsername;
+        return response;
+    }
     PQclear(result);
+
+    result = connection.query(
+        "SELECT EXISTS (SELECT 1 FROM afterbell_user_profiles WHERE lower(username) = lower($1)) AS claimed, "
+        "EXISTS (SELECT 1 FROM waitlist_signups WHERE lower(username) = lower($1)) AS reserved",
+        {username});
+    const bool claimed = PQntuples(result) == 1 && std::string(PQgetvalue(result, 0, 0)) == "t";
+    const bool reserved = PQntuples(result) == 1 && std::string(PQgetvalue(result, 0, 1)) == "t";
+    PQclear(result);
+    response["available"] = !claimed && !reserved;
+    if (claimed) response["reason"] = "taken";
+    else if (reserved) response["reason"] = "waitlist_reserved";
+    else response["reason"] = "available";
     return response;
 }
 
