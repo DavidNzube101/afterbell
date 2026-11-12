@@ -25,12 +25,14 @@
 	let agentPublicKey = $state<AgentPublicKey | null>(null)
 	let isSubmitting = $state(false)
 	let isClaimingUsername = $state(false)
+	const claimedUsernameKey = (accountId: string) => `afterbell.username-claimed.v1:${accountId}`
 
 	onMount(() => {
 		initializeWalletSession()
 		if (!$walletSession) { void goto('/', { replaceState: true }); return }
 		const key = `afterbell.onboarding-draft.v1:${$walletSession.accountId}`
 		try { draft = JSON.parse(localStorage.getItem(key) || '{}') } catch { draft = {} }
+		if (localStorage.getItem(claimedUsernameKey($walletSession.accountId)) === 'true') step = 1
 		usernameMode = draft.usernameMode === 'reclaim' ? 'reclaim' : 'new'
 		selectedMarkets = draft.selectedMarkets ?? ['NVDA', 'AAPL']
 		leverage = draft.leverage ?? 3
@@ -56,6 +58,14 @@
 	function toggleMarket(ticker: string) { selectedMarkets = selectedMarkets.includes(ticker) ? selectedMarkets.filter(item => item !== ticker) : [...selectedMarkets, ticker] }
 	async function copyAddress(address: string) { try { await navigator.clipboard.writeText(address); showToast('success', 'Wallet address copied.') } catch { showToast('error', 'Could not copy the wallet address.') } }
 	async function disconnect() { await import('../../lib/wallet-core').then(m => m.disconnectWallet()); walletModalOpen = false; await goto('/', { replaceState: true }) }
+	async function skipAgentSetup() {
+		const current = session
+		if (!current || step !== 1 || isSubmitting) return
+		localStorage.removeItem(`afterbell.onboarding-required.v1:${current.accountId}`)
+		sessionStorage.removeItem('afterbell.first-time-setup')
+		showToast('success', 'Agent setup skipped. You can finish it later from AI agent.')
+		await goto('/trade')
+	}
 	async function continueSetup() {
 		const current = session
 		if (!current || isClaimingUsername) return
@@ -66,12 +76,12 @@
 		try {
 			if (usernameMode === 'reclaim') {
 				const result = await reclaimAccountUsername({ account_id: current.accountId, email: reclaimEmail.trim() })
-				username = result.username; step = 1; dismissToast(toast); showToast('success', `Welcome back, ${result.username}.`)
+				username = result.username; localStorage.setItem(claimedUsernameKey(current.accountId), 'true'); step = 1; dismissToast(toast); showToast('success', `Welcome back, ${result.username}.`)
 			} else {
 				const availability = await checkAccountUsername(current.accountId, username.trim())
 				if (!availability.valid || !availability.available) throw new Error('That username is taken or reserved. Choose another one.')
 				const result = await claimAccountUsername({ account_id: current.accountId, username: username.trim() })
-				username = result.username; step = 1; dismissToast(toast); showToast('success', result.status === 'already_claimed' ? 'Your username is ready.' : 'Username claimed.')
+				username = result.username; localStorage.setItem(claimedUsernameKey(current.accountId), 'true'); step = 1; dismissToast(toast); showToast('success', result.status === 'already_claimed' ? 'Your username is ready.' : 'Username claimed.')
 			}
 		} catch (error) { dismissToast(toast); showToast('error', error instanceof Error ? error.message : 'Could not claim that username.') }
 		finally { isClaimingUsername = false }
@@ -132,8 +142,8 @@
 				<div class="onboarding-note"><span>The contract enforces these limits on every agent trade.</span></div>
 			</article>
 		</div></div>
-		<div class="onboarding-controls"><button class="onboarding-back" type="button" onclick={() => step = 0} disabled={step === 0}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5m7 7-7-7 7-7"/></svg> Back</button><div class="onboarding-dots" aria-hidden="true"><span class:active={step === 0}></span><span class:active={step === 1}></span></div><button class="onboarding-next" type="button" onclick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername}>{step === 0 ? isClaimingUsername ? 'Checking…' : 'Continue →' : isSubmitting ? 'Setting up…' : 'Finish setup'}</button></div>
-		<p class="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent permissions can be adjusted whenever you need.'}</p>
+		<div class="onboarding-controls"><button class="onboarding-back" type="button" onclick={() => step = 0} disabled={step === 0}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5m7 7-7-7 7-7"/></svg> Back</button><div class="onboarding-dots" aria-hidden="true"><span class:active={step === 0}></span><span class:active={step === 1}></span></div><div class="onboarding-actions">{#if step === 1}<button class="onboarding-skip" type="button" onclick={() => void skipAgentSetup()} disabled={isSubmitting}>Skip for now</button>{/if}<button class="onboarding-next" type="button" onclick={step === 0 ? () => void continueSetup() : () => void finishSetup()} disabled={isSubmitting || isClaimingUsername}>{step === 0 ? isClaimingUsername ? 'Checking…' : 'Continue →' : isSubmitting ? 'Setting up…' : 'Finish setup'}</button></div></div>
+		<p class="onboarding-step-footnote">{step === 0 ? 'You can update your profile details later.' : 'Agent setup is optional. You can come back to it from AI agent.'}</p>
 	</section>
 	{#if walletModalOpen}<WalletDetailsModal {session} onClose={() => walletModalOpen = false} onCopy={copyAddress} onDisconnect={disconnect}/>{/if}
 </main>
