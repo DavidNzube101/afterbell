@@ -8,8 +8,8 @@ networks:
     usdc_token_id: 3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
     active_a1_contract_id: afterbellfx-dev-faucet.testnet
     verified_code:
-      sha256: 778906267ecaeae4b1b779f9b166c0e9c3b4d791e804df0543d220fad728ce26
-      verified_at_block_height: 277423730
+      sha256: 369dd716a4349dd6db44fa66ff17aac79f87992e90244530180db2ca5c86e0c6
+      verified_at_block_height: 277433010
     deployments:
       - component: a1
         release: initial shared ledger
@@ -85,6 +85,14 @@ networks:
         wasm_size_bytes: 687234
         source_commit: 2e5aef7
         deployed_at_utc: 2026-11-12T22:18:40Z
+      - component: a1
+        release: delayed 65% NAV risk configuration
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: 4nhXY6uSA881ySTfiGHgGLtbFED4cU4XiKHKaCcVsmSz
+        wasm_sha256: 369dd716a4349dd6db44fa66ff17aac79f87992e90244530180db2ca5c86e0c6
+        wasm_size_bytes: 695801
+        source_commit: 2272031
+        deployed_at_utc: 2026-11-12T23:50:46.789Z
     state_migrations:
       - component: a1
         method: initialize_protocol_admin
@@ -105,6 +113,37 @@ networks:
             transaction_id: jYFU918oPww9ShyQvkrdzCiqxH3ocAQEgMhyyaPBZfj
             apply_transaction_id: DDaGRjU2Q2EUUyFoPTEkqpNW5y1cYGEvcw4Aam2KzogJ
             result: correct signer active; oracle_signer view verified
+      perp_global_risk:
+        active_config:
+          max_global_net_bps: 1000
+          max_total_oi_bps: 5000
+          max_trader_oi_bps: 50
+        pending_config:
+          max_global_net_bps: 6500
+          max_total_oi_bps: 6500
+          max_trader_oi_bps: 6500
+          transaction_id: 2zRFfyyQBxyzF7tjTqqRK2egtEh9nsF32daRzXjfeahd
+          applies_after_utc: 2026-11-13T00:11:35.841Z
+      perp_market_risk:
+        pending_config:
+          max_market_oi_bps: 6500
+          max_market_skew_bps: 6500
+          markets:
+            AAPL:
+              transaction_id: 5aiiheXbLpD6eGMTebicgHfHWrCHPYZJnrZEkmJLxU5F
+              applies_after_utc: 2026-11-13T00:11:40.597Z
+            GOOGL:
+              transaction_id: G2juFuBAWSn6488Rg6sM3vB8X5jJt4ybHrx82g4GEocY
+              applies_after_utc: 2026-11-13T00:11:44.776Z
+            META:
+              transaction_id: 26J4XtMYJVAxdK2Y2WRU3JKNk7WLvncUPM6i6K7Ydejn
+              applies_after_utc: 2026-11-13T00:11:48.438Z
+            NVDA:
+              transaction_id: 8VP9W2tNoT4MMtm18dF94SHY2YZvRMfnHoJbXgPZRpKN
+              applies_after_utc: 2026-11-13T00:11:52.348Z
+            TSLA:
+              transaction_id: 2yVbYGnbAb8ymJ2EEYBtk5WVXCAqtVRLQ6wAYhJDxPSM
+              applies_after_utc: 2026-11-13T00:11:57.176Z
 
   mainnet:
     network_id: mainnet

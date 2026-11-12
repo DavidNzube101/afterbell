@@ -7,7 +7,7 @@ the directory name is historical and A1 is the product contract.
 
 ## A1 current source
 
-As of 12 Nov 2026, A1 implements the shared ledger, signed NEAR/Solana/Ethereum
+As of 13 Nov 2026, A1 implements the shared ledger, signed NEAR/Solana/Ethereum
 owner actions, NEP-141 deposits and withdrawals, agent records and policies,
 market configuration, quote-authorized trading, a single EOA-signed oracle,
 oracle freshness/deviation circuit breakers, isolated margin, partial and full
@@ -25,13 +25,14 @@ already deployed. The current constructor is `new(usdc_token, protocol_admin)`.
 `protocol_admin` is a NEAR account ID and can be a single-key account controlled
 by one EOA-style signer; it does not require a multisig.
 
-The contract's delays are operation-specific: risk-increasing market changes
-and oracle signer rotations wait 20 minutes; quote signer rotations wait one
-hour (the selected policy); emergency pausing is immediate. The initial signer
-configuration and beta-cap changes are currently immediate. These delays govern
-when staged configuration becomes active, not how long an admin transaction
-takes to sign or submit. A single-key admin account is supported; the contract
-does not impose a blanket 20-minute delay on every admin call.
+The contract's delays are operation-specific: risk-increasing market and
+global risk changes and oracle signer rotations wait 20 minutes; quote signer
+rotations wait one hour (the selected policy); emergency pausing is immediate.
+The initial signer configuration and beta-cap changes are currently immediate.
+These delays govern when staged configuration becomes active, not how long an
+admin transaction takes to sign or submit. A single-key admin account is
+supported; the contract does not impose a blanket 20-minute delay on every
+admin call.
 
 The quote-signed path is a centrally authorized price-fill/accounting model,
 not order-book or AMM matching. The dapp, C++ transaction/API wiring, production
@@ -84,6 +85,7 @@ contain the value.
 | Component | Testnet account | Transaction |
 |---|---|---|
 | A1 shared ledger | `afterbellfx-dev-faucet.testnet` | [Deploy and initialize](https://explorer.testnet.near.org/transactions/5UqcRFyCmQuhPdtrVJhsVhVtBnJgdLAe1JxE9SMRDrVf) |
+| A1 delayed 65% NAV risk configuration | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/4nhXY6uSA881ySTfiGHgGLtbFED4cU4XiKHKaCcVsmSz) · WASM SHA-256 `369dd716a4349dd6db44fa66ff17aac79f87992e90244530180db2ca5c86e0c6` · 695,801 bytes |
 | A1 immediate LP withdrawals | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/9acfJpECaH71LeQ8jggmNW8owDTe1nzZcgZF92hCUuRK) · WASM SHA-256 `778906267ecaeae4b1b779f9b166c0e9c3b4d791e804df0543d220fad728ce26` · 687,234 bytes |
 | A1 shared-signature upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy updated code](https://explorer.testnet.near.org/transactions/7oUEY62WJ9REoxf5MEQkJR2hjr9L2ToTLpeWjfEAxfiT) |
 | A1 agent-foundation upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy agent-record and position reservation code](https://explorer.testnet.near.org/transactions/2Cc8rBcDRerRaehHYH7c2WaypkxrFSMR7Gxn2K3mEAyb) |
