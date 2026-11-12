@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '/api': {
-          target: env.VITE_API_PROXY_TARGET || 'https://testnet.afterbellfx.xyz/api',
+          target: env.VITE_API_PROXY_TARGET || 'https://api.afterbellfx.xyz',
           changeOrigin: true,
           rewrite: path => path.replace(/^\/api/, ''),
         },
