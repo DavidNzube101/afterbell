@@ -31,13 +31,13 @@ export type TradeBootstrapData = {
   marketId: string
   range: string
   snapshots: MarketSnapshot[]
-  volumes: Record<string, string>
-  points: PricePoint[]
-  volumePoints: VolumePoint[]
-  historyStartMs: number | null
-  positions: PositionRecord[]
-  balanceRaw: string
-  depositInstructions: { contract_id: string; token_id: string; network: string }
+  volumes?: Record<string, string>
+  points?: PricePoint[]
+  volumePoints?: VolumePoint[]
+  historyStartMs?: number | null
+  positions?: PositionRecord[]
+  balanceRaw?: string
+  depositInstructions?: { contract_id: string; token_id: string; network: string }
   loadedAt: number
 }
 let tradeBootstrapCache: TradeBootstrapData | null = null
@@ -73,26 +73,12 @@ export const getAccountBalance = (account: string) => request<{ account_id: stri
 export async function preloadTradeDashboard(accountId: string, marketId = 'NVDA', range = '1h') {
   const key = `${accountId}:${marketId}:${range}`
   if (tradeBootstrapPending?.key === key) return tradeBootstrapPending.promise
-  const promise = Promise.all([
-    getSnapshots(),
-    getMarketVolumes(),
-    getMarketHistory(marketId, range),
-    getPositions(accountId),
-    getAccountBalance(accountId),
-    getDepositInstructions(accountId),
-  ]).then(([snapshots, volumeRows, history, positionData, balance, instructions]) => {
+  const promise = getSnapshots().then(snapshots => {
     tradeBootstrapCache = {
       accountId,
       marketId,
       range,
       snapshots,
-      volumes: Object.fromEntries(volumeRows.map(row => [row.market_id, row.volume_usdc_raw])),
-      points: history.points,
-      volumePoints: history.volume_points ?? [],
-      historyStartMs: history.history_start_ms,
-      positions: positionData.positions,
-      balanceRaw: String(balance.balance_usdc),
-      depositInstructions: instructions,
       loadedAt: Date.now(),
     }
   })

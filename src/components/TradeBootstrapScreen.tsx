@@ -7,7 +7,7 @@ export function TradeBootstrapScreen({ error, onRetry }: { error?: string | null
       <img className="trade-bootstrap-logo" src={logo} alt="Afterbell" />
       <span className={`trade-bootstrap-spinner${error ? ' failed' : ''}`} aria-hidden="true" />
       <h1>{error ? 'Could not load Trade' : 'Loading your trading workspace'}</h1>
-      <p>{error || 'Preparing live market data and your account details…'}</p>
+      <p>{error || 'Fetching the latest market prices…'}</p>
       {error && onRetry && <button className="trade-bootstrap-retry" onClick={onRetry}>Try again</button>}
     </div>
   </main>

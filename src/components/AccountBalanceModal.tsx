@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendNearUsdcDeposit, type WalletSession } from '../lib/wallet-session'
 import { formatNear, formatUsdc, usdcToRaw } from '../lib/dashboard'
+import { useToasts } from '../lib/toasts'
 import { UsdcIcon } from './UsdcIcon'
 import hotIcon from '../assets/wallet-icons/hot-wallet.jpeg'
 import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
@@ -27,6 +28,7 @@ const nearWallets = [
 ]
 
 export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, deposit, onClose, onCopy, onWithdraw, onDepositComplete }: Props) {
+  const { showToast } = useToasts()
   const [page, setPage] = useState<Page>('overview')
   const [direction, setDirection] = useState<'next' | 'back'>('next')
   const [amount, setAmount] = useState('')
@@ -53,7 +55,6 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
   function go(next: Page) { setDirection(next === 'overview' || (page === 'deposit-wallet' && next === 'deposit') ? 'back' : 'next'); setFormError(''); setPage(next) }
   async function submitDeposit(event: React.FormEvent) {
     event.preventDefault()
-    setFormError('')
     try {
       if (!deposit) throw new Error('Deposit details could not be loaded. Try again shortly.')
       const entered = depositAmountInput.current?.value ?? ''
@@ -67,7 +68,7 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
       }
       setAmount(nextAmount)
       go('deposit-wallet')
-    } catch (error) { setFormError(error instanceof Error ? error.message : 'Enter a valid deposit amount.') }
+    } catch (error) { showToast('error', error instanceof Error ? error.message : 'Enter a valid deposit amount.') }
   }
   async function chooseDepositWallet(walletName: string) {
     if (!deposit || submitting) return
@@ -109,7 +110,6 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
         {page === 'deposit' && <form className="balance-deposit-page" onSubmit={submitDeposit}>
           <label className="deposit-amount-label">Amount to deposit<div className="deposit-amount-input"><input ref={depositAmountInput} autoFocus inputMode="decimal" maxLength={25} defaultValue={amount} placeholder="0.00" aria-label="USDC deposit amount"/><UsdcIcon size={19}/><span>USDC</span></div></label>
           <p className="deposit-note">Deposit NEAR USDC into your Afterbell account. You’ll choose a NEAR wallet to approve the transfer.</p>
-          {formError && <p className="balance-error" role="alert">{formError}</p>}
           <button className="balance-primary-action" disabled={!deposit}>Continue</button>
         </form>}
         {page === 'deposit-wallet' && <div className="deposit-wallet-page">
