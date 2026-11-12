@@ -1,0 +1,18 @@
+.onboarding-wallet-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: #03070bd1; animation: onboarding-wallet-fade 140ms ease-out both; }
+.onboarding-wallet-modal { width: min(100%, 430px); padding: 22px; border: 1px solid #111720; border-radius: 15px; background: #111720; box-shadow: 0 24px 80px #0008; animation: onboarding-wallet-rise 180ms cubic-bezier(.2,.8,.2,1) both; }
+.onboarding-wallet-modal header { min-height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
+.onboarding-wallet-modal dl { display: grid; gap: 14px; margin: 22px 0; }
+.onboarding-wallet-modal dl > div { display: grid; gap: 5px; }
+.onboarding-wallet-modal dt { color: #778392; font-size: 11px; }
+.onboarding-wallet-modal dd { margin: 0; color: #e8edf3; font-size: 13px; }
+.onboarding-wallet-value { display: flex; align-items: center; gap: 8px; }
+.onboarding-wallet-value img { width: 20px; height: 20px; flex: 0 0 auto; border-radius: 5px; object-fit: cover; }
+.onboarding-wallet-address { overflow-wrap: anywhere; font-size: 11px !important; line-height: 1.5; }
+.onboarding-wallet-close { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #111720; border-radius: 7px; background: #111720; color: #9aa4b0; font-size: 21px; line-height: 1; cursor: pointer; }
+.onboarding-wallet-modal footer { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.onboarding-wallet-modal footer button { min-height: 40px; border: 1px solid #0065d2; border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.onboarding-wallet-copy { background: #0065d2; color: white; }
+.onboarding-wallet-disconnect { border-color: #252f3b !important; background: #0c1016; color: #c4ccd5; }
+@keyframes onboarding-wallet-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes onboarding-wallet-rise { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (max-width: 540px) { .onboarding-wallet-backdrop { padding: 12px; } .onboarding-wallet-modal { padding: 20px; } }

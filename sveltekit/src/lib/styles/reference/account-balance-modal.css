@@ -1,0 +1,92 @@
+.balance-modal-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 18px; background: #03070de8; animation: balance-backdrop-in .16s ease-out both; }
+.balance-modal { width: min(440px, 100%); max-height: min(760px, calc(100dvh - 36px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #111720; border-radius: 16px; background: #111720; box-shadow: 0 24px 80px #0009; }
+.balance-modal-header { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 19px; border-bottom: 1px solid #1a232d; }
+.balance-modal-header > div { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.balance-modal-header h2 { margin: 0; color: #f0f4f8; font-size: 16px; font-weight: 600; letter-spacing: -.02em; }
+.balance-modal-header p { margin: 4px 0 0; color: #82909e; font-size: 10px; }
+.balance-close, .balance-back { width: 32px; height: 32px; flex: 0 0 auto; display: grid; place-items: center; border: 0; border-radius: 8px; background: #171f29; color: #aab5c0; font-size: 20px; }
+.balance-back { font-size: 17px; }
+.balance-close:hover, .balance-back:hover { background: #202a36; color: white; }
+.balance-carousel { min-height: 0; overflow-y: auto; animation: balance-slide-next .22s cubic-bezier(.2,.75,.25,1) both; }
+.balance-carousel.back { animation-name: balance-slide-back; }
+.balance-overview-page, .balance-deposit-page, .balance-withdraw-page { padding: 20px; }
+.balance-main-value { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 11px; background: #171f29; }
+.balance-main-value > div { display: grid; gap: 5px; }
+.balance-main-value span, .balance-sub-value > span { color: #8492a1; font-size: 10px; }
+.balance-main-value strong { color: #f0f4f8; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.balance-sub-value { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 2px; border-bottom: 1px solid #1a232d; }
+.balance-sub-value b { color: #d0dae4; font-size: 11px; font-weight: 550; font-variant-numeric: tabular-nums; }
+.balance-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.balance-actions button { min-height: 72px; display: flex; align-items: center; gap: 10px; padding: 14px; border: 0; border-radius: 10px; background: #171f29; color: #dce5ed; text-align: left; }
+.balance-actions button:hover { background: #1e2a37; }
+.balance-actions button > span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: #102b48; color: #83bfff; font-size: 16px; }
+.balance-actions button b { font-size: 12px; font-weight: 580; }
+.balance-account-id { display: grid; gap: 5px; margin: 18px 0 0; color: #788695; font-size: 9px; }
+.balance-account-id b { overflow-wrap: anywhere; color: #aeb9c5; font-size: 10px; font-weight: 500; }
+.deposit-qr { width: 194px; height: 194px; display: grid; place-items: center; margin: 0 auto 13px; border-radius: 12px; background: white; }
+.deposit-qr img { width: 178px; height: 178px; image-rendering: pixelated; }
+.deposit-qr span { color: #53606c; font-size: 10px; }
+.deposit-network { margin: 0 0 18px; color: #b4c2cf; font-size: 10px; font-weight: 600; text-align: center; }
+.deposit-address-label, .deposit-info > span { margin-bottom: 5px; color: #788695; font-size: 9px; }
+.deposit-copy-address, .deposit-info button { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border: 0; border-radius: 8px; background: #171f29; color: #d4dde6; font-size: 10px; text-align: left; overflow-wrap: anywhere; }
+.deposit-copy-address span, .deposit-info button b { flex: 0 0 auto; color: #80baff; font-size: 9px; font-weight: 550; }
+.deposit-info { display: grid; gap: 5px; margin-top: 11px; }
+.deposit-info button { max-height: 53px; overflow: auto; }
+.deposit-warning, .withdraw-note { margin: 14px 0 0; padding: 10px; border-radius: 8px; background: #1b2024; color: #b9aa86; font-size: 9px; line-height: 1.55; }
+.deposit-warning code { color: #ded3b7; font-family: inherit; }
+.balance-deposit-page { display: grid; align-content: start; gap: 15px; }
+.deposit-amount-label { display: grid; gap: 8px; color: #9eabb8; font-size: 11px; }
+.deposit-amount-input { width: 100%; height: 54px; display: flex; align-items: center; gap: 9px; padding: 0 13px; border: 0; border-radius: 10px; background: #171f29; }
+.deposit-amount-input:focus-within { box-shadow: 0 0 0 1px #345372; }
+.deposit-amount-input input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #f1f5f8; font: inherit; font-size: 21px; font-variant-numeric: tabular-nums; }
+.deposit-amount-input input::placeholder { color: #586675; }
+.deposit-amount-input > span { color: #c4cfda; font-size: 11px; }
+.deposit-note { margin: 0; color: #8794a2; font-size: 10px; line-height: 1.6; }
+.balance-deposit-page .balance-primary-action { width: 100%; margin-top: 2px; }
+.deposit-wallet-page { display: grid; align-content: start; gap: 16px; padding: 20px; }
+.deposit-network-heading { display: flex; align-items: center; gap: 11px; padding: 2px 1px 5px; }
+.near-network-icon { display: block; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 11px; object-fit: cover; }
+.deposit-network-heading > div { display: grid; gap: 4px; }
+.deposit-network-heading b { color: #f0f4f8; font-size: 14px; font-weight: 580; }
+.deposit-network-heading small { color: #8995a2; font-size: 11px; }
+.deposit-wallet-options { display: grid; gap: 9px; }
+.deposit-wallet-option { width: 100%; min-height: 58px; display: flex; align-items: center; gap: 13px; padding: 11px 13px; border: 1px solid #151c25; border-radius: 12px; background: #151c25; color: #f4f6f8; text-align: left; cursor: pointer; transition: background 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.deposit-wallet-option:hover:not(:disabled) { transform: translateY(-1px); border-color: #1a2531; background: #1a2531; }
+.deposit-wallet-option:disabled { cursor: wait; opacity: .58; }
+.deposit-wallet-option img { display: block; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; object-fit: cover; }
+.deposit-wallet-option > span { flex: 1; font-size: 13px; font-weight: 520; }
+.deposit-wallet-option svg { width: 17px; height: 17px; color: #75818f; }
+.deposit-selected-amount { display: flex; align-items: center; gap: 7px; margin: 2px 0 0; padding: 11px; border-radius: 9px; background: #171f29; color: #9aa7b4; font-size: 10px; }
+.deposit-selected-amount b { color: #e4ebf1; font-weight: 600; }
+.deposit-selected-amount > span { margin-left: auto; overflow: hidden; max-width: 145px; text-overflow: ellipsis; white-space: nowrap; }
+.deposit-progress { display: flex; align-items: center; gap: 8px; margin: 0; color: #a9bacb; font-size: 10px; }
+.deposit-progress span { width: 7px; height: 7px; border-radius: 50%; background: #0065d2; animation: deposit-wait 1s ease-in-out infinite alternate; }
+.deposit-complete { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.deposit-complete-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: #123327; color: #52d49b; font-size: 20px; }
+.deposit-complete h3 { margin: 0; color: #eef4f8; font-size: 15px; font-weight: 600; }
+.deposit-complete > p { margin: 0; color: #8794a2; font-size: 10px; line-height: 1.6; }
+.deposit-complete > p b { color: #d6e0e8; font-weight: 550; }
+.deposit-complete .deposit-copy-address { margin: 3px 0; }
+.deposit-complete .balance-primary-action { width: 100%; margin-top: 2px; }
+.balance-carousel.next { animation: balance-wipe-forward .3s cubic-bezier(.22,.75,.25,1) both; }
+.balance-carousel.back { animation: balance-wipe-backward .3s cubic-bezier(.22,.75,.25,1) both; }
+@keyframes deposit-wait { to { opacity: .35; } }
+@keyframes balance-wipe-forward { from { opacity: .4; transform: translate3d(12px,0,0); } to { opacity: 1; transform: translate3d(0,0,0); } }
+@keyframes balance-wipe-backward { from { opacity: .4; transform: translate3d(-12px,0,0); } to { opacity: 1; transform: translate3d(0,0,0); } }
+.balance-withdraw-page { display: grid; gap: 15px; }
+.withdraw-available { display: flex; justify-content: space-between; gap: 10px; padding: 12px; border-radius: 8px; background: #171f29; color: #8a97a5; font-size: 10px; }
+.withdraw-available b { color: #dce5ee; font-weight: 550; }
+.balance-withdraw-page label { display: grid; gap: 7px; color: #9eabb8; font-size: 10px; }
+.balance-withdraw-page label > input, .withdraw-amount-input { width: 100%; height: 43px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: 8px; outline: none; background: #171f29; color: #edf3f8; font: inherit; font-size: 12px; }
+.balance-withdraw-page label > input:focus, .withdraw-amount-input:focus-within { box-shadow: 0 0 0 1px #345372; }
+.withdraw-amount-input input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #edf3f8; font: inherit; font-size: 15px; font-variant-numeric: tabular-nums; }
+.withdraw-amount-input > span { color: #bdc8d3; font-size: 10px; }
+.withdraw-amount-input button { padding: 4px 6px; border: 0; border-radius: 5px; background: #202d3a; color: #85bbf0; font-size: 9px; }
+.withdraw-note { margin: -3px 0 0; background: #171f29; color: #8996a3; }
+.balance-primary-action { height: 42px; border: 0; border-radius: 8px; background: #0065d2; color: white; font-size: 11px; font-weight: 600; }
+.balance-primary-action:disabled { opacity: .5; cursor: wait; }
+.balance-error { margin: 0; color: #ff9ba4; font-size: 10px; line-height: 1.5; }
+@keyframes balance-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes balance-slide-next { from { opacity: .55; transform: translateX(22px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes balance-slide-back { from { opacity: .55; transform: translateX(-22px); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .balance-modal-backdrop, .balance-carousel, .deposit-progress span { animation-duration: .01ms; } }
