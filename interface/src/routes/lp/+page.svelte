@@ -2,10 +2,11 @@
 	import { onMount } from 'svelte'
 	import { goto } from '$app/navigation'
 	import DashboardHeader from '../../lib/DashboardHeader.svelte'
+	import AccountBalanceModal from '../../lib/AccountBalanceModal.svelte'
 	import UsdcIcon from '../../lib/UsdcIcon.svelte'
 	import { initializeWalletSession, walletSession, signWalletMessage } from '../../lib/wallet-core'
-	import { showToast } from '../../lib/toasts'
-	import { completeLpWithdrawal, formatUsdc, getDepositPayload, getLiquidityOverview, getLpWithdrawalPayload, submitDeposit, submitLpWithdrawal, usdcToRaw, walletPayload, type LiquidityOverview } from '../../lib/dashboard'
+	import { dismissToast, showToast } from '../../lib/toasts'
+	import { completeLpWithdrawal, formatUsdc, getAccountWithdrawalPayload, getDepositPayload, getLiquidityOverview, getLpWithdrawalPayload, submitAccountWithdrawal, submitDeposit, submitLpWithdrawal, usdcToRaw, walletPayload, type LiquidityOverview } from '../../lib/dashboard'
 
 	const COOLDOWN_MS = 24 * 60 * 60 * 1000
 	let mode = $state<'add' | 'remove'>('add')
@@ -14,11 +15,14 @@
 	let overview = $state<LiquidityOverview | null>(null)
 	let loading = $state(true)
 	let submitting = $state(false)
+	let balanceModalOpen = $state(false)
 	let now = $state(Date.now())
 	let active = false
 	let timer: number | undefined
 	let clock: number | undefined
 	let request = $derived(overview?.withdrawal_request ?? null)
+	let balanceRaw = $derived(overview?.balance_usdc ?? null)
+	let balance = $derived(balanceRaw === null ? null : Number(balanceRaw) / 1_000_000)
 	let unlockAt = $derived(request ? request.requested_at_ms + COOLDOWN_MS : 0)
 	let cooldownRemaining = $derived(Math.max(0, unlockAt - now))
 	let cooldownText = $derived(`${Math.floor(cooldownRemaining / 3_600_000)}h ${Math.floor(cooldownRemaining % 3_600_000 / 60_000)}m`)
@@ -67,7 +71,7 @@
 			const payload = await getDepositPayload(session.accountId, raw)
 			const signature = await signWalletMessage(walletPayload(payload.message, payload.nonce, payload.recipient))
 			const result = await submitDeposit({ ...payload, signature })
-			dismiss(toast)
+			dismissToast(toast)
 			showToast('success', `Liquidity added. Transaction ${result.transaction_hash.slice(0, 10)}…`)
 			amount = ''
 			await refresh(false)
@@ -88,7 +92,7 @@
 			const payload = await getLpWithdrawalPayload(session.accountId, shares, min)
 			const signature = await signWalletMessage(walletPayload(payload.message, payload.nonce, payload.recipient))
 			const result = await submitLpWithdrawal({ ...payload, signature })
-			dismiss(toast)
+			dismissToast(toast)
 			showToast('success', `Withdrawal requested. Transaction ${result.transaction_hash.slice(0, 10)}…`)
 			amount = ''
 			await refresh(false)
@@ -102,20 +106,28 @@
 			submitting = true
 			const toast = showToast('waiting', 'Completing your LP withdrawal.', 0)
 			const result = await completeLpWithdrawal(session.accountId)
-			dismiss(toast)
+			dismissToast(toast)
 			showToast('success', `Withdrawal completed. Transaction ${result.transaction_hash.slice(0, 10)}…`)
 			await refresh(false)
 		} catch (error) { showToast('error', error instanceof Error ? error.message : 'Could not complete the withdrawal.') }
 		finally { submitting = false }
 	}
-	function dismiss(id: number) { import('../../lib/toasts').then(module => module.dismissToast(id)) }
+	async function withdrawFromAccount(amount: string, receiver: string) {
+		const session = $walletSession
+		if (!session) throw new Error('Connect a wallet before withdrawing.')
+		const payload = await getAccountWithdrawalPayload(session.accountId, receiver, usdcToRaw(amount))
+		const signature = await signWalletMessage(walletPayload(payload.message, payload.nonce, payload.recipient))
+		const result = await submitAccountWithdrawal({ ...payload, signature })
+		showToast('success', `Withdrawal submitted. Transaction ${result.transaction_hash.slice(0, 8)}…`)
+		await refresh(false)
+	}
 </script>
 
 <svelte:head><title>Liquidity | Afterbell</title><meta name="description" content="Provide liquidity to the Afterbell shared vault." /></svelte:head>
 
 {#if $walletSession}
 <div class="trade-app lp-page">
-	<DashboardHeader active="LP" />
+	<DashboardHeader active="LP" {balance} balanceLoaded={!loading} onBalanceClick={() => balanceModalOpen = true} />
 	<main class="lp-content">
 		<section class="lp-heading"><div><h1>Provide liquidity. Share the risk.</h1><p>Deposit USDC from your Afterbell account into the shared vault and receive LP shares. Share value follows the vault’s net asset value.</p></div></section>
 		<section class="lp-stats" aria-label="Vault overview"><article><span>Vault NAV</span><strong>{#if loading}<i class="metric-skeleton"></i>{:else}${formatUsdc(overview?.vault_nav_usdc)}{/if}</strong><small>USDC</small></article><article><span>Available liquidity</span><strong>{#if loading}<i class="metric-skeleton"></i>{:else}${formatUsdc(overview?.available_liquidity_usdc)}{/if}</strong><small>USDC</small></article><article><span>Your LP shares</span><strong>{#if loading}<i class="metric-skeleton"></i>{:else}{formatUsdc(overview?.lp_shares)}{/if}</strong><small>Share balance</small></article></section>
@@ -134,5 +146,6 @@
 		</section>
 	</main>
 	<footer class="trade-statusbar"><span class="status-spacer"></span><a class="footer-link" href="https://docs.afterbellfx.xyz" target="_blank" rel="noreferrer">Docs</a><span>© Afterbell 2026</span></footer>
+	{#if balanceModalOpen && $walletSession}<AccountBalanceModal session={$walletSession} {balanceRaw} balanceLoaded={!loading} onClose={() => balanceModalOpen = false} onCopy={async value => { try { await navigator.clipboard.writeText(value); showToast('success', 'Copied to clipboard.') } catch { showToast('error', 'Could not copy to clipboard.') } }} onWithdraw={withdrawFromAccount} onDepositComplete={() => refresh(false)}/>{/if}
 </div>
 {/if}

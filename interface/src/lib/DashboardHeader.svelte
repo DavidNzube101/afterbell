@@ -28,7 +28,7 @@
 	<nav class="trade-nav" aria-label="Main navigation"><a class:nav-active={active === 'Trade'} href="/trade">Trade</a><a class:nav-active={active === 'Markets'} href="/markets">Markets</a><a class:nav-active={active === 'LP'} href="/lp">LP</a><a href="/setting-up">AI agent</a></nav>
 	<div class="header-right">
 		{#if active === 'Trade'}<button class="icon-button header-bell" aria-label="Notifications" onclick={onNotificationsClick}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>{#if notificationCount}<span class="notification-count">{notificationCount}</span>{/if}</button>{/if}
-		{#if active === 'Trade'}<button class="account-balance-widget" onclick={onBalanceClick}><UsdcIcon size={18}/>{#if !balanceLoaded}<span class="balance-widget-skeleton"></span>{:else}{balance === null ? 'Unavailable' : money(balance)}{/if}</button>{/if}
+		{#if active === 'Trade' || active === 'LP'}<button class="account-balance-widget" onclick={onBalanceClick}><UsdcIcon size={18}/>{#if !balanceLoaded}<span class="balance-widget-skeleton"></span>{:else}{balance === null ? 'Unavailable' : money(balance)}{/if}</button>{/if}
 		{#if session}<button class="account-button" title={`${session.walletName} · ${session.chain}`} onclick={() => detailsOpen = true}><img class="account-avatar wallet-chain-avatar connected-wallet-icon" src={`/assets/wallet-icons/${walletImage(session.walletName)}`} alt=""/><span class="account-address">{session.address.slice(0, 6)}...{session.address.slice(-4)}</span></button>{/if}
 	</div>
 </header>
