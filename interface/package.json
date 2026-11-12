@@ -10,8 +10,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@sveltejs/adapter-vercel": "^7.0.2",
-    "@sveltejs/kit": "^3.2.0",
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.3",
     "@near-js/transactions": "^2.5.1",
     "@near-wallet-selector/core": "^10.1.4",
     "@near-wallet-selector/hot-wallet": "^10.1.4",
@@ -20,12 +20,12 @@
     "bs58": "^6.0.0",
     "buffer": "^6.0.3",
     "simple-icons": "^16.36.0",
-    "svelte": "^5.57.3"
+    "svelte": "5.57.2"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "svelte-check": "^4.3.3",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "@sveltejs/vite-plugin-svelte": "5.1.1",
+    "svelte-check": "4.7.7",
+    "typescript": "5.9.3",
+    "vite": "6.4.4"
   }
 }

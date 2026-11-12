@@ -1,35 +1,15 @@
 {
-  "name": "afterbell-dapp",
+  "name": "afterbell-frontend",
   "private": true,
   "version": "0.1.0",
   "packageManager": "bun@1.4.2",
-  "type": "module",
+  "workspaces": [
+    "interface"
+  ],
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build && tsc -b",
-    "preview": "vite preview --host 0.0.0.0",
-    "typecheck": "tsc -b --pretty false"
-  },
-  "dependencies": {
-    "@near-js/transactions": "^2.5.1",
-    "@near-wallet-selector/core": "^10.1.4",
-    "@near-wallet-selector/hot-wallet": "^10.1.4",
-    "@near-wallet-selector/meteor-wallet": "^10.1.4",
-    "@near-wallet-selector/nightly": "^10.1.4",
-    "@tanstack/react-router": "^1.170.46",
-    "bs58": "^6.0.0",
-    "buffer": "^6.0.3",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "simple-icons": "^16.36.0"
-  },
-  "devDependencies": {
-    "@tanstack/router-plugin": "^1.168.48",
-    "@types/node": "^26.6.6",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.2.1",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "dev": "bun run --cwd interface node_modules/vite/bin/vite.js dev --host 0.0.0.0",
+    "build": "bun run --cwd interface node_modules/vite/bin/vite.js build",
+    "preview": "bun run --cwd interface node_modules/vite/bin/vite.js preview --host 0.0.0.0",
+    "typecheck": "bun run --cwd interface node_modules/svelte-check/bin/svelte-check --tsconfig ./tsconfig.json"
   }
 }

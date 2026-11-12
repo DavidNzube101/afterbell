@@ -34,6 +34,8 @@ dist/
 /mock_data.json
 /scripts/check_oracle_chart.py
 .output/
+.svelte-kit/
+.vercel/
 .tanstack/
 .vite/
 .turbo/
@@ -52,6 +54,8 @@ contracts/jjwin.testnet.json
 landing-server/
 # Local project goals and working notes
 /goal.md
+/LOCAL_HANDOFF.md
+/FRONTEND_MIGRATION.md
 contract_audit_report.md
 contracts/contract_audit_report_v2.md
 contracts/contract_audit_report_v3.md

@@ -22,7 +22,8 @@ type Owner = { SolanaEd25519: { public_key: number[] } } | { Ethereum: { address
 export type WalletMessagePayload = { message: string; nonce: string; recipient: string }
 let activeWalletSigner: ((payload: WalletMessagePayload) => Promise<Uint8Array>) | null = null
 let cleanupCurrentWallet: (() => void) | null = null
-if (typeof globalThis.Buffer === 'undefined') globalThis.Buffer = Buffer
+const globalBuffer = globalThis as typeof globalThis & { Buffer?: typeof Buffer }
+if (typeof globalBuffer.Buffer === 'undefined') globalBuffer.Buffer = Buffer
 const SESSION_KEY = 'afterbell.wallet-session.v1'
 const nearNetwork = import.meta.env.VITE_NEAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
 const contractId = import.meta.env.VITE_A1_CONTRACT_ID || (nearNetwork === 'mainnet' ? 'a1.afterbell.near' : 'afterbellfx-dev-faucet.testnet')

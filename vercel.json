@@ -1,6 +1,10 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "bun install",
+  "buildCommand": "bun run build",
+  "outputDirectory": "interface/build",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://api.afterbellfx.xyz/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/200.html" }
   ]
 }

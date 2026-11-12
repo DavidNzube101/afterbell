@@ -1,11 +1,18 @@
 import type { WalletMessagePayload } from './wallet-core'
 
 const root = '/api'
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${root}${path}`, { ...init, headers: { Accept: 'application/json', ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers } })
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 12_000): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs)
+  try {
+  const response = await fetch(`${root}${path}`, { ...init, signal: init?.signal ?? controller.signal, headers: { Accept: 'application/json', ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers } })
   const body = await response.json().catch(() => ({})) as { error?: { message?: string } }
   if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`)
   return body as T
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds`)
+    throw error
+  } finally { clearTimeout(timeout) }
 }
 const json = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) })
 const params = (data: Record<string, string>) => new URLSearchParams(data).toString()
@@ -44,7 +51,7 @@ let tradeBootstrapCache: TradeBootstrapData | null = null
 let tradeBootstrapPending: { key: string; promise: Promise<void> } | null = null
 
 export async function getSnapshots(): Promise<MarketSnapshot[]> {
-  const data = await request<unknown>('/v1/markets/snapshot')
+  const data = await request<unknown>('/v1/markets/snapshot', undefined, 5_000)
   if (!Array.isArray(data)) throw new Error('Market snapshot API returned an invalid response')
   return data.filter((item): item is MarketSnapshot =>
     typeof item === 'object' && item !== null &&
