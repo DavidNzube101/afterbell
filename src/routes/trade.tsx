@@ -367,6 +367,10 @@ function TradingPage() {
   const [leverage, setLeverage] = useState(3)
   const [size, setSize] = useState('250')
   const [payment, setPayment] = useState('100')
+  const orderSizeInputRef = useRef<HTMLInputElement>(null)
+  const marginInputRef = useRef<HTMLInputElement>(null)
+  const limitPriceInputRef = useRef<HTMLInputElement>(null)
+  const limitPriceDraftRef = useRef('')
   const [activeTab, setActiveTab] = useState('Positions')
   const [marketMenu, setMarketMenu] = useState(false)
   const [marketSearch, setMarketSearch] = useState('')
@@ -388,7 +392,6 @@ function TradingPage() {
   const [depositInstructions, setDepositInstructions] = useState<{ contract_id: string; token_id: string; network: string } | null>(() => bootstrap?.depositInstructions ?? null)
   const [balanceModalOpen, setBalanceModalOpen] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
-  const [limitPrice, setLimitPrice] = useState('')
   const [estimatedFee, setEstimatedFee] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [riskOpen, setRiskOpen] = useState(false)
@@ -424,9 +427,22 @@ function TradingPage() {
   const tradingEnabled = Boolean(availableMarkets.find(item => item.ticker === market.ticker)?.tradingEnabled && snapshot?.enabled && !snapshot.close_only)
 
   useEffect(() => {
+    const skipReactSelectionChangeForTradeInputs = (event: Event) => {
+      const active = document.activeElement
+      if (active === orderSizeInputRef.current || active === marginInputRef.current || active === limitPriceInputRef.current) {
+        event.stopImmediatePropagation()
+      }
+    }
+    window.addEventListener('selectionchange', skipReactSelectionChangeForTradeInputs, true)
+    return () => window.removeEventListener('selectionchange', skipReactSelectionChangeForTradeInputs, true)
+  }, [])
+
+  useEffect(() => {
     if (snapshot?.max_leverage_bps && leverage > maxLeverage) {
       setLeverage(maxLeverage)
-      setSize((Number(payment || 0) * maxLeverage).toFixed(2))
+      const nextSize = (Number(marginInputRef.current?.value || payment || 0) * maxLeverage).toFixed(2)
+      setSize(nextSize)
+      if (orderSizeInputRef.current) orderSizeInputRef.current.value = nextSize
     }
   }, [snapshot?.max_leverage_bps, maxLeverage])
 
@@ -554,11 +570,13 @@ function TradingPage() {
     if (!session || submitting) return
     setSubmitting(true)
     try {
-      const notional = Math.round(Number(size) * 1e6)
+      const enteredSize = orderSizeInputRef.current?.value ?? size
+      const enteredLimitPrice = limitPriceInputRef.current?.value ?? limitPriceDraftRef.current
+      const notional = Math.round(Number(enteredSize) * 1e6)
       const base = { account_id: session.accountId, market_id: market.ticker, side, notional_usdc: String(notional), leverage_bps: Math.round(leverage * 10000), max_slippage_bps: 100 }
       if (orderType === 'limit') {
-        if (!Number(limitPrice) || Number(limitPrice) <= 0) throw new Error('Enter a valid limit price.')
-        const draft = { account_id: session.accountId, order_id: `o_${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`, market_id: market.ticker, side, notional_usdc: String(notional), leverage_bps: Math.round(leverage * 10000), limit_price: priceToRaw(Number(limitPrice)), expires_at_ms: Date.now() + 86_400_000 }
+        if (!Number(enteredLimitPrice) || Number(enteredLimitPrice) <= 0) throw new Error('Enter a valid limit price.')
+        const draft = { account_id: session.accountId, order_id: `o_${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`, market_id: market.ticker, side, notional_usdc: String(notional), leverage_bps: Math.round(leverage * 10000), limit_price: priceToRaw(Number(enteredLimitPrice)), expires_at_ms: Date.now() + 86_400_000 }
         const quote = await postTrade<Record<string, any>>('/v1/trade/limits/quote', draft)
         if (quote.fee_usdc != null) setEstimatedFee(usdc(quote.fee_usdc))
         await authorizeAndSubmit('/v1/trade/limits', { ...draft, ...quote }, quote.nonce)
@@ -791,10 +809,10 @@ function TradingPage() {
           <div className="order-card-heading"><h1>Place order</h1></div>
           <div className="side-switch"><button className={side === 'long' ? 'active long-active' : ''} onClick={() => setSide('long')}><span>↗</span> Long</button><button className={side === 'short' ? 'active short-active' : ''} onClick={() => setSide('short')}><span>↘</span> Short</button></div>
           <div className="order-types"><button className={orderType === 'market' ? 'active' : ''} onClick={() => setOrderType('market')}>Market</button><button className={orderType === 'limit' ? 'active' : ''} onClick={() => setOrderType('limit')}>Limit</button><button className="order-info help-trigger" aria-label="Market and limit order help" aria-describedby="tip-order-types">i<span className="trade-tooltip" id="tip-order-types" role="tooltip">Market orders execute promptly at available prices. Limit orders execute only at your limit price or better, and may not fill.</span></button></div>
-          {orderType === 'limit' && <label className="field-label">Limit price<div className="input-wrap"><span>$</span><input inputMode="decimal" value={limitPrice} onChange={event => setLimitPrice(event.target.value)} placeholder="Enter limit price" aria-label="Limit price"/></div></label>}
-          <label className="field-label">Order size<div className="input-wrap"><span>$</span><input inputMode="decimal" value={size} onChange={e => { setSize(e.target.value); setPayment((Number(e.target.value || 0) / leverage).toFixed(2)) }} aria-label="Order size"/><span className="input-unit"><UsdcIcon/>USDC</span></div><small className="input-subtext">Notional size</small></label>
-          <label className="field-label payment-label"><span>Margin</span><span className="available-label">Available <b>{availableBalance === null ? '—' : money(availableBalance)}</b> <button onClick={() => { if (availableBalance !== null) { setPayment(availableBalance.toFixed(2)); setSize((availableBalance * leverage).toFixed(2)) } }}>Max</button></span><div className="input-wrap"><span>$</span><input inputMode="decimal" value={payment} onChange={e => { setPayment(e.target.value); setSize((Number(e.target.value || 0) * leverage).toFixed(2)) }} aria-label="Margin amount"/><span className="input-unit"><UsdcIcon/>USDC</span></div></label>
-          <div className={`leverage-control ${side}`} style={{ '--leverage-progress': `${((leverage - 1) / Math.max(1, maxLeverage - 1)) * 100}%` } as CSSProperties}><div className="leverage-heading"><span>Leverage</span><strong>{leverage.toFixed(1)}×</strong></div><input type="range" min="1" max={maxLeverage} step="0.5" value={Math.min(leverage, maxLeverage)} onChange={e => { const value = Number(e.target.value); setLeverage(value); setSize((Number(payment || 0) * value).toFixed(2)) }} aria-label={`Leverage, maximum ${maxLeverage} times`}/><div className="range-labels">{[1, 3, 5, 7, 10].filter(value => value <= maxLeverage || value === 1).map(value => <span className={leverage >= value ? 'reached' : ''} key={value}>{value}×</span>)}</div></div>
+          {orderType === 'limit' && <label className="field-label">Limit price<div className="input-wrap"><span>$</span><input ref={limitPriceInputRef} inputMode="decimal" autoComplete="off" defaultValue={limitPriceDraftRef.current} onBlur={event => { limitPriceDraftRef.current = event.currentTarget.value }} placeholder="Enter limit price" aria-label="Limit price"/></div></label>}
+          <label className="field-label">Order size<div className="input-wrap"><span>$</span><input ref={orderSizeInputRef} inputMode="decimal" autoComplete="off" maxLength={24} defaultValue={size} onBlur={event => { const nextSize = event.currentTarget.value; const nextPayment = (Number(nextSize || 0) / leverage).toFixed(2); setSize(nextSize); setPayment(nextPayment); if (marginInputRef.current) marginInputRef.current.value = nextPayment }} aria-label="Order size"/><span className="input-unit"><UsdcIcon/>USDC</span></div><small className="input-subtext">Notional size</small></label>
+          <label className="field-label payment-label"><span>Margin</span><span className="available-label">Available <b>{availableBalance === null ? '—' : money(availableBalance)}</b> <button onClick={() => { if (availableBalance !== null) { const nextPayment = availableBalance.toFixed(2); const nextSize = (availableBalance * leverage).toFixed(2); setPayment(nextPayment); setSize(nextSize); if (marginInputRef.current) marginInputRef.current.value = nextPayment; if (orderSizeInputRef.current) orderSizeInputRef.current.value = nextSize } }}>Max</button></span><div className="input-wrap"><span>$</span><input ref={marginInputRef} inputMode="decimal" autoComplete="off" maxLength={24} defaultValue={payment} onBlur={event => { const nextPayment = event.currentTarget.value; const nextSize = (Number(nextPayment || 0) * leverage).toFixed(2); setPayment(nextPayment); setSize(nextSize); if (orderSizeInputRef.current) orderSizeInputRef.current.value = nextSize }} aria-label="Margin amount"/><span className="input-unit"><UsdcIcon/>USDC</span></div></label>
+          <div className={`leverage-control ${side}`} style={{ '--leverage-progress': `${((leverage - 1) / Math.max(1, maxLeverage - 1)) * 100}%` } as CSSProperties}><div className="leverage-heading"><span>Leverage</span><strong>{leverage.toFixed(1)}×</strong></div><input type="range" min="1" max={maxLeverage} step="0.5" value={Math.min(leverage, maxLeverage)} onChange={e => { const value = Number(e.target.value); const nextPayment = marginInputRef.current?.value ?? payment; const nextSize = (Number(nextPayment || 0) * value).toFixed(2); setLeverage(value); setPayment(nextPayment); setSize(nextSize); if (orderSizeInputRef.current) orderSizeInputRef.current.value = nextSize }} aria-label={`Leverage, maximum ${maxLeverage} times`}/><div className="range-labels">{[1, 3, 5, 7, 10].filter(value => value <= maxLeverage || value === 1).map(value => <span className={leverage >= value ? 'reached' : ''} key={value}>{value}×</span>)}</div></div>
           <div className="order-summary"><div><span>Entry price</span><b>{latestPrice ? money(latestPrice) : 'Unavailable'}</b></div><div><span>Position value</span><b>{money(Number(size || 0))}</b></div><div><span>Liquidation</span><b>Uses A1 maintenance rules</b></div><div><span>Trading fee</span><b>{estimatedFee === null ? 'Calculated in quote' : money(estimatedFee)}</b></div></div>
           <button className={`submit-order ${side}`} disabled={submitting || !tradingEnabled} onClick={() => void submitOrder()}>{submitting ? 'Confirming…' : tradingEnabled ? (side === 'long' ? 'Open long' : 'Open short') : 'Market unavailable'} <span>{money(Number(size || 0))}</span></button>
         </aside>
