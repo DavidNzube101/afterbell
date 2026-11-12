@@ -385,7 +385,12 @@ function TradingPage() {
     await Promise.allSettled(tasks)
     if (metricsRequestMarketRef.current === market.ticker) setMetricsLoadedMarket(market.ticker)
   }
-  useEffect(() => { void refreshDashboard(); const timer = window.setInterval(() => void refreshDashboard(), 15000); return () => window.clearInterval(timer) }, [session?.accountId, market.ticker, chartRange])
+  useEffect(() => {
+    if (!session || balanceModalOpen) return
+    void refreshDashboard()
+    const timer = window.setInterval(() => void refreshDashboard(), 15000)
+    return () => window.clearInterval(timer)
+  }, [session?.accountId, market.ticker, chartRange, balanceModalOpen])
 
   function selectChartRange(next: ChartRange) {
     const requiredMs: Record<ChartRange, number> = {

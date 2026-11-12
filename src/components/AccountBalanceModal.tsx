@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { sendNearUsdcDeposit, type WalletSession } from '../lib/wallet-session'
 import { formatNear, formatUsdc, usdcToRaw } from '../lib/dashboard'
 import { UsdcIcon } from './UsdcIcon'
@@ -30,6 +30,7 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
   const [page, setPage] = useState<Page>('overview')
   const [direction, setDirection] = useState<'next' | 'back'>('next')
   const [amount, setAmount] = useState('')
+  const depositAmountInput = useRef<HTMLInputElement>(null)
   const [receiver, setReceiver] = useState(session.chain === 'near' ? session.address : '')
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
@@ -41,11 +42,16 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
     setFormError('')
     try {
       if (!deposit) throw new Error('Deposit details could not be loaded. Try again shortly.')
-      // Validate the bounded input here. Converting arbitrary-length pasted
-      // strings to BigInt on Continue can block the browser main thread.
-      if (!/^\d+(\.\d{1,6})?$/.test(amount.trim()) || !/[1-9]/.test(amount.trim())) {
+      const entered = depositAmountInput.current?.value ?? ''
+      const cleaned = entered.replace(/[^0-9.]/g, '')
+      const [whole = '', ...decimalParts] = cleaned.split('.')
+      const nextAmount = `${whole.slice(0, 18)}${decimalParts.length ? `.${decimalParts.join('').slice(0, 6)}` : ''}`
+      if (depositAmountInput.current) depositAmountInput.current.value = nextAmount
+      // Validate only on Continue so each keystroke stays outside React state.
+      if (!/^\d+(\.\d{1,6})?$/.test(nextAmount) || !/[1-9]/.test(nextAmount)) {
         throw new Error('Enter a USDC amount greater than zero, with up to 6 decimals.')
       }
+      setAmount(nextAmount)
       go('deposit-wallet')
     } catch (error) { setFormError(error instanceof Error ? error.message : 'Enter a valid deposit amount.') }
   }
@@ -85,12 +91,7 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
           <p className="balance-account-id">Afterbell account <b>{session.accountId}</b></p>
         </div>}
         {page === 'deposit' && <form className="balance-deposit-page" onSubmit={submitDeposit}>
-          <label className="deposit-amount-label">Amount to deposit<div className="deposit-amount-input"><input autoFocus inputMode="decimal" maxLength={25} value={amount} onChange={event => {
-            const cleaned = event.target.value.replace(/[^0-9.]/g, '')
-            const [whole = '', ...decimalParts] = cleaned.split('.')
-            const decimal = decimalParts.join('').slice(0, 6)
-            setAmount(`${whole.slice(0, 18)}${decimalParts.length ? `.${decimal}` : ''}`)
-          }} placeholder="0.00" aria-label="USDC deposit amount"/><UsdcIcon size={19}/><span>USDC</span></div></label>
+          <label className="deposit-amount-label">Amount to deposit<div className="deposit-amount-input"><input ref={depositAmountInput} autoFocus inputMode="decimal" maxLength={25} defaultValue={amount} placeholder="0.00" aria-label="USDC deposit amount"/><UsdcIcon size={19}/><span>USDC</span></div></label>
           <p className="deposit-note">Deposit NEAR USDC into your Afterbell account. You’ll choose a NEAR wallet to approve the transfer.</p>
           {formError && <p className="balance-error" role="alert">{formError}</p>}
           <button className="balance-primary-action" disabled={!deposit}>Continue</button>
