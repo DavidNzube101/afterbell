@@ -10,6 +10,7 @@ import metamaskIcon from '../assets/wallet-icons/metamask.jpeg'
 import coinbaseIcon from '../assets/wallet-icons/coinbase-wallet.png'
 import hotIcon from '../assets/wallet-icons/hot-wallet.jpeg'
 import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
+import meteorIcon from '../assets/wallet-icons/meteor.png'
 import rainbowIcon from '../assets/wallet-icons/rainbow.png'
 import rabbyIcon from '../assets/wallet-icons/rabby.jpeg'
 import solanaChainIcon from '../assets/wallet-icons/chain-icons/solana.jpeg'
@@ -50,6 +51,7 @@ const walletCatalog = {
   NEAR: [
     { name: 'HOT Wallet', icon: hotIcon },
     { name: 'Nightly Wallet', icon: nightlyIcon },
+    { name: 'Meteor Wallet', icon: meteorIcon },
   ],
 } as const
 

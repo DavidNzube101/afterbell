@@ -29,11 +29,11 @@ const contractId = import.meta.env.VITE_A1_CONTRACT_ID || (nearNetwork === 'main
 
 export async function sendNearUsdcDeposit(walletName: string, expectedNetwork: string, tokenId: string, receiverId: string, accountId: string, amount: string) {
   if (expectedNetwork.toLowerCase() !== nearNetwork) throw new Error(`This app is connected to NEAR ${nearNetwork}, but the deposit uses ${expectedNetwork}.`)
-  const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { actionCreators }] = await Promise.all([
-    import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-js/transactions'),
+  const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { setupMeteorWallet }, { actionCreators }] = await Promise.all([
+    import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-wallet-selector/meteor-wallet'), import('@near-js/transactions'),
   ])
-  const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly()] })
-  const walletId = walletName.toLowerCase().startsWith('hot') ? 'hot-wallet' : 'nightly'
+  const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly(), setupMeteorWallet()] })
+  const walletId = nearWalletSelectorId(walletName)
   const wallet = await selector.wallet(walletId)
   let accounts = await wallet.getAccounts()
   if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId: tokenId, methodNames: ['ft_transfer_call'] })
@@ -53,6 +53,13 @@ export async function sendNearUsdcDeposit(walletName: string, expectedNetwork: s
     throw new Error(result.status.Failure?.error_message || 'The NEAR transaction failed. No deposit was credited.')
   }
   return { accountId: signer.accountId, transactionHash: result?.transaction?.hash as string | undefined }
+}
+
+function nearWalletSelectorId(walletName: string) {
+  const name = walletName.toLowerCase()
+  if (name.startsWith('hot')) return 'hot-wallet'
+  if (name.startsWith('meteor')) return 'meteor-wallet'
+  return 'nightly'
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -169,11 +176,11 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
       return () => provider.removeListener?.('accountChanged', changed)
     }
   } else {
-    const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }] = await Promise.all([
-      import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'),
+    const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { setupMeteorWallet }] = await Promise.all([
+      import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-wallet-selector/meteor-wallet'),
     ])
-    const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly()] })
-    const walletId = walletName.toLowerCase().startsWith('hot') ? 'hot-wallet' : 'nightly'
+    const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly(), setupMeteorWallet()] })
+    const walletId = nearWalletSelectorId(walletName)
     const wallet = await selector.wallet(walletId)
     let accounts = await wallet.getAccounts()
     if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId, accounts: [] })

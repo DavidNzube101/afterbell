@@ -4,6 +4,7 @@ import { formatNear, formatUsdc, usdcToRaw } from '../lib/dashboard'
 import { UsdcIcon } from './UsdcIcon'
 import hotIcon from '../assets/wallet-icons/hot-wallet.jpeg'
 import nightlyIcon from '../assets/wallet-icons/nightly.jpeg'
+import meteorIcon from '../assets/wallet-icons/meteor.png'
 import nearChainIcon from '../assets/wallet-icons/chain-icons/near.jpeg'
 import './account-balance-modal.css'
 
@@ -22,6 +23,7 @@ type Props = {
 const nearWallets = [
   { name: 'HOT Wallet', icon: hotIcon },
   { name: 'Nightly Wallet', icon: nightlyIcon },
+  { name: 'Meteor Wallet', icon: meteorIcon },
 ]
 
 export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, deposit, onClose, onCopy, onWithdraw, onDepositComplete }: Props) {
