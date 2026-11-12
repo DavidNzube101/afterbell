@@ -12,7 +12,9 @@ export function dismissToast(id: number) {
 
 export function showToast(kind: ToastKind, message: string, duration = 5000) {
   const id = nextToastId++
-  toasts.update(current => [...current, { id, kind, message }])
+  const isBroadcastServerError = kind === 'error' && /broadcast_tx_commit/i.test(message) && /server error/i.test(message)
+  const toastMessage = isBroadcastServerError && !/please retry/i.test(message) ? `${message} Please retry.` : message
+  toasts.update(current => [...current, { id, kind, message: toastMessage }])
   if (duration > 0 && typeof window !== 'undefined') window.setTimeout(() => dismissToast(id), duration)
   return id
 }
