@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { siRobinhood } from 'simple-icons'
 import logo from '../assets/afterbell-logo.png'
 import { TickerIcon } from '../components/TickerIcon'
@@ -22,10 +22,27 @@ function MarketsPage() {
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
   const [volumes, setVolumes] = useState<Record<string, string>>({})
+  const marketDataRequestInFlightRef = useRef(false)
   const { markets, error } = useMarketRegistry()
   useEffect(() => {
-    const load = () => { void getSnapshots().then(setSnapshots).catch(() => undefined); void getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))).catch(() => undefined) }
-    load(); const timer = window.setInterval(load, 15000); return () => window.clearInterval(timer)
+    let active = true
+    const load = async () => {
+      if (!active || document.visibilityState === 'hidden' || marketDataRequestInFlightRef.current) return
+      marketDataRequestInFlightRef.current = true
+      const [snapshotResult, volumeResult] = await Promise.allSettled([getSnapshots(), getMarketVolumes()])
+      if (active && snapshotResult.status === 'fulfilled') setSnapshots(snapshotResult.value)
+      if (active && volumeResult.status === 'fulfilled') setVolumes(Object.fromEntries(volumeResult.value.map(row => [row.market_id, row.volume_usdc_raw])))
+      marketDataRequestInFlightRef.current = false
+    }
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void load() }
+    void load()
+    const timer = window.setInterval(refreshWhenVisible, 30000)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
   }, [])
   const walletIcon = session ? getWalletIcon(session.walletName) : undefined
   const chainName = session ? getChainName(session.chain) : 'NEAR'

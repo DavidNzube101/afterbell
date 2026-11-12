@@ -516,7 +516,7 @@ int main() {
         drogon::app().registerHandler(
             "/v1/trade/history",
             [dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
-                try { const auto account = request->getParameter("account_id"); dashboardStore->syncDepositNotifications(network, account); Json::Value body; body["events"] = dashboardStore->activityHistory(network, account); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                try { const auto account = request->getParameter("account_id"); Json::Value body; body["events"] = dashboardStore->activityHistory(network, account); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
                 catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("history_unavailable", error.what())); response->setStatusCode(drogon::k503ServiceUnavailable); callback(response); }
             }, {drogon::Get});
         drogon::app().registerHandler(

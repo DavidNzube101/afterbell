@@ -83,13 +83,18 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
     const context = canvas?.getContext('2d')
     if (!canvas || !context) return
     hoverRef.current = null
+    let paintFrame = 0
     const paint = () => {
       const width = canvas.clientWidth
       const height = canvas.clientHeight
       if (!width || !height) return
       const dpr = window.devicePixelRatio || 1
-      canvas.width = Math.round(width * dpr)
-      canvas.height = Math.round(height * dpr)
+      const backingWidth = Math.round(width * dpr)
+      const backingHeight = Math.round(height * dpr)
+      if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+        canvas.width = backingWidth
+        canvas.height = backingHeight
+      }
       context.setTransform(dpr, 0, 0, dpr, 0, 0)
       context.clearRect(0, 0, width, height)
       if (!candles.length) return
@@ -118,13 +123,14 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       const font = getComputedStyle(canvas).fontFamily
       context.font = `12px ${font}`
       context.fillStyle = '#18212d'
+      context.beginPath()
       for (let gx = left; gx <= width - right; gx += 24) {
         for (let gy = top; gy <= height - bottom; gy += 24) {
-          context.beginPath()
+          context.moveTo(gx + 0.7, gy)
           context.arc(gx, gy, 0.7, 0, Math.PI * 2)
-          context.fill()
         }
       }
+      context.fill()
       context.fillStyle = '#8492a3'
       context.textAlign = 'left'
       for (let tick = 0; tick <= 4; tick++) {
@@ -195,6 +201,13 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
         context.stroke()
       }
     }
+    const schedulePaint = () => {
+      if (paintFrame) return
+      paintFrame = window.requestAnimationFrame(() => {
+        paintFrame = 0
+        paint()
+      })
+    }
     const onPointerMove = (event: PointerEvent) => {
       if (!candles.length) return
       const rect = canvas.getBoundingClientRect()
@@ -206,15 +219,20 @@ function PriceChart({ market, points, volumePoints, range, onRangeChange }: { ma
       const index = candles.reduce((best, candle, i) => Math.abs(candle.time - t) < Math.abs(candles[best].time - t) ? i : best, 0)
       hoverRef.current = { index, y: event.clientY - rect.top }
       setHoveredIndex(current => current === index ? current : index)
-      paint()
+      schedulePaint()
     }
-    const onPointerLeave = () => { hoverRef.current = null; setHoveredIndex(null); paint() }
+    const onPointerLeave = () => { hoverRef.current = null; setHoveredIndex(null); schedulePaint() }
     canvas.addEventListener('pointermove', onPointerMove)
     canvas.addEventListener('pointerleave', onPointerLeave)
-    const resize = new ResizeObserver(paint)
-    resize.observe(canvas)
+    const resize = new ResizeObserver(schedulePaint)
+    resize.observe(canvas.parentElement ?? canvas)
     paint()
-    return () => { resize.disconnect(); canvas.removeEventListener('pointermove', onPointerMove); canvas.removeEventListener('pointerleave', onPointerLeave) }
+    return () => {
+      resize.disconnect()
+      if (paintFrame) window.cancelAnimationFrame(paintFrame)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerleave', onPointerLeave)
+    }
   }, [candles, range])
 
   const latest = candles[candles.length - 1]
@@ -243,15 +261,13 @@ function InterfaceSpeed() {
 
   useEffect(() => {
     let active = true
-    const apiBase = (import.meta.env.VITE_API_BASE_URL || 'https://api.afterbellfx.xyz').replace(/\/$/, '')
     const measureNetwork = async () => {
       const controller = new AbortController()
       const timeout = window.setTimeout(() => controller.abort(), 5000)
       const startedAt = performance.now()
       try {
-        await fetch(`${apiBase}/health/live?probe=${Date.now()}`, {
+        await fetch(`/api/health/live?probe=${Date.now()}`, {
           method: 'GET',
-          mode: 'no-cors',
           cache: 'no-store',
           signal: controller.signal,
         })
@@ -344,6 +360,18 @@ function TradingPage() {
   const [customShareBackground, setCustomShareBackground] = useState<string | null>(null)
   const shareCardRef = useRef<HTMLElement>(null)
   const metricsRequestMarketRef = useRef<string | null>(null)
+  const dashboardRefreshInFlightRef = useRef(false)
+  const dashboardRefreshPendingRef = useRef(false)
+  const refreshDashboardRef = useRef<() => Promise<void>>(async () => undefined)
+  const notificationsLoadedRef = useRef(false)
+  const notificationsAccountRef = useRef<string | null>(null)
+  const activeTabRef = useRef(activeTab)
+  const notificationsOpenRef = useRef(notificationsOpen)
+  const depositInstructionsRef = useRef(depositInstructions)
+  const depositInstructionsAccountRef = useRef<string | null>(null)
+  activeTabRef.current = activeTab
+  notificationsOpenRef.current = notificationsOpen
+  depositInstructionsRef.current = depositInstructions
   const [shareNotice, setShareNotice] = useState('')
   const [notice, setNotice] = useState('')
   const [orderWidth, setOrderWidth] = useState(342)
@@ -365,32 +393,74 @@ function TradingPage() {
   }, [snapshot?.max_leverage_bps, maxLeverage])
 
   async function refreshDashboard() {
-    if (!session) return
+    if (!session || document.visibilityState === 'hidden') return
+    if (dashboardRefreshInFlightRef.current) {
+      dashboardRefreshPendingRef.current = true
+      return
+    }
+    dashboardRefreshInFlightRef.current = true
+    const requestedMarket = market.ticker
+    const requestedRange = chartRange
     if (metricsRequestMarketRef.current !== market.ticker) {
       metricsRequestMarketRef.current = market.ticker
       setMetricsLoadedMarket(null)
     }
-    const tasks = [
+    const tasks: Promise<unknown>[] = [
       getSnapshots().then(data => setSnapshots(Array.isArray(data) ? data : [])),
-      getMarketVolumes().then(rows => setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])))),
-      getMarketHistory(market.ticker, chartRange).then(data => { setPricePoints(data.points); setVolumePoints(data.volume_points ?? []); setHistoryStartMs(data.history_start_ms) }),
+      getMarketVolumes().then(rows => { setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw]))) }),
+      getMarketHistory(requestedMarket, requestedRange).then(data => {
+        if (metricsRequestMarketRef.current !== requestedMarket) return
+        setPricePoints(Array.isArray(data.points) ? data.points : [])
+        setVolumePoints(Array.isArray(data.volume_points) ? data.volume_points : [])
+        setHistoryStartMs(data.history_start_ms)
+      }),
       getPositions(session.accountId).then(data => setPositions(data.positions)),
-      getLimits(session.accountId).then(data => setLimitOrders(data.orders)),
-      getHistory(session.accountId).then(data => setHistory(data.events)),
-      getNotifications(session.accountId).then(data => setNotifications(data.notifications)),
-      fetch(`/api/v1/account/balance?account_id=${encodeURIComponent(session.accountId)}`).then(response => response.ok ? response.json() : Promise.reject()).then(data => { const raw = String(data.balance_usdc); setBalanceRaw(raw); setAvailableBalance(usdc(raw)) }),
-      getDepositInstructions(session.accountId).then(setDepositInstructions),
-      session.chain === 'near' ? getNearWalletBalance(session.address).then(data => setNearWalletBalanceRaw(data.amount_yocto)) : Promise.resolve(),
+      ...(activeTabRef.current === 'Open orders' ? [getLimits(session.accountId).then(data => setLimitOrders(data.orders))] : []),
+      ...(activeTabRef.current === 'History' ? [getHistory(session.accountId).then(data => setHistory(data.events))] : []),
+      ...(!notificationsLoadedRef.current || notificationsAccountRef.current !== session.accountId || notificationsOpenRef.current ? [getNotifications(session.accountId).then(data => {
+        setNotifications(data.notifications)
+        notificationsLoadedRef.current = true
+        notificationsAccountRef.current = session.accountId
+      })] : []),
+      fetch(`/api/v1/account/balance?account_id=${encodeURIComponent(session.accountId)}`).then(response => response.ok ? response.json() : Promise.reject()).then(data => {
+        const raw = String(data.balance_usdc)
+        setBalanceRaw(raw)
+        setAvailableBalance(usdc(raw))
+      }),
+      ...(!depositInstructionsRef.current || depositInstructionsAccountRef.current !== session.accountId ? [getDepositInstructions(session.accountId).then(data => {
+        setDepositInstructions(data)
+        depositInstructionsAccountRef.current = session.accountId
+      })] : []),
     ]
-    await Promise.allSettled(tasks)
-    if (metricsRequestMarketRef.current === market.ticker) setMetricsLoadedMarket(market.ticker)
+    try {
+      await Promise.allSettled(tasks)
+      if (metricsRequestMarketRef.current === requestedMarket) setMetricsLoadedMarket(requestedMarket)
+    } finally {
+      dashboardRefreshInFlightRef.current = false
+      if (dashboardRefreshPendingRef.current) {
+        dashboardRefreshPendingRef.current = false
+        window.setTimeout(() => void refreshDashboardRef.current(), 0)
+      }
+    }
   }
+  refreshDashboardRef.current = refreshDashboard
   useEffect(() => {
     if (!session || balanceModalOpen) return
     void refreshDashboard()
-    const timer = window.setInterval(() => void refreshDashboard(), 15000)
-    return () => window.clearInterval(timer)
-  }, [session?.accountId, market.ticker, chartRange, balanceModalOpen])
+    const pollWhenVisible = () => { if (document.visibilityState === 'visible') void refreshDashboard() }
+    const timer = window.setInterval(pollWhenVisible, 30000)
+    document.addEventListener('visibilitychange', pollWhenVisible)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', pollWhenVisible) }
+  }, [session?.accountId, market.ticker, chartRange, balanceModalOpen, activeTab, notificationsOpen])
+
+  useEffect(() => {
+    if (!balanceModalOpen || session?.chain !== 'near') return
+    let active = true
+    void getNearWalletBalance(session.address).then(data => {
+      if (active) setNearWalletBalanceRaw(data.amount_yocto)
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [balanceModalOpen, session?.chain, session?.address])
 
   function selectChartRange(next: ChartRange) {
     const requiredMs: Record<ChartRange, number> = {

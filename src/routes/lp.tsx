@@ -41,8 +41,13 @@ function LiquidityPage() {
   useEffect(() => {
     setLoading(true)
     void refresh()
-    const timer = window.setInterval(() => void refresh(false), 15000)
-    return () => window.clearInterval(timer)
+    const pollWhenVisible = () => { if (document.visibilityState === 'visible') void refresh(false) }
+    const timer = window.setInterval(pollWhenVisible, 30000)
+    document.addEventListener('visibilitychange', pollWhenVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', pollWhenVisible)
+    }
   }, [refresh])
 
   useEffect(() => {
