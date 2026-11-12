@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { sendNearUsdcDeposit, type WalletSession } from '../lib/wallet-session'
 import { formatNear, formatUsdc, usdcToRaw } from '../lib/dashboard'
 import { UsdcIcon } from './UsdcIcon'
@@ -35,6 +35,17 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [depositResult, setDepositResult] = useState<{ wallet: string; address: string; transactionHash?: string } | null>(null)
+
+  useEffect(() => {
+    if (page !== 'deposit') return
+    const skipReactSelectionChangeForDeposit = (event: Event) => {
+      if (document.activeElement === depositAmountInput.current) event.stopImmediatePropagation()
+    }
+    // The app has no React onSelect handlers. Leave caret management to the browser
+    // and keep this input's selection events out of React's delegated event dispatcher.
+    window.addEventListener('selectionchange', skipReactSelectionChangeForDeposit, true)
+    return () => window.removeEventListener('selectionchange', skipReactSelectionChangeForDeposit, true)
+  }, [page])
 
   function go(next: Page) { setDirection(next === 'overview' || (page === 'deposit-wallet' && next === 'deposit') ? 'back' : 'next'); setFormError(''); setPage(next) }
   async function submitDeposit(event: React.FormEvent) {
