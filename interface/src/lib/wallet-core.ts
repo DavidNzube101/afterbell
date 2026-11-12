@@ -28,14 +28,17 @@ const SESSION_KEY = 'afterbell.wallet-session.v1'
 const nearNetwork = import.meta.env.VITE_NEAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
 const contractId = import.meta.env.VITE_A1_CONTRACT_ID || (nearNetwork === 'mainnet' ? 'a1.afterbell.near' : 'afterbellfx-dev-faucet.testnet')
 
-export async function sendNearUsdcDeposit(walletName: string, expectedNetwork: string, tokenId: string, receiverId: string, accountId: string, amount: string) {
-  if (expectedNetwork.toLowerCase() !== nearNetwork) throw new Error(`This app is connected to NEAR ${nearNetwork}, but the deposit uses ${expectedNetwork}.`)
-  const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { setupMeteorWallet }, { actionCreators }] = await Promise.all([
-    import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-wallet-selector/meteor-wallet'), import('@near-js/transactions'),
+async function createNearSelectorWallet(walletName: string) {
+  const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { setupMeteorWallet }] = await Promise.all([
+    import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-wallet-selector/meteor-wallet'),
   ])
   const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly(), setupMeteorWallet()] })
-  const walletId = nearWalletSelectorId(walletName)
-  const wallet = await selector.wallet(walletId)
+  return { selector, wallet: await selector.wallet(nearWalletSelectorId(walletName)) }
+}
+
+export async function sendNearUsdcDeposit(walletName: string, expectedNetwork: string, tokenId: string, receiverId: string, accountId: string, amount: string) {
+  if (expectedNetwork.toLowerCase() !== nearNetwork) throw new Error(`This app is connected to NEAR ${nearNetwork}, but the deposit uses ${expectedNetwork}.`)
+  const [{ wallet }, { actionCreators }] = await Promise.all([createNearSelectorWallet(walletName), import('@near-js/transactions')])
   let accounts = await getNearWalletAccounts(wallet)
   if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId: tokenId, methodNames: ['ft_transfer_call'] })
   const signer = accounts[0]
@@ -141,7 +144,7 @@ function selectInjectedWallet(chain: 'evm' | 'solana', name: string): any {
   return match
 }
 
-async function connectAndSign(chain: WalletChain, walletName: string) {
+async function connectAndSign(chain: WalletChain, walletName: string, refreshNearAccount = false) {
   let address: string
   let accountId: string
   let owner: Owner
@@ -187,14 +190,16 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
       return () => provider.removeListener?.('accountChanged', changed)
     }
   } else {
-    const [{ setupWalletSelector }, { setupHotWallet }, { setupNightly }, { setupMeteorWallet }] = await Promise.all([
-      import('@near-wallet-selector/core'), import('@near-wallet-selector/hot-wallet'), import('@near-wallet-selector/nightly'), import('@near-wallet-selector/meteor-wallet'),
-    ])
-    const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly(), setupMeteorWallet()] })
-    const walletId = nearWalletSelectorId(walletName)
-    const wallet = await selector.wallet(walletId)
-    let accounts = await getNearWalletAccounts(wallet)
-    if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId, accounts: [] })
+    const { selector, wallet } = await createNearSelectorWallet(walletName)
+    let accounts
+    if (refreshNearAccount && walletName.toLowerCase().startsWith('meteor')) {
+      const cachedAccounts = await getNearWalletAccounts(wallet)
+      if (cachedAccounts.length) await wallet.signOut()
+      accounts = await (wallet.signIn as any)({ contractId, accounts: [] })
+    } else {
+      accounts = await getNearWalletAccounts(wallet)
+      if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId, accounts: [] })
+    }
     const selected = accounts[0]
     if (!selected) throw new Error('The wallet did not return a NEAR account')
     address = selected.accountId
@@ -261,7 +266,7 @@ export function initializeWalletSession() {
 export async function connectWallet(chain: WalletChain, walletName: string) {
   walletConnecting.set(true)
   try {
-    const result = await connectAndSign(chain, walletName)
+    const result = await connectAndSign(chain, walletName, true)
     walletSession.set(result.session)
     localStorage.setItem(SESSION_KEY, JSON.stringify(result.session))
     sessionStorage.setItem('afterbell.first-time-setup', result.firstTime ? 'true' : 'false')
@@ -286,10 +291,20 @@ export async function signWalletMessage(payload: WalletMessagePayload) {
 }
 
 export async function disconnectWallet() {
-  cleanupCurrentWallet?.()
-  cleanupCurrentWallet = null
-  activeWalletSigner = null
-  walletSession.set(null)
-  localStorage.removeItem(SESSION_KEY)
+  const session = get(walletSession)
+  try {
+    if (session?.chain === 'near' && session.walletName.toLowerCase().startsWith('meteor')) {
+      const { wallet } = await createNearSelectorWallet(session.walletName)
+      await wallet.signOut()
+    }
+  } catch {
+    // Always clear Afterbell's local session; reconnect performs a fresh Meteor account selection.
+  } finally {
+    cleanupCurrentWallet?.()
+    cleanupCurrentWallet = null
+    activeWalletSigner = null
+    walletSession.set(null)
+    localStorage.removeItem(SESSION_KEY)
+  }
 }
 
