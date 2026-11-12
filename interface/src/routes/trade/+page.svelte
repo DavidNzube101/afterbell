@@ -26,15 +26,21 @@
 	let snapshots = $state<MarketSnapshot[]>([])
 	let volumes = $state<Record<string, string>>({})
 	let positions = $state<PositionRecord[]>([])
+	let positionsStatus = $state<'loading' | 'ready' | 'error'>('loading')
 	let limitOrders = $state<LimitOrderRecord[]>([])
+	let limitsStatus = $state<'loading' | 'ready' | 'error'>('loading')
 	let history = $state<ActivityRecord[]>([])
+	let historyStatus = $state<'loading' | 'ready' | 'error'>('loading')
 	let notifications = $state<NotificationRecord[]>([])
-	let notificationsLoaded = false
+	let notificationsLoaded = $state(false)
+	let notificationsError = $state(false)
 	let points = $state<PricePoint[]>([])
 	let volumePoints = $state<VolumePoint[]>([])
+	let chartStatus = $state<'loading' | 'ready' | 'error'>('loading')
 	let historyStartMs = $state<number | null>(null)
 	let balance = $state<number | null>(null)
 	let balanceRaw = $state<string | null>(null)
+	let balanceLoaded = $state(false)
 	let balanceModalOpen = $state(false)
 	let chartRange = $state<'1h' | '1d' | '1w' | '1m' | 'all'>('1h')
 	let activeTab = $state<'Positions' | 'Open orders' | 'History'>('Positions')
@@ -56,6 +62,8 @@
 	let maxLeverage = $derived(snapshot?.max_leverage_bps ? Number(snapshot.max_leverage_bps) / 10_000 : 10)
 	let tradingEnabled = $derived(Boolean(selectedMarketInfo?.tradingEnabled && snapshot?.enabled && !snapshot.close_only))
 	let filteredMarkets = $derived(markets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase())))
+	let activeListStatus = $derived(activeTab === 'Positions' ? positionsStatus : activeTab === 'Open orders' ? limitsStatus : historyStatus)
+	let activeListIsEmpty = $derived(activeTab === 'Positions' ? positions.length === 0 : activeTab === 'Open orders' ? limitOrders.length === 0 : history.length === 0)
 
 	let refreshTimer: number | undefined
 	let latencyTimer: number | undefined
@@ -103,12 +111,12 @@
 		const tasks = [
 			getSnapshots().then(data => { if (active) { snapshots = data; metricsLoaded = true } }, () => { if (active) metricsLoaded = true }),
 			getMarketVolumes().then(rows => { if (active) volumes = Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw])) }),
-			getMarketHistory(ticker, range).then(data => { if (active && selectedMarket === ticker && chartRange === range) { points = data.points ?? []; volumePoints = data.volume_points ?? []; historyStartMs = data.history_start_ms ?? null } }),
-			getPositions(session.accountId).then(data => { if (active) positions = data.positions ?? [] }),
-			getAccountBalance(session.accountId).then(data => { if (active) { balanceRaw = String(data.balance_usdc); balance = usdc(balanceRaw) } }),
-			...(!notificationsLoaded || notificationsOpen ? [getNotifications(session.accountId).then(data => { if (active) { notifications = data.notifications ?? []; notificationsLoaded = true } })] : []),
-			...(tab === 'Open orders' ? [getLimits(session.accountId).then(data => { if (active) limitOrders = data.orders ?? [] })] : []),
-			...(tab === 'History' ? [getHistory(session.accountId).then(data => { if (active) history = data.events ?? [] })] : []),
+			getMarketHistory(ticker, range).then(data => { if (active && selectedMarket === ticker && chartRange === range) { points = data.points ?? []; volumePoints = data.volume_points ?? []; historyStartMs = data.history_start_ms ?? null; chartStatus = 'ready' } }, () => { if (active && chartStatus === 'loading') chartStatus = 'error' }),
+			getPositions(session.accountId).then(data => { if (active) { positions = data.positions ?? []; positionsStatus = 'ready' } }, () => { if (active && positionsStatus === 'loading') positionsStatus = 'error' }),
+			getAccountBalance(session.accountId).then(data => { if (active) { balanceRaw = String(data.balance_usdc); balance = usdc(balanceRaw); balanceLoaded = true } }, () => { if (active) balanceLoaded = true }),
+			...(!notificationsLoaded || notificationsOpen ? [getNotifications(session.accountId).then(data => { if (active) { notifications = data.notifications ?? []; notificationsLoaded = true; notificationsError = false } }, () => { if (active) { notificationsLoaded = true; notificationsError = true } })] : []),
+			...(tab === 'Open orders' ? [getLimits(session.accountId).then(data => { if (active) { limitOrders = data.orders ?? []; limitsStatus = 'ready' } }, () => { if (active && limitsStatus === 'loading') limitsStatus = 'error' })] : []),
+			...(tab === 'History' ? [getHistory(session.accountId).then(data => { if (active) { history = data.events ?? []; historyStatus = 'ready' } }, () => { if (active && historyStatus === 'loading') historyStatus = 'error' })] : []),
 		]
 		await Promise.allSettled(tasks)
 		refreshInFlight = false
@@ -172,13 +180,13 @@
 	async function clearAllNotifications() {
 		const session = $walletSession
 		if (!session) return
-		try { await clearNotifications(session.accountId); notifications = []; notificationsLoaded = true }
+		try { await clearNotifications(session.accountId); notifications = []; notificationsLoaded = true; notificationsError = false }
 		catch (reason) { showToast('error', reason instanceof Error ? reason.message : 'Could not clear notifications.') }
 	}
 	async function removeNotification(item: NotificationRecord) {
 		const session = $walletSession
 		if (!session) return
-		try { await deleteNotification(session.accountId, item.id); notifications = notifications.filter(row => row.id !== item.id); notificationsLoaded = true }
+		try { await deleteNotification(session.accountId, item.id); notifications = notifications.filter(row => row.id !== item.id); notificationsLoaded = true; notificationsError = false }
 		catch (reason) { showToast('error', reason instanceof Error ? reason.message : 'Could not delete notification.') }
 	}
 	async function withdrawFromAccount(amount: string, receiver: string) {
@@ -196,9 +204,9 @@
 	function formatElapsed(timestamp: number) { const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000)); return minutes < 1 ? 'Just now' : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago` }
 	let latencyGrade = $derived(apiLatency === null ? 'measuring' : apiLatency <= 100 ? 'good' : apiLatency <= 250 ? 'medium' : 'poor')
 	async function copyAddress() { try { if ($walletSession) await navigator.clipboard.writeText($walletSession.address); showToast('success', 'Wallet address copied.') } catch { showToast('error', 'Could not copy the wallet address.') } }
-	function navigateMarket(ticker: string) { selectedMarket = ticker; metricsLoaded = false; marketMenuOpen = false; marketSearch = ''; void goto(`/trade?market=${encodeURIComponent(ticker)}&side=${sideOnEntry}`, { replaceState: true }); void refreshDashboard() }
-	function selectTab(tab: string) { activeTab = tab as 'Positions' | 'Open orders' | 'History'; void refreshDashboard() }
-	function toggleNotifications() { notificationsOpen = !notificationsOpen; if (notificationsOpen) void refreshDashboard() }
+	function navigateMarket(ticker: string) { selectedMarket = ticker; metricsLoaded = false; chartStatus = 'loading'; points = []; volumePoints = []; historyStartMs = null; marketMenuOpen = false; marketSearch = ''; void goto(`/trade?market=${encodeURIComponent(ticker)}&side=${sideOnEntry}`, { replaceState: true }); void refreshDashboard() }
+	function selectTab(tab: string) { activeTab = tab as 'Positions' | 'Open orders' | 'History'; if (activeTab === 'Open orders' && limitsStatus === 'loading') limitsStatus = 'loading'; if (activeTab === 'History' && historyStatus === 'loading') historyStatus = 'loading'; void refreshDashboard() }
+	function toggleNotifications() { notificationsOpen = !notificationsOpen; if (notificationsOpen) { notificationsLoaded = false; notificationsError = false; void refreshDashboard() } }
 	function selectChartRange(range: '1h' | '1d' | '1w' | '1m' | 'all') {
 		const requiredMs: Record<typeof range, number> = { '1h': 3_600_000, '1d': 86_400_000, '1w': 604_800_000, '1m': 2_592_000_000, all: 2_592_000_000 }
 		if (historyStartMs === null || Date.now() - historyStartMs < requiredMs[range]) {
@@ -206,6 +214,9 @@
 			return
 		}
 		chartRange = range
+		chartStatus = 'loading'
+		points = []
+		volumePoints = []
 		void refreshDashboard()
 	}
 	function startResize(axis: 'x' | 'y', event: PointerEvent) {
@@ -227,9 +238,13 @@
 	<meta name="description" content="Trade cash-settled {selectedMarket} perpetuals on Afterbell." />
 </svelte:head>
 
-{#if $walletSession}
 <div class="trade-app">
-	<DashboardHeader active="Trade" {balance} notificationCount={notifications.length} onBalanceClick={() => balanceModalOpen = true} onNotificationsClick={toggleNotifications}/>
+	<section class="mobile-trade-wip">
+		<a href="/" class="trade-brand"><img class="trade-logo" src="/assets/afterbell-logo.png" alt=""/><span>Afterbell</span></a>
+		<div class="mobile-wip-content"><span class="mobile-wip-icon"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 19V5m0 14h16M7 15l4-4 3 2 5-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="mobile-wip-badge">WIP</span><h1>Trading on mobile is coming.</h1><p>We’re shaping a focused trading experience for smaller screens. For now, open Afterbell on desktop.</p><a class="mobile-wip-back" href="/">← <span>Back to connect wallet</span></a></div>
+		<span class="mobile-wip-footer">© 2026 Afterbell</span>
+	</section>
+	<DashboardHeader active="Trade" {balance} {balanceLoaded} notificationCount={notifications.length} onBalanceClick={() => balanceModalOpen = true} onNotificationsClick={toggleNotifications}/>
 
 	<main class="trade-main">
 		<section class="market-overview" aria-label="Market overview">
@@ -246,7 +261,7 @@
 
 		<div class="trading-grid" style={`--order-width:${orderWidth}px;--chart-height:${chartHeight}px`}>
 			<section class="market-workspace" aria-label="Market chart and positions">
-				<MarketChart ticker={selectedMarket} name={selectedMarketInfo?.name ?? selectedMarket} {points} {volumePoints} range={chartRange} onRangeChange={selectChartRange}/>
+				<MarketChart ticker={selectedMarket} name={selectedMarketInfo?.name ?? selectedMarket} {points} {volumePoints} loading={chartStatus === 'loading'} range={chartRange} onRangeChange={selectChartRange}/>
 				<button class="resize-handle resize-horizontal" aria-label="Resize chart and positions panels" onpointerdown={event => startResize('y', event)} onpointermove={moveResize} onpointerup={endResize} onpointercancel={endResize}><span></span></button>
 				<div class="positions-panel">
 					<div class="positions-heading"><div class="position-tabs">{#each ['Positions', 'Open orders', 'History'] as tab (tab)}<button class:active={activeTab === tab} onclick={() => selectTab(tab)}>{tab}{#if tab === 'Positions'}<span class="tab-count">{positions.length}</span>{/if}</button>{/each}</div></div>
@@ -263,8 +278,10 @@
 						{:else}
 							{#each history as item (item.id)}<tr><td><span class="table-market"><span class="stock-avatar tiny">{#if item.market_id}<TickerIcon ticker={item.market_id} size={13}/>{/if}</span><b>{item.market_id || 'Account'}</b><small>USDC</small></span></td><td>{item.side || '—'}</td><td>{money(usdc(item.amount_usdc))}</td><td>—</td><td>{item.event_type.replaceAll('_', ' ')}</td><td>{formatElapsed(item.created_at_ms)}</td><td>{item.transaction_hash ? `${item.transaction_hash.slice(0, 8)}…` : '—'}</td><td>Finalized</td><td></td></tr>{/each}
 						{/if}
+						{#if activeListStatus === 'loading'}<tr><td colspan="9" class="empty-table-state">Loading {activeTab.toLowerCase()}…</td></tr>
+						{:else if activeListStatus === 'error' && activeListIsEmpty}<tr><td colspan="9" class="empty-table-state">Could not load {activeTab.toLowerCase()}.</td></tr>
+						{:else if activeListIsEmpty}<tr><td colspan="9" class="empty-table-state">{activeTab === 'Positions' ? 'No open positions.' : activeTab === 'Open orders' ? 'No open orders.' : 'No account activity yet.'}</td></tr>{/if}
 					</tbody></table></div>
-					{#if (activeTab === 'Positions' && positions.length === 0) || (activeTab === 'Open orders' && limitOrders.length === 0) || (activeTab === 'History' && history.length === 0)}<div class="position-empty">{activeTab === 'Positions' ? 'No open positions.' : activeTab === 'Open orders' ? 'No open orders.' : 'No account activity yet.'}</div>{/if}
 				</div>
 			</section>
 			<button class="resize-handle resize-vertical" aria-label="Resize order panel" onpointerdown={event => startResize('x', event)} onpointermove={moveResize} onpointerup={endResize} onpointercancel={endResize}><span></span></button>
@@ -273,8 +290,7 @@
 	</main>
 	<footer class="trade-statusbar"><span class={`interface-speed ${latencyGrade}`}>{apiLatency === null ? '-- ms' : `${Math.round(apiLatency)} ms`}</span><span class="status-spacer"></span><button class="footer-link" onclick={() => riskOpen = true}>Risk disclosure</button><a class="footer-link" href="https://docs.afterbellfx.xyz" target="_blank" rel="noreferrer">Docs</a><span>© Afterbell 2026</span></footer>
 	{#if riskOpen}<RiskDisclosureModal onClose={() => riskOpen = false}/>{/if}
-	{#if notificationsOpen}<button class="drawer-backdrop" aria-label="Close notifications" onclick={() => notificationsOpen = false}></button><aside class="notification-drawer" aria-label="Notifications"><div class="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button class="drawer-close" aria-label="Close notifications" onclick={() => notificationsOpen = false}>×</button></div><div class="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={!notifications.length} onclick={() => void clearAllNotifications()}>Clear all</button></div><div class="notification-list">{#each notifications as item (item.id)}<article class="notification-item"><div class="notification-body"><div class="notification-title-row"><h3>{item.title}</h3><time>{formatElapsed(item.created_at_ms)}</time></div><p>{item.message}</p></div><button class="notification-delete" aria-label={`Delete ${item.title}`} onclick={() => void removeNotification(item)}>×</button></article>{/each}{#if notifications.length === 0}<div class="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>{/if}</div></aside>{/if}
-	{#if balanceModalOpen && $walletSession}<AccountBalanceModal session={$walletSession} {balanceRaw} onClose={() => balanceModalOpen = false} onCopy={async value => { try { await navigator.clipboard.writeText(value); showToast('success', 'Copied to clipboard.') } catch { showToast('error', 'Could not copy to clipboard.') } }} onWithdraw={withdrawFromAccount} onDepositComplete={refreshDashboard}/>{/if}
+	{#if notificationsOpen}<button class="drawer-backdrop" aria-label="Close notifications" onclick={() => notificationsOpen = false}></button><aside class="notification-drawer" aria-label="Notifications"><div class="drawer-heading"><div><h2>Notifications</h2><p>Recent account activity</p></div><button class="drawer-close" aria-label="Close notifications" onclick={() => notificationsOpen = false}>×</button></div><div class="drawer-actions"><span>{notifications.length} {notifications.length === 1 ? 'notification' : 'notifications'}</span><button disabled={!notifications.length} onclick={() => void clearAllNotifications()}>Clear all</button></div><div class="notification-list">{#each notifications as item (item.id)}<article class="notification-item"><div class="notification-body"><div class="notification-title-row"><h3>{item.title}</h3><time>{formatElapsed(item.created_at_ms)}</time></div><p>{item.message}</p></div><button class="notification-delete" aria-label={`Delete ${item.title}`} onclick={() => void removeNotification(item)}>×</button></article>{/each}{#if notifications.length === 0}{#if !notificationsLoaded}<div class="notifications-empty"><span></span><h3>Loading notifications…</h3></div>{:else if notificationsError}<div class="notifications-empty"><span>!</span><h3>Notifications unavailable</h3><p>Try opening the drawer again.</p></div>{:else}<div class="notifications-empty"><span>✓</span><h3>All clear</h3><p>You have no notifications.</p></div>{/if}{/if}</div></aside>{/if}
+	{#if balanceModalOpen && $walletSession}<AccountBalanceModal session={$walletSession} {balanceRaw} {balanceLoaded} onClose={() => balanceModalOpen = false} onCopy={async value => { try { await navigator.clipboard.writeText(value); showToast('success', 'Copied to clipboard.') } catch { showToast('error', 'Could not copy to clipboard.') } }} onWithdraw={withdrawFromAccount} onDepositComplete={refreshDashboard}/>{/if}
 	{#if sharePosition}<ShareTradeModal position={sharePosition} onClose={() => sharePosition = null}/>{/if}
 </div>
-{/if}

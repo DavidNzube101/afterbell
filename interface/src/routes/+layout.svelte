@@ -7,5 +7,7 @@
 	onMount(initializeWalletSession)
 </script>
 
+<svelte:head><link rel="icon" type="image/png" href="/favicon.png" /></svelte:head>
+
 <slot />
 <ToastStack />

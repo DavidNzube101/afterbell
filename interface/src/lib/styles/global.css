@@ -11,3 +11,5 @@
 * { box-sizing: border-box; }
 html, body { min-width: 320px; min-height: 100%; margin: 0; }
 button, input, select, textarea { font: inherit; }
+
+.position-table .empty-table-state { height: 112px; text-align: center !important; vertical-align: middle; }

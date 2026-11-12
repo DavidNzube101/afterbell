@@ -4,11 +4,12 @@
 
 	type Range = '1h' | '1d' | '1w' | '1m' | 'all'
 	type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number }
-	let { ticker, name, points, volumePoints, range = '1h', onRangeChange }: {
+	let { ticker, name, points, volumePoints, loading = false, range = '1h', onRangeChange }: {
 		ticker: string
 		name: string
 		points: PricePoint[]
 		volumePoints: VolumePoint[]
+		loading?: boolean
 		range?: Range
 		onRangeChange: (range: Range) => void
 	} = $props()
@@ -114,7 +115,8 @@
 <div class="chart-shell">
 	<div class="chart-tools"><div class="chart-pair"><span>{ticker} / USDC</span></div><div class="chart-actions" role="group" aria-label="Chart time range">{#each ['1h', '1d', '1w', '1m', 'all'] as item (item)}<button class="chart-range-button" class:active={range === item} onclick={() => onRangeChange(item as Range)}>{item.toUpperCase()}</button>{/each}</div></div>
 	<div class="real-market-chart" role="img" aria-label={`${name} candlestick chart`}>
-		{#if candles.length === 0}<div class="chart-placeholder"><span>Waiting for fresh market price data.</span></div>
+		{#if loading}<div class="chart-placeholder"><span>Loading market history…</span></div>
+		{:else if candles.length === 0}<div class="chart-placeholder"><span>Waiting for fresh market price data.</span></div>
 		{:else}<canvas bind:this={canvas} class="oracle-candlestick-canvas" aria-label={`${ticker} / USDC OHLC price history`} onpointermove={onPointerMove} onpointerleave={() => hoveredIndex = null}></canvas>
 			{#if displayCandle}<div class="chart-ohlc" aria-label="Selected candle"><span>O <b>{displayCandle.open.toFixed(2)}</b></span><span>H <b>{displayCandle.high.toFixed(2)}</b></span><span>L <b>{displayCandle.low.toFixed(2)}</b></span><span>C <b>{displayCandle.close.toFixed(2)}</b></span></div>{/if}
 		{/if}
