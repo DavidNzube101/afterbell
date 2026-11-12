@@ -29,8 +29,12 @@ export type SignedActionPayload = { account_id: string; message: string; nonce: 
 export type TradeBootstrapData = {
   accountId: string
   marketId: string
+  range: string
   snapshots: MarketSnapshot[]
   volumes: Record<string, string>
+  points: PricePoint[]
+  volumePoints: VolumePoint[]
+  historyStartMs: number | null
   positions: PositionRecord[]
   balanceRaw: string
   depositInstructions: { contract_id: string; token_id: string; network: string }
@@ -66,21 +70,26 @@ export const getHistory = (account: string) => request<{ events: ActivityRecord[
 export const getNotifications = (account: string) => request<{ notifications: NotificationRecord[] }>(`/v1/notifications?${params({ account_id: account })}`)
 export const getAccountBalance = (account: string) => request<{ account_id: string; balance_usdc: string }>(`/v1/account/balance?${params({ account_id: account })}`)
 
-export async function preloadTradeDashboard(accountId: string, marketId = 'NVDA') {
-  const key = `${accountId}:${marketId}`
+export async function preloadTradeDashboard(accountId: string, marketId = 'NVDA', range = '1h') {
+  const key = `${accountId}:${marketId}:${range}`
   if (tradeBootstrapPending?.key === key) return tradeBootstrapPending.promise
   const promise = Promise.all([
     getSnapshots(),
     getMarketVolumes(),
+    getMarketHistory(marketId, range),
     getPositions(accountId),
     getAccountBalance(accountId),
     getDepositInstructions(accountId),
-  ]).then(([snapshots, volumeRows, positionData, balance, instructions]) => {
+  ]).then(([snapshots, volumeRows, history, positionData, balance, instructions]) => {
     tradeBootstrapCache = {
       accountId,
       marketId,
+      range,
       snapshots,
       volumes: Object.fromEntries(volumeRows.map(row => [row.market_id, row.volume_usdc_raw])),
+      points: history.points,
+      volumePoints: history.volume_points ?? [],
+      historyStartMs: history.history_start_ms,
       positions: positionData.positions,
       balanceRaw: String(balance.balance_usdc),
       depositInstructions: instructions,
@@ -95,9 +104,9 @@ export async function preloadTradeDashboard(accountId: string, marketId = 'NVDA'
   }
 }
 
-export function getTradeBootstrapData(accountId: string, marketId: string) {
+export function getTradeBootstrapData(accountId: string, marketId: string, range: string) {
   const cached = tradeBootstrapCache
-  if (!cached || cached.accountId !== accountId || cached.marketId !== marketId || Date.now() - cached.loadedAt > 60_000) return null
+  if (!cached || cached.accountId !== accountId || cached.marketId !== marketId || cached.range !== range || Date.now() - cached.loadedAt > 60_000) return null
   return cached
 }
 

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState, useRef, useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
+import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
 import { TradeBootstrapScreen } from '../components/TradeBootstrapScreen'
 import logo from '../assets/afterbell-logo.png'
@@ -9,11 +9,11 @@ import shareImage3 from '../assets/share-images/3.png'
 import { TickerIcon } from '../components/TickerIcon'
 import { UsdcIcon } from '../components/UsdcIcon'
 import { WalletDetailsModal } from '../components/WalletDetailsModal'
-import { markets } from '../data/markets'
+import { markets, type Market } from '../data/markets'
 import { useMarketRegistry } from '../lib/api'
 import { useWalletSession } from '../lib/wallet-session'
 import { getChainName, getWalletIcon } from '../lib/wallet-icons'
-import { clearNotifications, clearTradeBootstrapData, deleteNotification, dollars, getAccountBalance, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, getTradeBootstrapData, postTrade, preloadTradeDashboard, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord } from '../lib/dashboard'
+import { clearNotifications, clearTradeBootstrapData, deleteNotification, dollars, getAccountBalance, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, getTradeBootstrapData, postTrade, preloadTradeDashboard, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint, type VolumePoint } from '../lib/dashboard'
 import { useToasts } from '../lib/toasts'
 import './trade.css'
 
@@ -32,7 +32,7 @@ function TradeEntry() {
   const marketId = selectedMarket ?? markets[0].ticker
   const [attempt, setAttempt] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [ready, setReady] = useState(() => Boolean(session && getTradeBootstrapData(session.accountId, marketId)))
+  const [ready, setReady] = useState(() => Boolean(session && getTradeBootstrapData(session.accountId, marketId, '1h')))
 
   useEffect(() => {
     if (!session) {
@@ -40,7 +40,7 @@ function TradeEntry() {
       return
     }
     let active = true
-    const cached = getTradeBootstrapData(session.accountId, marketId)
+    const cached = getTradeBootstrapData(session.accountId, marketId, '1h')
     if (cached) {
       setReady(true)
       return () => { active = false }
@@ -83,6 +83,210 @@ function loadCanvasSvg(svg: SVGSVGElement) {
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
   const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml;charset=utf-8' }))
   return loadCanvasImage(url).finally(() => URL.revokeObjectURL(url))
+}
+
+const chartRanges = ['1h', '1d', '1w', '1m', 'all'] as const
+type ChartRange = typeof chartRanges[number]
+const candleIntervalMs: Record<ChartRange, number> = { '1h': 900_000, '1d': 3_600_000, '1w': 14_400_000, '1m': 86_400_000, all: 86_400_000 }
+function PriceChart({ market, points, volumePoints, range, onRangeChange }: { market: Market; points: PricePoint[]; volumePoints: VolumePoint[]; range: ChartRange; onRangeChange: (range: ChartRange) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hoverRef = useRef<{ index: number; y: number } | null>(null)
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const candles = useMemo(() => {
+    const buckets = new Map<number, { open: number; high: number; low: number; close: number; volume: number }>()
+    const interval = candleIntervalMs[range]
+    const volumes = new Map<number, number>()
+    for (const point of volumePoints) {
+      const bucket = Math.floor(point.timestamp_ms / interval) * interval
+      const amount = Number(BigInt(point.volume_usdg_raw)) / 1_000_000
+      if (Number.isFinite(amount)) volumes.set(bucket, (volumes.get(bucket) ?? 0) + amount)
+    }
+    for (const point of [...points].sort((left, right) => left.timestamp_ms - right.timestamp_ms)) {
+      const value = dollars(point.price_e8)
+      if (!Number.isFinite(value) || value <= 0) continue
+      const bucket = Math.floor(point.timestamp_ms / interval) * interval
+      const current = buckets.get(bucket)
+      if (current) { current.high = Math.max(current.high, value); current.low = Math.min(current.low, value); current.close = value }
+      else buckets.set(bucket, { open: value, high: value, low: value, close: value, volume: 0 })
+    }
+    return Array.from(buckets, ([timestamp, candle]) => ({ time: timestamp, ...candle, volume: volumes.get(timestamp) ?? 0 }))
+      .sort((left, right) => left.time - right.time)
+  }, [points, volumePoints, range])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const context = canvas?.getContext('2d')
+    if (!canvas || !context) return
+    hoverRef.current = null
+    let paintFrame = 0
+    const paint = () => {
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
+      if (!width || !height) return
+      const dpr = window.devicePixelRatio || 1
+      const backingWidth = Math.round(width * dpr)
+      const backingHeight = Math.round(height * dpr)
+      if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+        canvas.width = backingWidth
+        canvas.height = backingHeight
+      }
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+      context.clearRect(0, 0, width, height)
+      if (!candles.length) return
+
+      const left = 12
+      const right = Math.min(width * 0.2, 76)
+      const top = 20
+      const bottom = 26
+      const volumeHeight = Math.min(74, Math.max(42, height * 0.18))
+      const volumeGap = 12
+      const priceBottom = height - bottom - volumeHeight - volumeGap
+      const plotWidth = width - left - right
+      const plotHeight = priceBottom - top
+      if (plotWidth <= 0 || plotHeight <= 0) return
+
+      const minPrice = Math.min(...candles.map(candle => candle.low))
+      const maxPrice = Math.max(...candles.map(candle => candle.high))
+      const padding = Math.max((maxPrice - minPrice) * 0.1, maxPrice * 0.001)
+      const low = Math.max(0, minPrice - padding)
+      const high = maxPrice + padding
+      const timeStart = candles[0].time - candleIntervalMs[range] / 2
+      const timeEnd = candles[candles.length - 1].time + candleIntervalMs[range] / 2
+      const timeSpan = Math.max(candleIntervalMs[range], timeEnd - timeStart)
+      const x = (time: number) => left + (time - timeStart) / timeSpan * plotWidth
+      const y = (price: number) => top + (high - price) / (high - low || 1) * plotHeight
+      const font = getComputedStyle(canvas).fontFamily
+      context.font = `12px ${font}`
+      context.fillStyle = '#18212d'
+      context.beginPath()
+      for (let gx = left; gx <= width - right; gx += 24) {
+        for (let gy = top; gy <= height - bottom; gy += 24) {
+          context.moveTo(gx + 0.7, gy)
+          context.arc(gx, gy, 0.7, 0, Math.PI * 2)
+        }
+      }
+      context.fill()
+      context.fillStyle = '#8492a3'
+      context.textAlign = 'left'
+      for (let tick = 0; tick <= 4; tick++) {
+        const value = high - (high - low) * tick / 4
+        context.fillText(value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), width - right + 8, top + plotHeight * tick / 4 + 4)
+      }
+
+      const maxVolume = Math.max(1, ...candles.map(candle => candle.volume))
+      const bodyWidth = Math.max(1, Math.min(12, plotWidth * candleIntervalMs[range] / timeSpan * 0.72))
+      for (const candle of candles) {
+        const centerX = x(candle.time)
+        const openY = y(candle.open)
+        const closeY = y(candle.close)
+        const color = candle.close >= candle.open ? '#18c77a' : '#ff583f'
+        context.strokeStyle = color
+        context.lineWidth = 1
+        context.beginPath()
+        context.moveTo(centerX, y(candle.high))
+        context.lineTo(centerX, y(candle.low))
+        context.stroke()
+        context.fillStyle = color
+        context.fillRect(centerX - bodyWidth / 2, Math.min(openY, closeY), bodyWidth, Math.max(1.5, Math.abs(closeY - openY)))
+        if (candle.volume > 0) {
+          const barHeight = candle.volume / maxVolume * (volumeHeight - 4)
+          context.globalAlpha = 0.55
+          context.fillRect(centerX - bodyWidth / 2, height - bottom - barHeight, bodyWidth, barHeight)
+          context.globalAlpha = 1
+        }
+      }
+
+      const last = candles[candles.length - 1]
+      const lastY = y(last.close)
+      context.strokeStyle = 'rgba(132, 146, 163, .42)'
+      context.setLineDash([4, 5])
+      context.beginPath()
+      context.moveTo(left, lastY)
+      context.lineTo(width - right, lastY)
+      context.stroke()
+      context.setLineDash([])
+      context.fillStyle = '#10161f'
+      context.fillRect(width - right + 2, lastY - 12, right - 4, 24)
+      context.strokeStyle = last.close >= last.open ? '#18c77a' : '#ff583f'
+      context.strokeRect(width - right + 2, lastY - 12, right - 4, 24)
+      context.fillStyle = last.close >= last.open ? '#18c77a' : '#ff583f'
+      context.fillText(last.close.toFixed(2), width - right + 8, lastY + 4)
+
+      context.fillStyle = '#8492a3'
+      const timeTicks = width < 480 ? 3 : 5
+      for (let tick = 0; tick < timeTicks; tick++) {
+        const time = timeStart + timeSpan * tick / (timeTicks - 1)
+        const options: Intl.DateTimeFormatOptions = range === '1w' || range === '1m' || range === 'all'
+          ? { month: 'short', day: 'numeric' }
+          : { hour: '2-digit', minute: '2-digit' }
+        context.textAlign = tick === 0 ? 'left' : tick === timeTicks - 1 ? 'right' : 'center'
+        context.fillText(new Date(time).toLocaleString([], options), x(time), height - 6)
+      }
+      context.textAlign = 'left'
+      if (hoverRef.current) {
+        const candle = candles[hoverRef.current.index]
+        const crossX = x(candle.time)
+        context.strokeStyle = 'rgba(132, 146, 163, .55)'
+        context.lineWidth = 0.7
+        context.beginPath()
+        context.moveTo(crossX, top)
+        context.lineTo(crossX, height - bottom)
+        context.moveTo(left, hoverRef.current.y)
+        context.lineTo(width - right, hoverRef.current.y)
+        context.stroke()
+      }
+    }
+    const schedulePaint = () => {
+      if (paintFrame) return
+      paintFrame = window.requestAnimationFrame(() => {
+        paintFrame = 0
+        paint()
+      })
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      if (!candles.length) return
+      const rect = canvas.getBoundingClientRect()
+      const px = event.clientX - rect.left
+      const start = candles[0].time - candleIntervalMs[range] / 2
+      const end = candles[candles.length - 1].time + candleIntervalMs[range] / 2
+      const right = Math.min(canvas.clientWidth * 0.2, 76)
+      const t = start + (px - 12) / (canvas.clientWidth - 12 - right) * (end - start)
+      const index = candles.reduce((best, candle, i) => Math.abs(candle.time - t) < Math.abs(candles[best].time - t) ? i : best, 0)
+      hoverRef.current = { index, y: event.clientY - rect.top }
+      setHoveredIndex(current => current === index ? current : index)
+      schedulePaint()
+    }
+    const onPointerLeave = () => { hoverRef.current = null; setHoveredIndex(null); schedulePaint() }
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerleave', onPointerLeave)
+    const resize = new ResizeObserver(schedulePaint)
+    resize.observe(canvas.parentElement ?? canvas)
+    paint()
+    return () => {
+      resize.disconnect()
+      if (paintFrame) window.cancelAnimationFrame(paintFrame)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerleave', onPointerLeave)
+    }
+  }, [candles, range])
+
+  const latest = candles[candles.length - 1]
+  const displayCandle = hoveredIndex === null ? latest : candles[hoveredIndex] ?? latest
+  return <div className="chart-shell">
+    <div className="chart-tools">
+      <div className="chart-pair"><span>{market.ticker} / USDC</span></div>
+      <div className="chart-actions" role="group" aria-label="Chart time range">{chartRanges.map(item => <button key={item} className={`chart-range-button ${range === item ? 'active' : ''}`} onClick={() => onRangeChange(item)}>{item.toUpperCase()}</button>)}</div>
+    </div>
+    <div className="real-market-chart" role="img" aria-label={`${market.name} candlestick chart`}>
+      {candles.length === 0 ? <div className="chart-placeholder">
+        {latest && <strong>${latest.close.toFixed(2)}</strong>}
+        <span>{latest ? 'Collecting more A1 price updates to build the chart.' : 'Waiting for fresh market price data.'}</span>
+      </div> : <>
+        <canvas ref={canvasRef} className="oracle-candlestick-canvas" aria-label={`${market.ticker} / USDC OHLC price history`} />
+        {displayCandle && <div className="chart-ohlc" aria-label="Selected candle"><span>O <b>{displayCandle.open.toFixed(2)}</b></span><span>H <b>{displayCandle.high.toFixed(2)}</b></span><span>L <b>{displayCandle.low.toFixed(2)}</b></span><span>C <b>{displayCandle.close.toFixed(2)}</b></span></div>}
+      </>}
+    </div>
+  </div>
 }
 
 type PerformanceState = { ms: number | null }
@@ -155,7 +359,7 @@ function TradingPage() {
   }, [session])
   const { market: selectedTicker, side: initialSide } = Route.useSearch()
   const initialMarket = selectedTicker ?? markets[0].ticker
-  const bootstrap = session ? getTradeBootstrapData(session.accountId, initialMarket) : null
+  const bootstrap = session ? getTradeBootstrapData(session.accountId, initialMarket, '1h') : null
   const [selectedMarket, setSelectedMarket] = useState(initialMarket)
   const { markets: availableMarkets } = useMarketRegistry()
   const [side, setSide] = useState<'long' | 'short'>(initialSide ?? 'long')
@@ -171,8 +375,12 @@ function TradingPage() {
   const [positions, setPositions] = useState<PositionRecord[]>(() => bootstrap?.positions ?? [])
   const [limitOrders, setLimitOrders] = useState<LimitOrderRecord[]>([])
   const [history, setHistory] = useState<ActivityRecord[]>([])
+  const [pricePoints, setPricePoints] = useState<PricePoint[]>(() => bootstrap?.points ?? [])
+  const [volumePoints, setVolumePoints] = useState<VolumePoint[]>(() => bootstrap?.volumePoints ?? [])
+  const [historyStartMs, setHistoryStartMs] = useState<number | null>(() => bootstrap?.historyStartMs ?? null)
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>(() => bootstrap?.snapshots ?? [])
   const [volumes, setVolumes] = useState<Record<string, string>>(() => bootstrap?.volumes ?? {})
+  const [chartRange, setChartRange] = useState<ChartRange>('1h')
   const [metricsLoadedMarket, setMetricsLoadedMarket] = useState<string | null>(() => bootstrap?.marketId ?? null)
   const [availableBalance, setAvailableBalance] = useState<number | null>(() => bootstrap ? usdc(bootstrap.balanceRaw) : null)
   const [balanceRaw, setBalanceRaw] = useState<string | null>(() => bootstrap?.balanceRaw ?? null)
@@ -205,8 +413,9 @@ function TradingPage() {
   const [shareNotice, setShareNotice] = useState('')
   const [notice, setNotice] = useState('')
   const [orderWidth, setOrderWidth] = useState(342)
+  const [chartHeight, setChartHeight] = useState(485)
   const marketMenuRef = useRef<HTMLDivElement>(null)
-  const dragState = useRef<{ axis: 'x'; start: number; initial: number } | null>(null)
+  const dragState = useRef<{ axis: 'x' | 'y'; start: number; initial: number } | null>(null)
   const market = availableMarkets.find(item => item.ticker === selectedMarket) ?? availableMarkets[0]
   const filteredMarkets = availableMarkets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase()))
   const snapshot = snapshots.find(item => item.market_id === market.ticker)
@@ -229,6 +438,7 @@ function TradingPage() {
     }
     dashboardRefreshInFlightRef.current = true
     const requestedMarket = market.ticker
+    const requestedRange = chartRange
     if (metricsRequestMarketRef.current !== market.ticker) {
       metricsRequestMarketRef.current = market.ticker
       setMetricsLoadedMarket(null)
@@ -236,6 +446,12 @@ function TradingPage() {
     const tasks: Promise<unknown>[] = [
       getSnapshots().then(data => setSnapshots(Array.isArray(data) ? data : [])),
       getMarketVolumes().then(rows => { setVolumes(Object.fromEntries(rows.map(row => [row.market_id, row.volume_usdc_raw]))) }),
+      getMarketHistory(requestedMarket, requestedRange).then(data => {
+        if (metricsRequestMarketRef.current !== requestedMarket) return
+        setPricePoints(Array.isArray(data.points) ? data.points : [])
+        setVolumePoints(Array.isArray(data.volume_points) ? data.volume_points : [])
+        setHistoryStartMs(data.history_start_ms)
+      }),
       getPositions(session.accountId).then(data => setPositions(data.positions)),
       ...(activeTabRef.current === 'Open orders' ? [getLimits(session.accountId).then(data => setLimitOrders(data.orders))] : []),
       ...(activeTabRef.current === 'History' ? [getHistory(session.accountId).then(data => setHistory(data.events))] : []),
@@ -278,7 +494,7 @@ function TradingPage() {
     const timer = window.setInterval(pollWhenVisible, 30000)
     document.addEventListener('visibilitychange', pollWhenVisible)
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', pollWhenVisible) }
-  }, [session?.accountId, market.ticker, balanceModalOpen, activeTab, notificationsOpen])
+  }, [session?.accountId, market.ticker, chartRange, balanceModalOpen, activeTab, notificationsOpen])
 
   useEffect(() => {
     if (!balanceModalOpen || session?.chain !== 'near') return
@@ -288,6 +504,22 @@ function TradingPage() {
     }).catch(() => undefined)
     return () => { active = false }
   }, [balanceModalOpen, session?.chain, session?.address])
+
+  function selectChartRange(next: ChartRange) {
+    const requiredMs: Record<ChartRange, number> = {
+      '1h': 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000,
+      '1w': 7 * 24 * 60 * 60 * 1000,
+      '1m': 30 * 24 * 60 * 60 * 1000,
+      all: 30 * 24 * 60 * 60 * 1000,
+    }
+    const coverageMs = historyStartMs === null ? 0 : Date.now() - historyStartMs
+    if (coverageMs < requiredMs[next]) {
+      showToast('waiting', 'We’re still collecting enough market history for that chart range.')
+      return
+    }
+    setChartRange(next)
+  }
 
   const walletIcon = session ? getWalletIcon(session.walletName) : undefined
   const chainName = session ? getChainName(session.chain) : 'NEAR'
@@ -481,16 +713,17 @@ function TradingPage() {
     setShareNotice('Trade card downloaded')
   }
 
-  function startResize(axis: 'x', event: ReactPointerEvent<HTMLButtonElement>, initial: number) {
+  function startResize(axis: 'x' | 'y', event: ReactPointerEvent<HTMLButtonElement>, initial: number) {
     event.preventDefault()
-    dragState.current = { axis, start: event.clientX, initial }
+    dragState.current = { axis, start: axis === 'x' ? event.clientX : event.clientY, initial }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   function moveResize(event: ReactPointerEvent<HTMLButtonElement>) {
     const drag = dragState.current
     if (!drag) return
-    setOrderWidth(Math.min(480, Math.max(290, drag.initial - (event.clientX - drag.start))))
+    if (drag.axis === 'x') setOrderWidth(Math.min(480, Math.max(290, drag.initial - (event.clientX - drag.start))))
+    else setChartHeight(Math.min(720, Math.max(300, drag.initial + (event.clientY - drag.start))))
   }
 
   function endResize() { dragState.current = null }
@@ -533,12 +766,9 @@ function TradingPage() {
         <div className="stock-quote"><small>{market.ticker}-USDC</small><strong>{metricsLoadedMarket !== market.ticker ? <span className="metric-skeleton"/> : latestPrice ? money(latestPrice) : 'Unavailable'}</strong></div>
       </section>
 
-      <div className="trading-grid" style={{ '--order-width': `${orderWidth}px` } as CSSProperties}>
-        <section className="market-workspace" aria-label="Market chart and positions">
-          <section className="chart-shell chart-coming-soon" aria-label="Market chart">
-            <div className="chart-tools"><div className="chart-pair"><span>{market.ticker} / USDC</span></div></div>
-            <div className="chart-placeholder"><strong>Chart coming soon</strong><span>Market and position data remain available in the trading panel.</span></div>
-          </section>
+      <div className="trading-grid" style={{ '--order-width': `${orderWidth}px`, '--chart-height': `${chartHeight}px` } as CSSProperties}>
+        <section className="market-workspace" aria-label="Market chart and positions"><PriceChart market={market} points={pricePoints} volumePoints={volumePoints} range={chartRange} onRangeChange={selectChartRange}/>
+          <button className="resize-handle resize-horizontal" aria-label="Resize chart and positions panels" onPointerDown={event => startResize('y', event, chartHeight)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={endResize}><span/></button>
           <div className="positions-panel">
             <div className="positions-heading"><div className="position-tabs">{['Positions', 'Open orders', 'History'].map(tab => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}{tab === 'Positions' && <span className="tab-count">{positions.length}</span>}</button>)}</div></div>
             <div className="position-table-wrap"><table className="position-table"><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>{activeTab === 'Open orders' ? 'Limit price' : 'Margin'}</th><th>{activeTab === 'History' ? 'Event' : 'Leverage'}</th><th>{activeTab === 'History' ? 'Time' : 'Entry price'}</th><th>{activeTab === 'History' ? 'Transaction' : 'Mark price'}</th><th>{activeTab === 'History' ? 'Status' : 'Unrealized PnL'}</th><th/></tr></thead><tbody>
