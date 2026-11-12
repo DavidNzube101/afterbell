@@ -26,6 +26,22 @@ export type ActivityRecord = { id: string; event_type: string; title: string; me
 export type NotificationRecord = ActivityRecord
 export type LiquidityOverview = { account_id: string; balance_usdc: string; lp_shares: string; total_lp_shares: string; vault_nav_usdc: string; available_liquidity_usdc: string; vault_balance_usdc: string; withdrawal_request: null | { shares: string; min_amount_usdc: string; requested_at_ms: number } }
 export type SignedActionPayload = { account_id: string; message: string; nonce: number; expires_at_ms: number; recipient: string; amount_usdc?: string; shares?: string; min_amount_usdc?: string }
+export type TradeBootstrapData = {
+  accountId: string
+  marketId: string
+  range: string
+  snapshots: MarketSnapshot[]
+  volumes: Record<string, string>
+  points: PricePoint[]
+  volumePoints: VolumePoint[]
+  historyStartMs: number | null
+  positions: PositionRecord[]
+  balanceRaw: string
+  depositInstructions: { contract_id: string; token_id: string; network: string }
+  loadedAt: number
+}
+let tradeBootstrapCache: TradeBootstrapData | null = null
+let tradeBootstrapPending: { key: string; promise: Promise<void> } | null = null
 
 export async function getSnapshots(): Promise<MarketSnapshot[]> {
   const data = await request<unknown>('/v1/markets/snapshot')
@@ -52,6 +68,51 @@ export const getPositions = (account: string) => request<{ positions: PositionRe
 export const getLimits = (account: string) => request<{ orders: LimitOrderRecord[] }>(`/v1/trade/limits?${params({ account_id: account })}`)
 export const getHistory = (account: string) => request<{ events: ActivityRecord[] }>(`/v1/trade/history?${params({ account_id: account })}`)
 export const getNotifications = (account: string) => request<{ notifications: NotificationRecord[] }>(`/v1/notifications?${params({ account_id: account })}`)
+export const getAccountBalance = (account: string) => request<{ account_id: string; balance_usdc: string }>(`/v1/account/balance?${params({ account_id: account })}`)
+
+export async function preloadTradeDashboard(accountId: string, marketId = 'NVDA', range = '1h') {
+  const key = `${accountId}:${marketId}:${range}`
+  if (tradeBootstrapPending?.key === key) return tradeBootstrapPending.promise
+  const promise = Promise.all([
+    getSnapshots(),
+    getMarketVolumes(),
+    getMarketHistory(marketId, range),
+    getPositions(accountId),
+    getAccountBalance(accountId),
+    getDepositInstructions(accountId),
+  ]).then(([snapshots, volumeRows, history, positionData, balance, instructions]) => {
+    tradeBootstrapCache = {
+      accountId,
+      marketId,
+      range,
+      snapshots,
+      volumes: Object.fromEntries(volumeRows.map(row => [row.market_id, row.volume_usdc_raw])),
+      points: history.points,
+      volumePoints: history.volume_points ?? [],
+      historyStartMs: history.history_start_ms,
+      positions: positionData.positions,
+      balanceRaw: String(balance.balance_usdc),
+      depositInstructions: instructions,
+      loadedAt: Date.now(),
+    }
+  })
+  tradeBootstrapPending = { key, promise }
+  try {
+    await promise
+  } finally {
+    if (tradeBootstrapPending?.promise === promise) tradeBootstrapPending = null
+  }
+}
+
+export function getTradeBootstrapData(accountId: string, marketId: string, range: string) {
+  const cached = tradeBootstrapCache
+  if (!cached || cached.accountId !== accountId || cached.marketId !== marketId || cached.range !== range || Date.now() - cached.loadedAt > 60_000) return null
+  return cached
+}
+
+export function clearTradeBootstrapData(accountId: string) {
+  if (tradeBootstrapCache?.accountId === accountId) tradeBootstrapCache = null
+}
 export const deleteNotification = (account: string, id: string) => request(`/v1/notifications/${encodeURIComponent(id)}?${params({ account_id: account })}`, { method: 'DELETE' })
 export const clearNotifications = (account: string) => request(`/v1/notifications?${params({ account_id: account })}`, { method: 'DELETE' })
 export const postTrade = <T>(path: string, body: unknown) => request<T>(path, json(body))

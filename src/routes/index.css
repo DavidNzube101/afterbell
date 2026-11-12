@@ -48,6 +48,7 @@ button, a { font: inherit; }
 
 .brand-mark { display: block; width: 31px; height: 31px; object-fit: contain; }
 
+
 .auth-content {
   width: min(100%, 420px);
   align-self: center;

@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useWalletSession, type WalletChain as AdapterChain } from '../lib/wallet-session'
+import { preloadTradeDashboard } from '../lib/dashboard'
+import { TradeBootstrapScreen } from '../components/TradeBootstrapScreen'
 import { useToasts } from '../lib/toasts'
 import logo from '../assets/afterbell-logo.png'
 import phantomIcon from '../assets/wallet-icons/phantom.jpeg'
@@ -138,13 +140,32 @@ function AuthPage() {
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [selectedChain, setSelectedChain] = useState<WalletChain | null>(null)
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward' | null>(null)
+  const [tradeLoading, setTradeLoading] = useState(false)
+  const [tradeLoadError, setTradeLoadError] = useState<string | null>(null)
+  const loadingAccountRef = useRef<string | null>(null)
+
+  async function loadTradeWorkspace(accountId: string) {
+    if (loadingAccountRef.current === accountId) return
+    loadingAccountRef.current = accountId
+    setTradeLoading(true)
+    setTradeLoadError(null)
+    try {
+      await preloadTradeDashboard(accountId)
+      await navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
+    } catch (error) {
+      setTradeLoadError(error instanceof Error ? error.message : 'Could not load the trading workspace.')
+    } finally {
+      loadingAccountRef.current = null
+      setTradeLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (session) {
       const firstTimeSetup = sessionStorage.getItem('afterbell.first-time-setup') === 'true' ||
         localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) === 'true'
       if (firstTimeSetup) void navigate({ to: '/setting-up', replace: true })
-      else void navigate({ to: '/trade', search: { market: undefined, side: undefined }, replace: true })
+      else void loadTradeWorkspace(session.accountId)
     }
   // A saved wallet is handled once at page entry. A fresh connection below
   // chooses either first-time setup or the core app explicitly.
@@ -188,17 +209,21 @@ function AuthPage() {
     const pendingToast = showToast('waiting', 'Waiting for wallet approval and account setup…', 0)
     try {
       const chain = selectedChain === 'Solana' ? 'solana' : selectedChain === 'EVM' ? 'evm' : 'near'
-      await connect(chain as AdapterChain, walletName)
+      const connectedSession = await connect(chain as AdapterChain, walletName)
       dismissToast(pendingToast)
       closeWalletModal()
       const firstTime = sessionStorage.getItem('afterbell.first-time-setup') === 'true'
       showToast('success', firstTime ? 'Wallet connected. Your account is ready to set up.' : 'Wallet connected.', 3500)
       if (firstTime) await navigate({ to: '/setting-up' })
-      else await navigate({ to: '/trade', search: { market: undefined, side: undefined } })
+      else await loadTradeWorkspace(connectedSession.accountId)
     } catch (error) {
       dismissToast(pendingToast)
       showToast('error', error instanceof Error ? error.message : 'Could not connect wallet. Please try again.')
     }
+  }
+
+  if (tradeLoading || tradeLoadError) {
+    return <TradeBootstrapScreen error={tradeLoadError} onRetry={session ? () => void loadTradeWorkspace(session.accountId) : undefined} />
   }
 
   return (

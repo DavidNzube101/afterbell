@@ -1,6 +1,7 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useRef, useEffect, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ChangeEvent } from 'react'
 import { AccountBalanceModal } from '../components/AccountBalanceModal'
+import { TradeBootstrapScreen } from '../components/TradeBootstrapScreen'
 import logo from '../assets/afterbell-logo.png'
 import shareImage1 from '../assets/share-images/1.png'
 import shareImage2 from '../assets/share-images/2.png'
@@ -12,7 +13,7 @@ import { markets, type Market } from '../data/markets'
 import { useMarketRegistry } from '../lib/api'
 import { useWalletSession } from '../lib/wallet-session'
 import { getChainName, getWalletIcon } from '../lib/wallet-icons'
-import { clearNotifications, deleteNotification, dollars, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, postTrade, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint, type VolumePoint } from '../lib/dashboard'
+import { clearNotifications, clearTradeBootstrapData, deleteNotification, dollars, getAccountBalance, getAccountWithdrawalPayload, getDepositInstructions, getHistory, getLimits, getMarketHistory, getMarketVolumes, getNearWalletBalance, getNotifications, getPositions, getSnapshots, getTradeBootstrapData, postTrade, preloadTradeDashboard, priceToRaw, submitAccountWithdrawal, usdc, usdcToRaw, walletPayload, type ActivityRecord, type LimitOrderRecord, type MarketSnapshot, type NotificationRecord, type PositionRecord, type PricePoint, type VolumePoint } from '../lib/dashboard'
 import { useToasts } from '../lib/toasts'
 import './trade.css'
 
@@ -21,8 +22,42 @@ export const Route = createFileRoute('/trade')({
     market: typeof search.market === 'string' ? search.market : undefined,
     side: search.side === 'long' || search.side === 'short' ? search.side : undefined,
   }),
-  component: TradingPage,
+  component: TradeEntry,
 })
+
+function TradeEntry() {
+  const navigate = useNavigate()
+  const { session } = useWalletSession()
+  const { market: selectedMarket } = Route.useSearch()
+  const marketId = selectedMarket ?? markets[0].ticker
+  const [attempt, setAttempt] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [ready, setReady] = useState(() => Boolean(session && getTradeBootstrapData(session.accountId, marketId, '1h')))
+
+  useEffect(() => {
+    if (!session) {
+      void navigate({ to: '/', replace: true })
+      return
+    }
+    let active = true
+    const cached = getTradeBootstrapData(session.accountId, marketId, '1h')
+    if (cached) {
+      setReady(true)
+      return () => { active = false }
+    }
+    setReady(false)
+    setError(null)
+    void preloadTradeDashboard(session.accountId, marketId).then(() => {
+      if (active) setReady(true)
+    }).catch(loadError => {
+      if (active) setError(loadError instanceof Error ? loadError.message : 'Could not load the trading workspace.')
+    })
+    return () => { active = false }
+  }, [session?.accountId, marketId, attempt, navigate])
+
+  if (!session || !ready) return <TradeBootstrapScreen error={error} onRetry={() => setAttempt(value => value + 1)} />
+  return <TradingPage />
+}
 
 function Icon({ name }: { name: 'chart' | 'chevron' | 'bell' | 'search' }) {
   const paths = {
@@ -323,7 +358,9 @@ function TradingPage() {
     if (!session) window.location.assign('/')
   }, [session])
   const { market: selectedTicker, side: initialSide } = Route.useSearch()
-  const [selectedMarket, setSelectedMarket] = useState(selectedTicker ?? markets[0].ticker)
+  const initialMarket = selectedTicker ?? markets[0].ticker
+  const bootstrap = session ? getTradeBootstrapData(session.accountId, initialMarket, '1h') : null
+  const [selectedMarket, setSelectedMarket] = useState(initialMarket)
   const { markets: availableMarkets } = useMarketRegistry()
   const [side, setSide] = useState<'long' | 'short'>(initialSide ?? 'long')
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
@@ -335,20 +372,20 @@ function TradingPage() {
   const [marketSearch, setMarketSearch] = useState('')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
-  const [positions, setPositions] = useState<PositionRecord[]>([])
+  const [positions, setPositions] = useState<PositionRecord[]>(() => bootstrap?.positions ?? [])
   const [limitOrders, setLimitOrders] = useState<LimitOrderRecord[]>([])
   const [history, setHistory] = useState<ActivityRecord[]>([])
-  const [pricePoints, setPricePoints] = useState<PricePoint[]>([])
-  const [volumePoints, setVolumePoints] = useState<VolumePoint[]>([])
-  const [historyStartMs, setHistoryStartMs] = useState<number | null>(null)
-  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
-  const [volumes, setVolumes] = useState<Record<string, string>>({})
+  const [pricePoints, setPricePoints] = useState<PricePoint[]>(() => bootstrap?.points ?? [])
+  const [volumePoints, setVolumePoints] = useState<VolumePoint[]>(() => bootstrap?.volumePoints ?? [])
+  const [historyStartMs, setHistoryStartMs] = useState<number | null>(() => bootstrap?.historyStartMs ?? null)
+  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>(() => bootstrap?.snapshots ?? [])
+  const [volumes, setVolumes] = useState<Record<string, string>>(() => bootstrap?.volumes ?? {})
   const [chartRange, setChartRange] = useState<ChartRange>('1h')
-  const [metricsLoadedMarket, setMetricsLoadedMarket] = useState<string | null>(null)
-  const [availableBalance, setAvailableBalance] = useState<number | null>(null)
-  const [balanceRaw, setBalanceRaw] = useState<string | null>(null)
+  const [metricsLoadedMarket, setMetricsLoadedMarket] = useState<string | null>(() => bootstrap?.marketId ?? null)
+  const [availableBalance, setAvailableBalance] = useState<number | null>(() => bootstrap ? usdc(bootstrap.balanceRaw) : null)
+  const [balanceRaw, setBalanceRaw] = useState<string | null>(() => bootstrap?.balanceRaw ?? null)
   const [nearWalletBalanceRaw, setNearWalletBalanceRaw] = useState<string | null>(null)
-  const [depositInstructions, setDepositInstructions] = useState<{ contract_id: string; token_id: string; network: string } | null>(null)
+  const [depositInstructions, setDepositInstructions] = useState<{ contract_id: string; token_id: string; network: string } | null>(() => bootstrap?.depositInstructions ?? null)
   const [balanceModalOpen, setBalanceModalOpen] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const [limitPrice, setLimitPrice] = useState('')
@@ -359,16 +396,17 @@ function TradingPage() {
   const [shareBackground, setShareBackground] = useState('gradient-1')
   const [customShareBackground, setCustomShareBackground] = useState<string | null>(null)
   const shareCardRef = useRef<HTMLElement>(null)
-  const metricsRequestMarketRef = useRef<string | null>(null)
+  const metricsRequestMarketRef = useRef<string | null>(bootstrap?.marketId ?? null)
   const dashboardRefreshInFlightRef = useRef(false)
   const dashboardRefreshPendingRef = useRef(false)
+  const skipBootstrappedRefreshRef = useRef(Boolean(bootstrap))
   const refreshDashboardRef = useRef<() => Promise<void>>(async () => undefined)
   const notificationsLoadedRef = useRef(false)
   const notificationsAccountRef = useRef<string | null>(null)
   const activeTabRef = useRef(activeTab)
   const notificationsOpenRef = useRef(notificationsOpen)
   const depositInstructionsRef = useRef(depositInstructions)
-  const depositInstructionsAccountRef = useRef<string | null>(null)
+  const depositInstructionsAccountRef = useRef<string | null>(bootstrap ? session?.accountId ?? null : null)
   activeTabRef.current = activeTab
   notificationsOpenRef.current = notificationsOpen
   depositInstructionsRef.current = depositInstructions
@@ -422,7 +460,7 @@ function TradingPage() {
         notificationsLoadedRef.current = true
         notificationsAccountRef.current = session.accountId
       })] : []),
-      fetch(`/api/v1/account/balance?account_id=${encodeURIComponent(session.accountId)}`).then(response => response.ok ? response.json() : Promise.reject()).then(data => {
+      getAccountBalance(session.accountId).then(data => {
         const raw = String(data.balance_usdc)
         setBalanceRaw(raw)
         setAvailableBalance(usdc(raw))
@@ -446,7 +484,12 @@ function TradingPage() {
   refreshDashboardRef.current = refreshDashboard
   useEffect(() => {
     if (!session || balanceModalOpen) return
-    void refreshDashboard()
+    if (skipBootstrappedRefreshRef.current) {
+      skipBootstrappedRefreshRef.current = false
+      clearTradeBootstrapData(session.accountId)
+    } else {
+      void refreshDashboard()
+    }
     const pollWhenVisible = () => { if (document.visibilityState === 'visible') void refreshDashboard() }
     const timer = window.setInterval(pollWhenVisible, 30000)
     document.addEventListener('visibilitychange', pollWhenVisible)
