@@ -139,7 +139,7 @@
 						</div>
 					{:else}
 						<div class="chain-options">
-							{#each ['Solana', 'EVM', 'NEAR'] as chain (chain)}
+							{#each ['NEAR', 'Solana', 'EVM'] as chain (chain)}
 								<button class="chain-option" type="button" onclick={() => showWallets(chain as ChainLabel)}>
 									<img class="chain-option-icon" src={chain === 'Solana' ? '/assets/wallet-icons/chain-icons/solana.jpeg' : chain === 'EVM' ? '/assets/wallet-icons/chain-icons/etheruem.jpeg' : '/assets/wallet-icons/chain-icons/near.jpeg'} alt="" />
 									<span class="chain-option-copy"><strong>{chain}</strong><small>{chainDescriptions[chain as ChainLabel]}</small></span>
