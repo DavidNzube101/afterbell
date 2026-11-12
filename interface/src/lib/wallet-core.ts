@@ -36,7 +36,7 @@ export async function sendNearUsdcDeposit(walletName: string, expectedNetwork: s
   const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly(), setupMeteorWallet()] })
   const walletId = nearWalletSelectorId(walletName)
   const wallet = await selector.wallet(walletId)
-  let accounts = await wallet.getAccounts()
+  let accounts = await getNearWalletAccounts(wallet)
   if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId: tokenId, methodNames: ['ft_transfer_call'] })
   const signer = accounts[0]
   if (!signer) throw new Error('The selected wallet did not provide a NEAR account.')
@@ -61,6 +61,16 @@ function nearWalletSelectorId(walletName: string) {
   if (name.startsWith('hot')) return 'hot-wallet'
   if (name.startsWith('meteor')) return 'meteor-wallet'
   return 'nightly'
+}
+
+async function getNearWalletAccounts(wallet: { getAccounts: () => Promise<Array<{ accountId: string; publicKey?: string }>> }) {
+  try {
+    return await wallet.getAccounts()
+  } catch (error) {
+    // Meteor Wallet's selector adapter throws this when first used before sign-in.
+    if (error instanceof Error && error.message.includes('No current account connected to Meteor Wallet')) return []
+    throw error
+  }
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -183,7 +193,7 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
     const selector = await setupWalletSelector({ network: nearNetwork, modules: [setupHotWallet(), setupNightly(), setupMeteorWallet()] })
     const walletId = nearWalletSelectorId(walletName)
     const wallet = await selector.wallet(walletId)
-    let accounts = await wallet.getAccounts()
+    let accounts = await getNearWalletAccounts(wallet)
     if (!accounts.length) accounts = await (wallet.signIn as any)({ contractId, accounts: [] })
     const selected = accounts[0]
     if (!selected) throw new Error('The wallet did not return a NEAR account')
