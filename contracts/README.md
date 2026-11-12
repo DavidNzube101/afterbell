@@ -7,7 +7,7 @@ the directory name is historical and A1 is the product contract.
 
 ## A1 current source
 
-As of 5 Nov 2026, A1 implements the shared ledger, signed NEAR/Solana/Ethereum
+As of 12 Nov 2026, A1 implements the shared ledger, signed NEAR/Solana/Ethereum
 owner actions, NEP-141 deposits and withdrawals, agent records and policies,
 market configuration, quote-authorized trading, a single EOA-signed oracle,
 oracle freshness/deviation circuit breakers, isolated margin, partial and full
@@ -84,6 +84,7 @@ contain the value.
 | Component | Testnet account | Transaction |
 |---|---|---|
 | A1 shared ledger | `afterbellfx-dev-faucet.testnet` | [Deploy and initialize](https://explorer.testnet.near.org/transactions/5UqcRFyCmQuhPdtrVJhsVhVtBnJgdLAe1JxE9SMRDrVf) |
+| A1 immediate LP withdrawals | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/9acfJpECaH71LeQ8jggmNW8owDTe1nzZcgZF92hCUuRK) · WASM SHA-256 `778906267ecaeae4b1b779f9b166c0e9c3b4d791e804df0543d220fad728ce26` · 687,234 bytes |
 | A1 shared-signature upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy updated code](https://explorer.testnet.near.org/transactions/7oUEY62WJ9REoxf5MEQkJR2hjr9L2ToTLpeWjfEAxfiT) |
 | A1 agent-foundation upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy agent-record and position reservation code](https://explorer.testnet.near.org/transactions/2Cc8rBcDRerRaehHYH7c2WaypkxrFSMR7Gxn2K3mEAyb) |
 | A1 signed-price and PnL upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy testnet price publisher and PnL views](https://explorer.testnet.near.org/transactions/5emN9iDxsb51KhHqBpAfq7LTY9iFAdfLfsEVoQmCEVmT) |
