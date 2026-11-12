@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
     plugins: [sveltekit()],
     define: {
       global: 'globalThis',
+      'process.env': '{}',
     },
     server: {
       proxy: {
