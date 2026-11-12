@@ -64,6 +64,10 @@ const PERP_ORACLE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:oracle_signer";
 const PERP_PENDING_ORACLE_SIGNER_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_signer";
 const PERP_PENDING_ORACLE_SIGNER_AT_KEY: &[u8] = b"afterbell:a1:perp:pending_oracle_signer_at";
 const PERP_BETA_CAP_KEY: &[u8] = b"afterbell:a1:perp:beta_cap";
+const PERP_GLOBAL_RISK_CONFIG_KEY: &[u8] = b"afterbell:a1:perp:global_risk_config";
+const PERP_PENDING_GLOBAL_RISK_CONFIG_KEY: &[u8] = b"afterbell:a1:perp:pending_global_risk_config";
+const PERP_PENDING_GLOBAL_RISK_CONFIG_AT_KEY: &[u8] =
+    b"afterbell:a1:perp:pending_global_risk_config_at";
 const PERP_ORACLE_HEALTH_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_health:";
 const PERP_ORACLE_PENDING_JUMP_PREFIX: &[u8] = b"afterbell:a1:perp:oracle_pending_jump:";
 const PERP_DEFERRED_CLAIM_PREFIX: &[u8] = b"afterbell:a1:perp:deferred:";
@@ -87,11 +91,13 @@ const PERP_MAX_FUNDING_BPS_HOURLY: u16 = 25;
 const PERP_MAX_POSITION_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 const PERP_LIQUIDATION_PENALTY_BPS: u16 = 500;
 const PERP_LIQUIDATOR_REWARD_BPS: u16 = 250;
-const PERP_MAX_GLOBAL_NET_BPS: u16 = 1_000;
-const PERP_MAX_TOTAL_OI_BPS: u16 = 5_000;
-const PERP_MAX_MARKET_OI_BPS: u16 = 1_000;
-const PERP_MAX_MARKET_SKEW_BPS: u16 = 300;
-const PERP_MAX_TRADER_OI_BPS: u16 = 50;
+// Hard ceilings for delayed admin configuration. The runtime defaults remain
+// the conservative limits in default_perp_global_risk_config().
+const PERP_MAX_GLOBAL_NET_BPS: u16 = 6_500;
+const PERP_MAX_TOTAL_OI_BPS: u16 = 6_500;
+const PERP_MAX_MARKET_OI_BPS: u16 = 6_500;
+const PERP_MAX_MARKET_SKEW_BPS: u16 = 6_500;
+const PERP_MAX_TRADER_OI_BPS: u16 = 6_500;
 const PERP_DEFAULT_BETA_CAP_USDC: u128 = 100_000_000_000;
 const PROTOCOL_ADMIN_KEY: &[u8] = b"afterbell:a1:protocol_admin";
 
@@ -217,6 +223,16 @@ pub struct PerpMarketConfig {
     pub max_position_usdc: U128,
     pub max_market_oi_bps: u16,
     pub max_market_skew_bps: u16,
+}
+
+/// Global open-risk limits. Increases are staged and wait for the same delay
+/// as per-market risk changes before they become active.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerpGlobalRiskConfig {
+    pub max_global_net_bps: u16,
+    pub max_total_oi_bps: u16,
+    pub max_trader_oi_bps: u16,
 }
 
 /// Isolated position held by one user or agent logical record.
@@ -538,6 +554,18 @@ impl SharedLedger {
         } else {
             read_u128_storage(PERP_BETA_CAP_KEY)
         })
+    }
+
+    pub fn perp_global_risk_config(&self) -> PerpGlobalRiskConfig {
+        read_perp_global_risk_config()
+    }
+
+    pub fn pending_perp_global_risk_config(&self) -> Option<PerpGlobalRiskConfig> {
+        read_json_storage(PERP_PENDING_GLOBAL_RISK_CONFIG_KEY)
+    }
+
+    pub fn pending_perp_global_risk_config_at_ms(&self) -> u64 {
+        read_u64_storage(PERP_PENDING_GLOBAL_RISK_CONFIG_AT_KEY)
     }
 
     pub fn perp_position(
@@ -964,6 +992,56 @@ impl SharedLedger {
         env::storage_remove(&perp_market_time_key(&config.market_id));
     }
 
+    /// Stage global open-risk limits. Any increase waits for the risk delay;
+    /// a strictly risk-reducing update applies immediately.
+    pub fn configure_perp_global_risk(&mut self, config: PerpGlobalRiskConfig) {
+        assert_protocol_admin();
+        assert!(
+            config.max_global_net_bps > 0 && config.max_global_net_bps <= PERP_MAX_GLOBAL_NET_BPS,
+            "global directional cap exceeds protocol bound"
+        );
+        assert!(
+            config.max_total_oi_bps > 0 && config.max_total_oi_bps <= PERP_MAX_TOTAL_OI_BPS,
+            "total OI cap exceeds protocol bound"
+        );
+        assert!(
+            config.max_trader_oi_bps > 0 && config.max_trader_oi_bps <= PERP_MAX_TRADER_OI_BPS,
+            "trader OI cap exceeds protocol bound"
+        );
+
+        let current = read_perp_global_risk_config();
+        let increases_risk = config.max_global_net_bps > current.max_global_net_bps
+            || config.max_total_oi_bps > current.max_total_oi_bps
+            || config.max_trader_oi_bps > current.max_trader_oi_bps;
+        if increases_risk {
+            write_json_storage(PERP_PENDING_GLOBAL_RISK_CONFIG_KEY, &config);
+            write_u64_storage(
+                PERP_PENDING_GLOBAL_RISK_CONFIG_AT_KEY,
+                env::block_timestamp() / 1_000_000 + PERP_MARKET_RISK_DELAY_MS,
+            );
+            return;
+        }
+
+        write_perp_global_risk_config(&config);
+        env::storage_remove(PERP_PENDING_GLOBAL_RISK_CONFIG_KEY);
+        env::storage_remove(PERP_PENDING_GLOBAL_RISK_CONFIG_AT_KEY);
+    }
+
+    pub fn apply_perp_global_risk_config(&mut self) {
+        assert_protocol_admin();
+        let at = read_u64_storage(PERP_PENDING_GLOBAL_RISK_CONFIG_AT_KEY);
+        assert!(at > 0, "no pending global risk config");
+        assert!(
+            env::block_timestamp() / 1_000_000 >= at,
+            "global risk config delay active"
+        );
+        let config: PerpGlobalRiskConfig = read_json_storage(PERP_PENDING_GLOBAL_RISK_CONFIG_KEY)
+            .expect("pending global risk config missing");
+        write_perp_global_risk_config(&config);
+        env::storage_remove(PERP_PENDING_GLOBAL_RISK_CONFIG_KEY);
+        env::storage_remove(PERP_PENDING_GLOBAL_RISK_CONFIG_AT_KEY);
+    }
+
     pub fn apply_perp_market_config(&mut self, market_id: String) {
         assert_protocol_admin();
         let at = read_u64_storage(&perp_market_time_key(&market_id));
@@ -1297,7 +1375,10 @@ impl SharedLedger {
         let nav = vault_nav(&self.balances);
         let amount = shares.0.saturating_mul(nav) / total_shares;
         assert!(amount > 0, "withdrawal output is zero");
-        assert!(amount >= min_amount_usdc.0, "withdrawal below minimum output");
+        assert!(
+            amount >= min_amount_usdc.0,
+            "withdrawal below minimum output"
+        );
         let cash = self
             .balances
             .get(&SHARED_VAULT_RECORD_ID.to_string())
@@ -2618,6 +2699,7 @@ impl SharedLedger {
         assert!(balance >= required, "insufficient free USDC");
         let mut exposure = read_perp_exposure(&market_id);
         let nav = vault_nav(&self.balances);
+        let global_risk = read_perp_global_risk_config();
         let old_long_marked = revalue_exposure(exposure.long_base_units.0, price.price.0);
         let old_short_marked = revalue_exposure(exposure.short_base_units.0, price.price.0);
         let old_oi = old_long_marked
@@ -2634,7 +2716,8 @@ impl SharedLedger {
         let (marked_total_oi, marked_global_net) =
             marked_global_exposure(&market_id, price.price.0, is_long, notional.0);
         assert!(
-            marked_total_oi <= nav.saturating_mul(u128::from(PERP_MAX_TOTAL_OI_BPS)) / 10_000,
+            marked_total_oi
+                <= nav.saturating_mul(u128::from(global_risk.max_total_oi_bps)) / 10_000,
             "global utilization cap exceeded"
         );
         let global_net = read_i128_storage(PERP_GLOBAL_NET_KEY)
@@ -2646,7 +2729,7 @@ impl SharedLedger {
             .expect("global net overflow");
         assert!(
             marked_global_net.unsigned_abs()
-                <= nav.saturating_mul(u128::from(PERP_MAX_GLOBAL_NET_BPS)) / 10_000,
+                <= nav.saturating_mul(u128::from(global_risk.max_global_net_bps)) / 10_000,
             "global directional exposure cap exceeded"
         );
         let (marked_new_long, marked_new_short) = if is_long {
@@ -2665,7 +2748,7 @@ impl SharedLedger {
             .checked_add(notional.0)
             .expect("trader OI overflow");
         assert!(
-            trader_oi <= nav.saturating_mul(u128::from(PERP_MAX_TRADER_OI_BPS)) / 10_000,
+            trader_oi <= nav.saturating_mul(u128::from(global_risk.max_trader_oi_bps)) / 10_000,
             "trader open interest cap exceeded"
         );
         let payout_reserve = read_vault_reserved_payout()
@@ -4278,6 +4361,22 @@ fn read_perp_market_ids() -> Vec<String> {
 fn write_perp_market_ids(ids: &[String]) {
     write_json_storage(PERP_MARKET_IDS_KEY, &ids);
 }
+fn default_perp_global_risk_config() -> PerpGlobalRiskConfig {
+    PerpGlobalRiskConfig {
+        max_global_net_bps: 1_000,
+        max_total_oi_bps: 5_000,
+        max_trader_oi_bps: 50,
+    }
+}
+
+fn read_perp_global_risk_config() -> PerpGlobalRiskConfig {
+    read_json_storage(PERP_GLOBAL_RISK_CONFIG_KEY).unwrap_or_else(default_perp_global_risk_config)
+}
+
+fn write_perp_global_risk_config(config: &PerpGlobalRiskConfig) {
+    write_json_storage(PERP_GLOBAL_RISK_CONFIG_KEY, config);
+}
+
 fn read_perp_market(market_id: &str) -> Option<PerpMarketConfig> {
     read_json_storage(&raw_key(PERP_MARKET_PREFIX, &[market_id]))
 }
@@ -9067,14 +9166,17 @@ mod tests {
             USER, 1_000_000, 1_000_000, deposit_expiry
         );
         let request_signature = owner_key.sign(request_message.as_bytes());
-        assert_eq!(contract.request_vault_withdrawal(
-            USER.to_string(),
-            U128(1_000_000),
-            U128(1_000_000),
-            2,
-            deposit_expiry,
-            Base64VecU8::from(request_signature.to_bytes().to_vec()),
-        ), U128(1_000_000));
+        assert_eq!(
+            contract.request_vault_withdrawal(
+                USER.to_string(),
+                U128(1_000_000),
+                U128(1_000_000),
+                2,
+                deposit_expiry,
+                Base64VecU8::from(request_signature.to_bytes().to_vec()),
+            ),
+            U128(1_000_000)
+        );
         assert_eq!(contract.balance_of(USER.to_string()), U128(1_000_000));
         assert_eq!(contract.lp_shares_of(USER.to_string()), U128(0));
         assert_eq!(contract.vault_balance(), U128(100_000_000));
