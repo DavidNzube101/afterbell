@@ -5,6 +5,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
     plugins: [sveltekit()],
+    define: {
+      global: 'globalThis',
+    },
     server: {
       proxy: {
         '/api': {
