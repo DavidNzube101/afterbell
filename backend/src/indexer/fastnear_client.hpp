@@ -25,6 +25,7 @@ class FastNearClient {
 
   private:
     std::string baseUrl_;
+    std::string authorizationHeader_;
     Json::Value post(const std::string &path, const Json::Value &body);
 };
 

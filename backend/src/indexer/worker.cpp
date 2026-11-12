@@ -4,6 +4,7 @@
 #include "indexer/fastnear_client.hpp"
 #include "indexer/near_rpc.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -56,6 +57,7 @@ bool Worker::waitOrStop(std::uint64_t durationMs) {
 }
 
 void Worker::run() {
+    std::uint64_t retryDelayMs = 5000;
     while (!stopping_.load()) {
         try {
             NearRpc rpc(rpcUrl_);
@@ -76,6 +78,7 @@ void Worker::run() {
                     const auto previousCursor = indexer.cursor();
                     const auto indexedEvents = indexer.indexAvailableRange();
                     state_.store(WorkerState::running);
+                    retryDelayMs = 5000;
                     lastIndexedBlock_.store(indexer.cursor());
                     const auto now = std::chrono::system_clock::now().time_since_epoch();
                     lastSuccessfulPollAtMs_.store(static_cast<std::uint64_t>(
@@ -100,10 +103,11 @@ void Worker::run() {
             state_.store(WorkerState::retrying);
             std::cerr << "indexer worker unavailable; retrying: " << error.what() << "\n";
         }
-        if (stopping_.load() || waitOrStop(5000)) {
+        if (stopping_.load() || waitOrStop(retryDelayMs)) {
             state_.store(WorkerState::stopped);
             return;
         }
+        retryDelayMs = std::min<std::uint64_t>(retryDelayMs * 2, 60'000);
     }
     state_.store(WorkerState::stopped);
 }

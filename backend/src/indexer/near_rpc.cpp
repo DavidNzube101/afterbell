@@ -1,4 +1,5 @@
 #include "indexer/near_rpc.hpp"
+#include "indexer/fastnear_auth.hpp"
 
 #include <curl/curl.h>
 
@@ -38,7 +39,9 @@ std::string compactJson(const Json::Value &value) {
 
 } // namespace
 
-NearRpc::NearRpc(std::string endpoint) : endpoint_(std::move(endpoint)) {
+NearRpc::NearRpc(std::string endpoint)
+    : endpoint_(std::move(endpoint)),
+      authorizationHeader_(fastNearAuthorizationHeader(endpoint_)) {
     (void)curlGlobal();
     if (endpoint_.empty()) throw std::invalid_argument("NEAR_RPC_URL is required");
 }
@@ -59,6 +62,9 @@ Json::Value NearRpc::call(const std::string &method, const Json::Value &params) 
     std::string responseBody;
     struct curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (!authorizationHeader_.empty()) {
+        headers = curl_slist_append(headers, authorizationHeader_.c_str());
+    }
     std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headerGuard(
         headers, curl_slist_free_all);
 

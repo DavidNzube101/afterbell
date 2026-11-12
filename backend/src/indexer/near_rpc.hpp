@@ -25,6 +25,7 @@ class NearRpc {
 
   private:
     std::string endpoint_;
+    std::string authorizationHeader_;
     std::uint64_t requestId_{0};
 };
 

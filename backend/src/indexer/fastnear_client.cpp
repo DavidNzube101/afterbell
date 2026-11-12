@@ -1,4 +1,5 @@
 #include "indexer/fastnear_client.hpp"
+#include "indexer/fastnear_auth.hpp"
 
 #include <curl/curl.h>
 
@@ -57,7 +58,9 @@ std::string stringField(const Json::Value &object, const char *field) {
 
 } // namespace
 
-FastNearClient::FastNearClient(std::string baseUrl) : baseUrl_(std::move(baseUrl)) {
+FastNearClient::FastNearClient(std::string baseUrl)
+    : baseUrl_(std::move(baseUrl)),
+      authorizationHeader_(fastNearAuthorizationHeader(baseUrl_)) {
     (void)curlGlobal();
     while (!baseUrl_.empty() && baseUrl_.back() == '/') baseUrl_.pop_back();
     if (baseUrl_.empty()) throw std::invalid_argument("INDEXER_TX_API_URL is required");
@@ -72,6 +75,9 @@ Json::Value FastNearClient::post(const std::string &path, const Json::Value &bod
     struct curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, "Accept: application/json");
+    if (!authorizationHeader_.empty()) {
+        headers = curl_slist_append(headers, authorizationHeader_.c_str());
+    }
     std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headerGuard(
         headers, curl_slist_free_all);
 
