@@ -3,23 +3,25 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "dev": "vite dev --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
     "@sveltejs/adapter-static": "3.0.10",
     "@sveltejs/kit": "2.70.3",
-    "@near-js/transactions": "^2.5.1",
-    "@near-wallet-selector/core": "^10.1.4",
-    "@near-wallet-selector/hot-wallet": "^10.1.4",
-    "@near-wallet-selector/meteor-wallet": "^10.1.4",
-    "@near-wallet-selector/nightly": "^10.1.4",
-    "bs58": "^6.0.0",
-    "buffer": "^6.0.3",
-    "simple-icons": "^16.36.0",
+    "@near-js/transactions": "2.5.1",
+    "@near-wallet-selector/core": "10.1.4",
+    "@near-wallet-selector/hot-wallet": "10.1.4",
+    "@near-wallet-selector/meteor-wallet": "10.1.4",
+    "@near-wallet-selector/nightly": "10.1.4",
+    "bs58": "6.0.0",
+    "buffer": "6.0.3",
+    "simple-icons": "16.36.0",
     "svelte": "5.57.2"
   },
   "devDependencies": {

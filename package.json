@@ -3,13 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "bun@1.4.2",
-  "workspaces": [
-    "interface"
-  ],
   "scripts": {
-    "dev": "bun run --cwd interface node_modules/vite/bin/vite.js dev --host 0.0.0.0",
-    "build": "bun run --cwd interface node_modules/vite/bin/vite.js build",
-    "preview": "bun run --cwd interface node_modules/vite/bin/vite.js preview --host 0.0.0.0",
-    "typecheck": "bun run --cwd interface node_modules/svelte-check/bin/svelte-check --tsconfig ./tsconfig.json"
+    "dev": "bun run --cwd interface dev",
+    "build": "bun run --cwd interface build",
+    "preview": "bun run --cwd interface preview",
+    "typecheck": "bun run --cwd interface typecheck"
   }
 }
