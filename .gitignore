@@ -32,6 +32,7 @@ compile_commands.json
 node_modules/
 dist/
 /mock_data.json
+/scripts/check_oracle_chart.py
 .output/
 .tanstack/
 .vite/
@@ -46,6 +47,7 @@ cache/
 # Local deployer wallet and credentials: never commit private keys
 contracts/deployer/
 contracts/oracle-publisher/
+contracts/jjwin.testnet.json
 # Separately versioned landing API repository
 landing-server/
 # Local project goals and working notes
