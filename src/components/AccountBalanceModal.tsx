@@ -41,8 +41,11 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
     setFormError('')
     try {
       if (!deposit) throw new Error('Deposit details could not be loaded. Try again shortly.')
-      const rawAmount = usdcToRaw(amount.trim())
-      if (BigInt(rawAmount) <= 0n) throw new Error('Enter a USDC amount greater than zero.')
+      // Validate the bounded input here. Converting arbitrary-length pasted
+      // strings to BigInt on Continue can block the browser main thread.
+      if (!/^\d+(\.\d{1,6})?$/.test(amount.trim()) || !/[1-9]/.test(amount.trim())) {
+        throw new Error('Enter a USDC amount greater than zero, with up to 6 decimals.')
+      }
       go('deposit-wallet')
     } catch (error) { setFormError(error instanceof Error ? error.message : 'Enter a valid deposit amount.') }
   }
@@ -82,7 +85,12 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
           <p className="balance-account-id">Afterbell account <b>{session.accountId}</b></p>
         </div>}
         {page === 'deposit' && <form className="balance-deposit-page" onSubmit={submitDeposit}>
-          <label className="deposit-amount-label">Amount to deposit<div className="deposit-amount-input"><input autoFocus inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00" aria-label="USDC deposit amount"/><UsdcIcon size={19}/><span>USDC</span></div></label>
+          <label className="deposit-amount-label">Amount to deposit<div className="deposit-amount-input"><input autoFocus inputMode="decimal" maxLength={25} value={amount} onChange={event => {
+            const cleaned = event.target.value.replace(/[^0-9.]/g, '')
+            const [whole = '', ...decimalParts] = cleaned.split('.')
+            const decimal = decimalParts.join('').slice(0, 6)
+            setAmount(`${whole.slice(0, 18)}${decimalParts.length ? `.${decimal}` : ''}`)
+          }} placeholder="0.00" aria-label="USDC deposit amount"/><UsdcIcon size={19}/><span>USDC</span></div></label>
           <p className="deposit-note">Deposit NEAR USDC into your Afterbell account. You’ll choose a NEAR wallet to approve the transfer.</p>
           {formError && <p className="balance-error" role="alert">{formError}</p>}
           <button className="balance-primary-action" disabled={!deposit}>Continue</button>
