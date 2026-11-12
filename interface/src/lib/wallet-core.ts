@@ -201,7 +201,7 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
     accountId = `near:${address}`
     if (accountId.length > 64) throw new Error('This NEAR account name is too long for an Afterbell account record')
     let publicKeyText = selected.publicKey
-    if (!publicKeyText) {
+    if (!publicKeyText || walletName.toLowerCase().startsWith('meteor')) {
       if (!wallet.signMessage) throw new Error(`${walletName} does not support NEP-413 message signing`)
       const discoveryNonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)))
       const proof = await wallet.signMessage({ message: 'Connect this NEAR wallet to Afterbell', nonce: discoveryNonce, recipient: contractId })
@@ -216,6 +216,9 @@ async function connectAndSign(chain: WalletChain, walletName: string) {
       if (!wallet.signMessage) throw new Error(`${walletName} does not support NEP-413 message signing`)
       const result = await wallet.signMessage({ message: payload.message, nonce: Buffer.from(base64Bytes(payload.nonce)), recipient: payload.recipient })
       if (!result?.signature) throw new Error('The NEAR wallet did not return a signature')
+      if (result.accountId !== address || result.publicKey !== publicKeyText) {
+        throw new Error('The NEAR wallet signed with a different account key than the one being registered. Reconnect the wallet and try again.')
+      }
       return base64Bytes(result.signature)
     }
     watchWallet = onChange => {
