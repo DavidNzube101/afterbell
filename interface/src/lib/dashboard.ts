@@ -51,7 +51,7 @@ let tradeBootstrapCache: TradeBootstrapData | null = null
 let tradeBootstrapPending: { key: string; promise: Promise<void> } | null = null
 
 export async function getSnapshots(): Promise<MarketSnapshot[]> {
-  const data = await request<unknown>('/v1/markets/snapshot', undefined, 5_000)
+  const data = await request<unknown>('/v1/markets/snapshot', undefined, 20_000)
   if (!Array.isArray(data)) throw new Error('Market snapshot API returned an invalid response')
   return data.filter((item): item is MarketSnapshot =>
     typeof item === 'object' && item !== null &&
