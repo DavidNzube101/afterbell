@@ -17,8 +17,10 @@
 .onboarding-step-labels .is-current { color: #edf4fc; }
 .onboarding-step-labels .is-current b, .onboarding-step-labels .is-done b { color: #8fc4ff; border-color: #0065d2; background: #0065d21a; }
 .onboarding-carousel-viewport { overflow: hidden; }
-.onboarding-carousel { display: flex; align-items: stretch; transition: transform .48s cubic-bezier(.2,.8,.2,1); }
-.onboarding-slide { flex: 0 0 100%; align-self: flex-start; padding: clamp(20px, 4vw, 30px); border: 1px solid #202833; border-radius: 16px; background: #111720; box-shadow: 0 22px 70px #0003; }
+.onboarding-carousel { position: relative; display: grid; }
+.onboarding-slide { grid-area: 1 / 1; width: 100%; padding: clamp(20px, 4vw, 30px); border: 1px solid #202833; border-radius: 16px; background: #111720; box-shadow: 0 22px 70px #0003; transition: opacity .24s ease, transform .32s cubic-bezier(.2,.8,.2,1); }
+.onboarding-slide[aria-hidden="true"] { position: absolute; inset: 0 auto auto 0; opacity: 0; pointer-events: none; transform: translateX(14px); }
+.onboarding-slide[aria-hidden="false"] { position: relative; opacity: 1; transform: translateX(0); }
 .onboarding-card-heading { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
 .onboarding-icon-box { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; color: #8fc4ff; border-radius: 12px; background: #0065d21a; }
 .onboarding-icon-box > span { font-size: 21px; font-weight: 550; }
@@ -36,7 +38,7 @@
 .username-input-wrap input { flex: 1; }
 .username-input-wrap input::placeholder, .agent-name-field input::placeholder { color: #586372; }
 .username-form-preview > p { margin: 9px 0 0; color: #727e8c; font-size: 11px; }
-.username-form-preview > p.username-availability { min-height: 14px; display: flex; align-items: center; gap: 5px; }
+.username-form-preview > p.username-availability { min-height: 14px; display: block; line-height: 1.45; }
 .username-availability-checking { color: #8994a2 !important; }
 .username-availability-available { color: #54d6a0 !important; }
 .username-availability-available span { font-size: 13px; font-weight: 700; }
@@ -91,4 +93,4 @@
   .agent-limits-grid { gap: 8px; }
   .agent-limit-control { padding: 9px; }
 }
-@media (prefers-reduced-motion: reduce) { .onboarding-carousel, .onboarding-progress-track span, .username-mode-switch button { transition-duration: .01ms; } }
+@media (prefers-reduced-motion: reduce) { .onboarding-slide, .onboarding-progress-track span, .username-mode-switch button { transition-duration: .01ms; } }
