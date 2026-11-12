@@ -31,20 +31,23 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
   const [direction, setDirection] = useState<'next' | 'back'>('next')
   const [amount, setAmount] = useState('')
   const depositAmountInput = useRef<HTMLInputElement>(null)
-  const [receiver, setReceiver] = useState(session.chain === 'near' ? session.address : '')
+  const withdrawAmountInput = useRef<HTMLInputElement>(null)
+  const withdrawReceiverInput = useRef<HTMLInputElement>(null)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [depositResult, setDepositResult] = useState<{ wallet: string; address: string; transactionHash?: string } | null>(null)
 
   useEffect(() => {
-    if (page !== 'deposit') return
-    const skipReactSelectionChangeForDeposit = (event: Event) => {
-      if (document.activeElement === depositAmountInput.current) event.stopImmediatePropagation()
+    if (page !== 'deposit' && page !== 'withdraw') return
+    const skipReactSelectionChangeForFormInputs = (event: Event) => {
+      const activeInput = document.activeElement
+      if (activeInput === depositAmountInput.current || activeInput === withdrawAmountInput.current || activeInput === withdrawReceiverInput.current) {
+        event.stopImmediatePropagation()
+      }
     }
-    // The app has no React onSelect handlers. Leave caret management to the browser
-    // and keep this input's selection events out of React's delegated event dispatcher.
-    window.addEventListener('selectionchange', skipReactSelectionChangeForDeposit, true)
-    return () => window.removeEventListener('selectionchange', skipReactSelectionChangeForDeposit, true)
+    // Leave caret management to the browser and keep these input selections out of React's delegated event dispatcher.
+    window.addEventListener('selectionchange', skipReactSelectionChangeForFormInputs, true)
+    return () => window.removeEventListener('selectionchange', skipReactSelectionChangeForFormInputs, true)
   }, [page])
 
   function go(next: Page) { setDirection(next === 'overview' || (page === 'deposit-wallet' && next === 'deposit') ? 'back' : 'next'); setFormError(''); setPage(next) }
@@ -81,9 +84,11 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setFormError('')
     try {
-      if (!amount || Number(amount) <= 0) throw new Error('Enter a withdrawal amount.')
-      if (!receiver.trim()) throw new Error('Enter a NEAR account to receive USDC.')
-      setSubmitting(true); await onWithdraw(amount, receiver.trim()); onClose()
+      const enteredAmount = withdrawAmountInput.current?.value.trim() ?? ''
+      const receiver = withdrawReceiverInput.current?.value.trim() ?? ''
+      if (!/^\d+(\.\d{1,6})?$/.test(enteredAmount) || Number(enteredAmount) <= 0) throw new Error('Enter a valid withdrawal amount, up to 6 decimals.')
+      if (!receiver) throw new Error('Enter a NEAR account to receive USDC.')
+      setSubmitting(true); await onWithdraw(enteredAmount, receiver); onClose()
     } catch (error) { setFormError(error instanceof Error ? error.message : 'Withdrawal failed.') }
     finally { setSubmitting(false) }
   }
@@ -119,8 +124,8 @@ export function AccountBalanceModal({ session, balanceRaw, nearBalanceRaw, depos
         </div>}
         {page === 'withdraw' && <form className="balance-withdraw-page" onSubmit={submit}>
           <div className="withdraw-available"><span>Available to withdraw</span><b>{balanceRaw === null ? 'Loading…' : `$${formatUsdc(balanceRaw)}`} USDC</b></div>
-          <label>NEAR recipient account<input value={receiver} onChange={event => setReceiver(event.target.value)} placeholder="name.near" autoComplete="off"/></label>
-          <label>Amount<div className="withdraw-amount-input"><input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><UsdcIcon size={18}/><span>USDC</span><button type="button" onClick={() => setAmount(balanceRaw === null ? '' : formatUsdc(balanceRaw))}>Max</button></div></label>
+          <label>NEAR recipient account<input ref={withdrawReceiverInput} defaultValue={session.chain === 'near' ? session.address : ''} placeholder="name.near" autoComplete="off"/></label>
+          <label>Amount<div className="withdraw-amount-input"><input ref={withdrawAmountInput} inputMode="decimal" maxLength={25} placeholder="0.00"/><UsdcIcon size={18}/><span>USDC</span><button type="button" onClick={() => { if (withdrawAmountInput.current) withdrawAmountInput.current.value = balanceRaw === null ? '' : formatUsdc(balanceRaw) }}>Max</button></div></label>
           {formError && <p className="balance-error" role="alert">{formError}</p>}
           <p className="withdraw-note">You’ll sign the withdrawal with your connected wallet. USDC will be sent on {deposit?.network ?? 'NEAR'}.</p>
           <button className="balance-primary-action" disabled={submitting || balanceRaw === null}>{submitting ? 'Submitting…' : 'Review and withdraw'}</button>

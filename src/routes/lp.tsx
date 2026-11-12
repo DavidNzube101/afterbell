@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import logo from '../assets/afterbell-logo.png'
 import { UsdcIcon } from '../components/UsdcIcon'
 import { WalletDetailsModal } from '../components/WalletDetailsModal'
@@ -21,6 +21,8 @@ function LiquidityPage() {
   const [mode, setMode] = useState<'add' | 'remove'>('add')
   const [amount, setAmount] = useState('')
   const [minimumOutput, setMinimumOutput] = useState('')
+  const amountInput = useRef<HTMLInputElement>(null)
+  const minimumOutputInput = useRef<HTMLInputElement>(null)
   const [overview, setOverview] = useState<LiquidityOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -28,6 +30,15 @@ function LiquidityPage() {
   const walletIcon = session ? getWalletIcon(session.walletName) : undefined
   const chainName = session ? getChainName(session.chain) : 'NEAR'
   const accountId = session?.accountId
+
+  useEffect(() => {
+    const skipReactSelectionChangeForFormInputs = (event: Event) => {
+      const activeInput = document.activeElement
+      if (activeInput === amountInput.current || activeInput === minimumOutputInput.current) event.stopImmediatePropagation()
+    }
+    window.addEventListener('selectionchange', skipReactSelectionChangeForFormInputs, true)
+    return () => window.removeEventListener('selectionchange', skipReactSelectionChangeForFormInputs, true)
+  }, [])
 
   const refresh = useCallback(async (showError = true) => {
     if (!accountId) { setOverview(null); setLoading(false); return }
@@ -79,7 +90,9 @@ function LiquidityPage() {
     if (mode !== 'remove' || !amount) return
     try {
       const estimate = BigInt(estimatedUsdcRaw)
-      setMinimumOutput((estimate * 99n / 100n / 1_000_000n).toString() + '.' + (estimate * 99n / 100n % 1_000_000n).toString().padStart(6, '0'))
+      const nextMinimum = (estimate * 99n / 100n / 1_000_000n).toString() + '.' + (estimate * 99n / 100n % 1_000_000n).toString().padStart(6, '0')
+      setMinimumOutput(nextMinimum)
+      if (minimumOutputInput.current) minimumOutputInput.current.value = nextMinimum
     } catch { setMinimumOutput('') }
   }, [estimatedUsdcRaw, mode, amount])
 
@@ -96,7 +109,9 @@ function LiquidityPage() {
   async function addLiquidity() {
     if (!session || !accountId) { showToast('error', 'Connect your wallet first.'); return }
     try {
-      const amountRaw = usdcToRaw(amount)
+      const enteredAmount = amountInput.current?.value.trim() ?? ''
+      if (!/^\d+(\.\d{1,6})?$/.test(enteredAmount)) throw new Error('Enter a valid amount, up to 6 decimals.')
+      const amountRaw = usdcToRaw(enteredAmount)
       if (BigInt(amountRaw) <= 0n) throw new Error('Enter an amount greater than zero.')
       if (BigInt(amountRaw) > BigInt(overview?.balance_usdc ?? '0')) throw new Error('Your available Afterbell USDC balance is too low.')
       setSubmitting(true); showToast('waiting', 'Approve the liquidity action in your wallet.')
@@ -104,7 +119,7 @@ function LiquidityPage() {
       const signature = await signMessage(walletPayload(payload.message, payload.nonce, payload.recipient))
       const result = await submitDeposit({ ...payload, signature })
       showToast('success', `Liquidity added. Transaction ${result.transaction_hash.slice(0, 10)}…`)
-      setAmount(''); await refresh(false)
+      setAmount(''); if (amountInput.current) amountInput.current.value = ''; await refresh(false)
     } catch (error) { showToast('error', error instanceof Error ? error.message : 'Could not add liquidity.') }
     finally { setSubmitting(false) }
   }
@@ -112,8 +127,12 @@ function LiquidityPage() {
   async function requestWithdrawal() {
     if (!session || !accountId) { showToast('error', 'Connect your wallet first.'); return }
     try {
-      const sharesRaw = usdcToRaw(amount)
-      const minRaw = usdcToRaw(minimumOutput || '0')
+      const enteredAmount = amountInput.current?.value.trim() ?? ''
+      const enteredMinimum = minimumOutputInput.current?.value.trim() ?? ''
+      if (!/^\d+(\.\d{1,6})?$/.test(enteredAmount)) throw new Error('Enter a valid LP share amount, up to 6 decimals.')
+      if (enteredMinimum && !/^\d+(\.\d{1,6})?$/.test(enteredMinimum)) throw new Error('Enter a valid minimum USDC amount, up to 6 decimals.')
+      const sharesRaw = usdcToRaw(enteredAmount)
+      const minRaw = usdcToRaw(enteredMinimum || '0')
       if (BigInt(sharesRaw) <= 0n) throw new Error('Enter the LP shares to withdraw.')
       if (BigInt(sharesRaw) > BigInt(overview?.lp_shares ?? '0')) throw new Error('You do not have enough LP shares.')
       setSubmitting(true); showToast('waiting', 'Approve the withdrawal request in your wallet.')
@@ -121,7 +140,7 @@ function LiquidityPage() {
       const signature = await signMessage(walletPayload(payload.message, payload.nonce, payload.recipient))
       const result = await submitLpWithdrawal({ ...payload, signature })
       showToast('success', `Withdrawal requested. Transaction ${result.transaction_hash.slice(0, 10)}…`)
-      setAmount(''); await refresh(false)
+      setAmount(''); if (amountInput.current) amountInput.current.value = ''; await refresh(false)
     } catch (error) { showToast('error', error instanceof Error ? error.message : 'Could not request a withdrawal.') }
     finally { setSubmitting(false) }
   }
@@ -168,23 +187,23 @@ function LiquidityPage() {
         </article>
 
         <article className="lp-action-card">
-          <div className="lp-mode-switch" role="tablist" aria-label="Liquidity action"><button className={mode === 'add' ? 'active' : ''} role="tab" aria-selected={mode === 'add'} onClick={() => { setMode('add'); setAmount('') }}>Add liquidity</button><button className={mode === 'remove' ? 'active' : ''} role="tab" aria-selected={mode === 'remove'} onClick={() => { setMode('remove'); setAmount('') }}>Remove liquidity</button></div>
+          <div className="lp-mode-switch" role="tablist" aria-label="Liquidity action"><button className={mode === 'add' ? 'active' : ''} role="tab" aria-selected={mode === 'add'} onClick={() => { setMode('add'); setAmount(''); setMinimumOutput('') }}>Add liquidity</button><button className={mode === 'remove' ? 'active' : ''} role="tab" aria-selected={mode === 'remove'} onClick={() => { setMode('remove'); setAmount(''); setMinimumOutput('') }}>Remove liquidity</button></div>
           {mode === 'add' ? <>
             <div className="lp-form-heading"><h2>Add liquidity</h2><p>Move USDC from your Afterbell balance to the shared vault.</p></div>
             <label className="lp-field-label" htmlFor="lp-add-amount">Amount</label>
-            <div className="lp-amount-input"><input id="lp-add-amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><span className="lp-token"><UsdcIcon/>USDC</span></div>
+            <div className="lp-amount-input"><input ref={amountInput} id="lp-add-amount" inputMode="decimal" maxLength={25} defaultValue={amount} onBlur={event => setAmount(event.currentTarget.value)} placeholder="0.00"/><span className="lp-token"><UsdcIcon/>USDC</span></div>
             <div className="lp-balance-line"><span>Available balance</span><b>{loading ? '…' : `${formatUsdc(overview?.balance_usdc)} USDC`}</b></div>
             <div className="lp-estimate"><span>Estimated LP shares</span><b>{estimatedShares}</b></div>
-            <button className="lp-submit" disabled={!session || loading || submitting || !amount} onClick={() => void addLiquidity()}>{submitting ? 'Waiting for wallet…' : 'Add liquidity'}</button>
+            <button className="lp-submit" disabled={!session || loading || submitting} onClick={() => void addLiquidity()}>{submitting ? 'Waiting for wallet…' : 'Add liquidity'}</button>
           </> : <>
             <div className="lp-form-heading"><h2>Remove liquidity</h2><p>Request to return LP shares to your Afterbell balance after the cooldown.</p></div>
             <label className="lp-field-label" htmlFor="lp-remove-amount">Shares to remove</label>
-            <div className="lp-amount-input"><input id="lp-remove-amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><span className="lp-token">LP shares</span></div>
+            <div className="lp-amount-input"><input ref={amountInput} id="lp-remove-amount" inputMode="decimal" maxLength={25} defaultValue={amount} onBlur={event => setAmount(event.currentTarget.value)} placeholder="0.00"/><span className="lp-token">LP shares</span></div>
             <div className="lp-balance-line"><span>Shares available</span><b>{loading ? '…' : formatUsdc(overview?.lp_shares)}</b></div>
             <div className="lp-estimate"><span>Estimated USDC</span><b>{formatUsdc(estimatedUsdcRaw)}</b></div>
             <label className="lp-field-label lp-min-label" htmlFor="lp-min-output">Minimum USDC after cooldown</label>
-            <div className="lp-amount-input lp-min-input"><input id="lp-min-output" inputMode="decimal" value={minimumOutput} onChange={event => setMinimumOutput(event.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><span className="lp-token"><UsdcIcon/>USDC</span></div>
-            <button className="lp-submit remove" disabled={!session || loading || submitting || !amount} onClick={() => void requestWithdrawal()}>{submitting ? 'Waiting for wallet…' : 'Request withdrawal'}</button>
+            <div className="lp-amount-input lp-min-input"><input ref={minimumOutputInput} id="lp-min-output" inputMode="decimal" maxLength={25} defaultValue={minimumOutput} onBlur={event => setMinimumOutput(event.currentTarget.value)} placeholder="0.00"/><span className="lp-token"><UsdcIcon/>USDC</span></div>
+            <button className="lp-submit remove" disabled={!session || loading || submitting} onClick={() => void requestWithdrawal()}>{submitting ? 'Waiting for wallet…' : 'Request withdrawal'}</button>
           </>}
           {!session && <p className="lp-connection-note">Connect your wallet to add or remove liquidity.</p>}
         </article>

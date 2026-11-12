@@ -572,6 +572,7 @@ function TradingPage() {
     try {
       const enteredSize = orderSizeInputRef.current?.value ?? size
       const enteredLimitPrice = limitPriceInputRef.current?.value ?? limitPriceDraftRef.current
+      if (!/^\d+(\.\d{1,6})?$/.test(enteredSize) || Number(enteredSize) <= 0) throw new Error('Enter a valid order size greater than zero.')
       const notional = Math.round(Number(enteredSize) * 1e6)
       const base = { account_id: session.accountId, market_id: market.ticker, side, notional_usdc: String(notional), leverage_bps: Math.round(leverage * 10000), max_slippage_bps: 100 }
       if (orderType === 'limit') {

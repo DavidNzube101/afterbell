@@ -15,10 +15,12 @@ export const Route = createFileRoute('/setting-up')({ component: SettingUpPage }
 function UsernameField({
   accountId,
   valueRef,
+  inputRef,
   initialValue,
 }: {
   accountId: string
   valueRef: { current: string }
+  inputRef: { current: HTMLInputElement | null }
   initialValue: string
 }) {
   const saveUsernameDraft = () => {
@@ -32,13 +34,8 @@ function UsernameField({
   return <>
     <div className="username-input-wrap">
       <span>@</span>
-      <input id="onboarding-username" placeholder="yourname" autoComplete="off" defaultValue={initialValue}
-        onChange={event => {
-          const next = event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20)
-          if (event.target.value !== next) event.target.value = next
-          valueRef.current = next
-        }}
-        onBlur={saveUsernameDraft} />
+      <input ref={inputRef} id="onboarding-username" placeholder="yourname" autoComplete="off" defaultValue={initialValue}
+        onBlur={event => { valueRef.current = event.currentTarget.value; saveUsernameDraft() }} />
     </div>
     <p className="username-availability">3–20 characters: lowercase letters, numbers, and underscores.</p>
   </>
@@ -71,8 +68,19 @@ function SettingUpPage() {
   const [leverage, setLeverage] = useState<number>(draft?.leverage ?? 3)
   const usernameRef = useRef<string>(draft?.username ?? '')
   const initialUsernameRef = useRef<string>(draft?.username ?? '')
-  const [reclaimEmail, setReclaimEmail] = useState<string>(draft?.reclaimEmail ?? '')
-  const [agentName, setAgentName] = useState<string>(draft?.agentName ?? 'My agent')
+  const usernameInputRef = useRef<HTMLInputElement>(null)
+  const reclaimEmailInputRef = useRef<HTMLInputElement>(null)
+  const agentNameInputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const skipReactSelectionChangeForFormInputs = (event: Event) => {
+      const activeInput = document.activeElement
+      if (activeInput === usernameInputRef.current || activeInput === reclaimEmailInputRef.current || activeInput === agentNameInputRef.current) {
+        event.stopImmediatePropagation()
+      }
+    }
+    window.addEventListener('selectionchange', skipReactSelectionChangeForFormInputs, true)
+    return () => window.removeEventListener('selectionchange', skipReactSelectionChangeForFormInputs, true)
+  }, [])
   const [positionLimit, setPositionLimit] = useState<string>(draft?.positionLimit ?? '1000')
   const [dailyLossLimit, setDailyLossLimit] = useState<string>(draft?.dailyLossLimit ?? '250')
   const [accessDuration, setAccessDuration] = useState<string>(draft?.accessDuration ?? '30')
@@ -90,12 +98,14 @@ function SettingUpPage() {
         localStorage.getItem(`afterbell.onboarding-required.v1:${session.accountId}`) !== 'true')) return
     const timer = window.setTimeout(() => {
       localStorage.setItem(`afterbell.onboarding-draft.v1:${session.accountId}`, JSON.stringify({
-        usernameMode, selectedMarkets, leverage, username: usernameRef.current, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration,
+        usernameMode, selectedMarkets, leverage, username: usernameInputRef.current?.value ?? usernameRef.current,
+        reclaimEmail: reclaimEmailInputRef.current?.value ?? draft?.reclaimEmail ?? '',
+        agentName: agentNameInputRef.current?.value ?? draft?.agentName ?? 'My agent', positionLimit, dailyLossLimit, accessDuration,
         agentRecordId, agentPublicKey,
       }))
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [session, usernameMode, selectedMarkets, leverage, reclaimEmail, agentName, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
+  }, [session, usernameMode, selectedMarkets, leverage, positionLimit, dailyLossLimit, accessDuration, agentRecordId, agentPublicKey])
 
   useEffect(() => {
     if (!walletModalOpen) return
@@ -119,6 +129,15 @@ function SettingUpPage() {
     }
   }
 
+  const saveDraftField = (field: 'reclaimEmail' | 'agentName', value: string) => {
+    if (!session) return
+    try {
+      const key = `afterbell.onboarding-draft.v1:${session.accountId}`
+      const saved = JSON.parse(localStorage.getItem(key) || '{}')
+      localStorage.setItem(key, JSON.stringify({ ...saved, [field]: value }))
+    } catch { /* Draft persistence is best-effort. */ }
+  }
+
   const disconnectWallet = async () => {
     await disconnect()
     setWalletModalOpen(false)
@@ -127,6 +146,9 @@ function SettingUpPage() {
 
   const continueSetup = async () => {
     if (!session || isClaimingUsername) return
+    const reclaimEmail = reclaimEmailInputRef.current?.value ?? ''
+    const username = (usernameInputRef.current?.value ?? usernameRef.current).trim()
+    usernameRef.current = username
     if (usernameMode === 'reclaim') {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reclaimEmail.trim())) {
         showToast('error', 'Enter the email address used for your waitlist claim.')
@@ -168,6 +190,8 @@ function SettingUpPage() {
   const finishSetup = async () => {
     if (!session) return
     if (isSubmitting) return
+    const agentName = agentNameInputRef.current?.value ?? 'My agent'
+    const reclaimEmail = reclaimEmailInputRef.current?.value ?? ''
     const name = agentName.trim()
     if (!name) {
       showToast('error', 'Give your agent a name to continue.')
@@ -272,10 +296,10 @@ function SettingUpPage() {
 
             {usernameMode === 'new' ? <div className="username-form-preview">
               <label htmlFor="onboarding-username">Username</label>
-              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} initialValue={initialUsernameRef.current} />}
+              {session && <UsernameField accountId={session.accountId} valueRef={usernameRef} inputRef={usernameInputRef} initialValue={initialUsernameRef.current} />}
             </div> : <div className="username-form-preview reclaim-preview">
               <label htmlFor="reclaim-email">Email used for your waitlist claim</label>
-              <div className="username-input-wrap"><input id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" value={reclaimEmail} onChange={event => setReclaimEmail(event.target.value)} /></div>
+              <div className="username-input-wrap"><input ref={reclaimEmailInputRef} id="reclaim-email" type="email" placeholder="you@example.com" autoComplete="email" defaultValue={draft?.reclaimEmail ?? ''} onBlur={event => saveDraftField('reclaimEmail', event.currentTarget.value)} /></div>
               <p>We’ll look up the username you reserved with this email.</p>
             </div>}
 
@@ -288,7 +312,7 @@ function SettingUpPage() {
               <div><h2>Set up your agent</h2><p>Give it a name and choose what it’s allowed to do.</p></div>
             </div>
 
-            <div className="agent-name-field"><label htmlFor="agent-name">Agent name</label><input id="agent-name" placeholder="My trading agent" value={agentName} onChange={event => setAgentName(event.target.value)} /></div>
+            <div className="agent-name-field"><label htmlFor="agent-name">Agent name</label><input ref={agentNameInputRef} id="agent-name" placeholder="My trading agent" defaultValue={draft?.agentName ?? 'My agent'} onBlur={event => saveDraftField('agentName', event.currentTarget.value)} /></div>
             <div className="agent-markets-field">
               <div className="agent-field-title"><label>Markets it can trade</label><span>{selectedMarkets.length} selected</span></div>
               <div className="agent-market-options">{markets.map(market => <button type="button" key={market.ticker} className={selectedMarkets.includes(market.ticker) ? 'selected' : ''} onClick={() => toggleMarket(market.ticker)} aria-pressed={selectedMarkets.includes(market.ticker)}><span>{market.ticker}-USDC</span>{selectedMarkets.includes(market.ticker) && <Icon kind="check" size={14} />}</button>)}</div>
