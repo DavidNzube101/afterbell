@@ -71,8 +71,6 @@ const PERP_UNPAID_FUNDING_REBATE_PREFIX: &[u8] = b"afterbell:a1:perp:unpaid_fund
 const PERP_DEFERRED_TOTAL_KEY: &[u8] = b"afterbell:a1:perp:deferred_total";
 const LP_SHARE_PREFIX: &[u8] = b"afterbell:a1:lp:shares:";
 const LP_TOTAL_SHARES_KEY: &[u8] = b"afterbell:a1:lp:total_shares";
-const LP_WITHDRAW_PREFIX: &[u8] = b"afterbell:a1:lp:withdraw:";
-const LP_WITHDRAWAL_COOLDOWN_MS: u64 = 24 * 60 * 60 * 1000;
 const PERP_QUOTE_SIGNER_DELAY_MS: u64 = 60 * 60 * 1000;
 const PERP_MARKET_RISK_DELAY_MS: u64 = 20 * 60 * 1000;
 const PERP_ORACLE_SIGNER_DELAY_MS: u64 = 20 * 60 * 1000;
@@ -306,15 +304,6 @@ pub struct PerpExposureView {
 pub struct AgentDailyLoss {
     pub utc_day: u64,
     pub realized_loss_usdc: U128,
-}
-
-#[near(serializers = [json])]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LpWithdrawalRequest {
-    pub shares: U128,
-    #[serde(default)]
-    pub min_amount_usdc: U128,
-    pub requested_at_ms: u64,
 }
 
 #[near(serializers = [json])]
@@ -1286,8 +1275,9 @@ impl SharedLedger {
         nonce: u64,
         expires_at_ms: u64,
         signature: Base64VecU8,
-    ) {
+    ) -> U128 {
         assert!(shares.0 > 0, "shares must be positive");
+        assert!(vault_prices_fresh(), "oracle prices stale");
         let owner = read_owner(&account_id).expect("owner is not registered");
         assert_next_user_action(
             &account_id,
@@ -1302,70 +1292,12 @@ impl SharedLedger {
             read_lp_shares(&account_id) >= shares.0,
             "insufficient LP shares"
         );
-        assert!(
-            read_lp_withdrawal(&account_id).is_none(),
-            "withdrawal request already exists"
-        );
-        let storage_before = env::storage_usage();
-        write_lp_withdrawal(
-            &account_id,
-            &LpWithdrawalRequest {
-                shares,
-                min_amount_usdc,
-                requested_at_ms: env::block_timestamp() / 1_000_000,
-            },
-        );
-        settle_storage_credit(&account_id, storage_before);
-        write_user_perp_nonce(&account_id, nonce);
-    }
-
-    pub fn cancel_vault_withdrawal(
-        &mut self,
-        account_id: String,
-        nonce: u64,
-        expires_at_ms: u64,
-        signature: Base64VecU8,
-    ) {
-        assert!(
-            read_lp_withdrawal(&account_id).is_some(),
-            "no withdrawal request"
-        );
-        let owner = read_owner(&account_id).expect("owner is not registered");
-        assert_next_user_action(
-            &account_id,
-            nonce,
-            expires_at_ms,
-            "cancel_vault_withdrawal",
-            "",
-            signature.as_ref(),
-            &owner,
-        );
-        let storage_before = env::storage_usage();
-        delete_lp_withdrawal(&account_id);
-        settle_storage_credit(&account_id, storage_before);
-        write_user_perp_nonce(&account_id, nonce);
-    }
-
-    /// Anyone may finalize a matured LP request, but proceeds return to the
-    /// LP's own logical balance and cannot be redirected by the caller.
-    pub fn complete_vault_withdrawal(&mut self, account_id: String) -> U128 {
-        let request = read_lp_withdrawal(&account_id).expect("no withdrawal request");
-        let now = env::block_timestamp() / 1_000_000;
-        assert!(
-            now >= request
-                .requested_at_ms
-                .saturating_add(LP_WITHDRAWAL_COOLDOWN_MS),
-            "withdrawal cooldown active"
-        );
-        assert!(vault_prices_fresh(), "oracle prices stale");
         let total_shares = read_u128_storage(LP_TOTAL_SHARES_KEY);
         assert!(total_shares > 0, "no LP shares");
-        let amount = request.shares.0.saturating_mul(vault_nav(&self.balances)) / total_shares;
+        let nav = vault_nav(&self.balances);
+        let amount = shares.0.saturating_mul(nav) / total_shares;
         assert!(amount > 0, "withdrawal output is zero");
-        assert!(
-            amount >= request.min_amount_usdc.0,
-            "withdrawal below minimum output"
-        );
+        assert!(amount >= min_amount_usdc.0, "withdrawal below minimum output");
         let cash = self
             .balances
             .get(&SHARED_VAULT_RECORD_ID.to_string())
@@ -1375,7 +1307,7 @@ impl SharedLedger {
             "insufficient available vault liquidity"
         );
         assert!(
-            read_lp_shares(&account_id) >= request.shares.0,
+            read_lp_shares(&account_id) >= shares.0,
             "LP share invariant failed"
         );
         let lp_balance = self.balances.get(&account_id).unwrap_or_default();
@@ -1386,10 +1318,10 @@ impl SharedLedger {
             &account_id,
             &lp_balance.checked_add(amount).expect("LP balance overflow"),
         );
-        write_lp_shares(&account_id, read_lp_shares(&account_id) - request.shares.0);
-        write_u128_storage(LP_TOTAL_SHARES_KEY, total_shares - request.shares.0);
-        delete_lp_withdrawal(&account_id);
+        write_lp_shares(&account_id, read_lp_shares(&account_id) - shares.0);
+        write_u128_storage(LP_TOTAL_SHARES_KEY, total_shares - shares.0);
         settle_storage_credit(&account_id, storage_before);
+        write_user_perp_nonce(&account_id, nonce);
         U128(amount)
     }
 
@@ -4642,16 +4574,6 @@ fn write_lp_shares(account_id: &str, shares: u128) {
         write_u128_storage(&key, shares);
     }
 }
-fn read_lp_withdrawal(account_id: &str) -> Option<LpWithdrawalRequest> {
-    read_json_storage(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]))
-}
-fn write_lp_withdrawal(account_id: &str, request: &LpWithdrawalRequest) {
-    write_json_storage(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]), request);
-}
-fn delete_lp_withdrawal(account_id: &str) {
-    env::storage_remove(&raw_key(LP_WITHDRAW_PREFIX, &[account_id]));
-}
-
 fn assert_valid_short_trade_expiry(expires_at_ms: u64) {
     let now = env::block_timestamp() / 1_000_000;
     assert!(
@@ -9107,7 +9029,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_lp_cannot_capture_unallocated_protocol_vault_equity() {
+    fn initial_lp_cannot_capture_unallocated_protocol_vault_equity_and_withdraws_immediately() {
         let mut contract = setup(TOKEN);
         let owner_key = SigningKey::from_bytes(&[122; 32]);
         register_solana_owner_for(&mut contract, USER, &owner_key);
@@ -9145,50 +9067,17 @@ mod tests {
             USER, 1_000_000, 1_000_000, deposit_expiry
         );
         let request_signature = owner_key.sign(request_message.as_bytes());
-        contract.request_vault_withdrawal(
+        assert_eq!(contract.request_vault_withdrawal(
             USER.to_string(),
             U128(1_000_000),
             U128(1_000_000),
             2,
             deposit_expiry,
             Base64VecU8::from(request_signature.to_bytes().to_vec()),
-        );
-        let cancel_message = format!(
-            "afterbell:v1\ncontract:a1.near\naction:cancel_vault_withdrawal\naccount:{}\namount:\nnonce:3\nexpires_at_ms:{}",
-            USER, deposit_expiry
-        );
-        let cancel_signature = owner_key.sign(cancel_message.as_bytes());
-        contract.cancel_vault_withdrawal(
-            USER.to_string(),
-            3,
-            deposit_expiry,
-            Base64VecU8::from(cancel_signature.to_bytes().to_vec()),
-        );
-        assert!(read_lp_withdrawal(USER).is_none());
-        let request_message = format!(
-            "afterbell:v1\ncontract:a1.near\naction:request_vault_withdrawal\naccount:{}\namount:{}:{}\nnonce:4\nexpires_at_ms:{}",
-            USER, 1_000_000, 1_000_000, deposit_expiry
-        );
-        let request_signature = owner_key.sign(request_message.as_bytes());
-        contract.request_vault_withdrawal(
-            USER.to_string(),
-            U128(1_000_000),
-            U128(1_000_000),
-            4,
-            deposit_expiry,
-            Base64VecU8::from(request_signature.to_bytes().to_vec()),
-        );
-        let mut context = VMContextBuilder::new();
-        context
-            .current_account_id("a1.near".parse().unwrap())
-            .predecessor_account_id(TOKEN.parse().unwrap())
-            .block_timestamp((NOW_MS + LP_WITHDRAWAL_COOLDOWN_MS) * 1_000_000);
-        testing_env!(context.build());
-        assert_eq!(
-            contract.complete_vault_withdrawal(USER.to_string()),
-            U128(1_000_000)
-        );
+        ), U128(1_000_000));
         assert_eq!(contract.balance_of(USER.to_string()), U128(1_000_000));
+        assert_eq!(contract.lp_shares_of(USER.to_string()), U128(0));
+        assert_eq!(contract.vault_balance(), U128(100_000_000));
         assert!(env::storage_read(&raw_key(LP_SHARE_PREFIX, &[USER])).is_none());
     }
 

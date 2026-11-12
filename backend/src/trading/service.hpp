@@ -46,7 +46,6 @@ class Service {
     Json::Value submitLiquidityDeposit(const Json::Value &request);
     Json::Value liquidityWithdrawalPayload(const Json::Value &request) const;
     Json::Value submitLiquidityWithdrawal(const Json::Value &request);
-    Json::Value completeLiquidityWithdrawal(const std::string &accountId);
     Json::Value accountWithdrawalPayload(const Json::Value &request) const;
     Json::Value submitAccountWithdrawal(const Json::Value &request);
     Json::Value ownerRegistrationPayload(const Json::Value &request) const;

@@ -31,7 +31,7 @@ export type PositionRecord = {
 export type LimitOrderRecord = { order_id: string; market_id: string; is_long: boolean; notional_usdc: string; leverage_bps: number; limit_price: string; expires_at_ms: number }
 export type ActivityRecord = { id: string; event_type: string; title: string; message: string; market_id: string; side: string; amount_usdc: string; transaction_hash: string; created_at_ms: number }
 export type NotificationRecord = ActivityRecord
-export type LiquidityOverview = { account_id: string; balance_usdc: string; lp_shares: string; total_lp_shares: string; vault_nav_usdc: string; available_liquidity_usdc: string; vault_balance_usdc: string; withdrawal_request: null | { shares: string; min_amount_usdc: string; requested_at_ms: number } }
+export type LiquidityOverview = { account_id: string; balance_usdc: string; lp_shares: string; total_lp_shares: string; vault_nav_usdc: string; available_liquidity_usdc: string; vault_balance_usdc: string }
 export type SignedActionPayload = { account_id: string; message: string; nonce: number; expires_at_ms: number; recipient: string; amount_usdc?: string; shares?: string; min_amount_usdc?: string }
 export type TradeBootstrapData = {
   accountId: string
@@ -68,7 +68,6 @@ export const getDepositPayload = (account: string, amount: string) => request<Si
 export const submitDeposit = (body: unknown) => request<{ transaction_hash: string }>('/v1/liquidity/deposit', json(body))
 export const getLpWithdrawalPayload = (account: string, shares: string, minAmount: string) => request<SignedActionPayload>('/v1/liquidity/withdrawal/payload', json({ account_id: account, shares, min_amount_usdc: minAmount }))
 export const submitLpWithdrawal = (body: unknown) => request<{ transaction_hash: string }>('/v1/liquidity/withdrawal', json(body))
-export const completeLpWithdrawal = (account: string) => request<{ transaction_hash: string }>('/v1/liquidity/withdrawal/complete', json({ account_id: account }))
 export const getAccountWithdrawalPayload = (account: string, receiver: string, amount: string) => request<{ account_id: string; receiver_id: string; amount_usdc: string; action_nonce: number; expires_at_ms: number; message: string; nonce: string; recipient: string }>(`/v1/account/withdrawal/payload`, json({ account_id: account, receiver_id: receiver, amount_usdc: amount }))
 export const submitAccountWithdrawal = (body: unknown) => request<{ transaction_hash: string }>('/v1/account/withdrawal', json(body))
 export const getPositions = (account: string) => request<{ positions: PositionRecord[] }>(`/v1/trade/positions?${params({ account_id: account })}`)

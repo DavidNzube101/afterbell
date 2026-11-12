@@ -114,31 +114,6 @@ std::uint64_t tradingNonce(afterbell::indexer::NearRpc &rpc,
     return nonce;
 }
 
-std::vector<std::uint8_t> lpWithdrawalStateKey(const std::string &account) {
-    static constexpr std::string_view prefix = "afterbell:a1:lp:withdraw:";
-    std::vector<std::uint8_t> key(prefix.begin(), prefix.end());
-    const auto length = static_cast<std::uint32_t>(account.size());
-    for (unsigned i = 0; i < 4; ++i) key.push_back(static_cast<std::uint8_t>(length >> (8 * i)));
-    key.insert(key.end(), account.begin(), account.end());
-    return key;
-}
-
-Json::Value stateJson(afterbell::indexer::NearRpc &rpc, const std::string &contract,
-                      const std::vector<std::uint8_t> &key) {
-    Json::Value query; query["request_type"] = "view_state"; query["finality"] = "final";
-    query["account_id"] = contract;
-    query["prefix_base64"] = afterbell::oracle::base64Encode(key.data(), key.size());
-    const auto result = rpc.call("query", query);
-    if (!result["values"].isArray() || result["values"].empty()) return Json::Value();
-    const auto bytes = afterbell::oracle::base64Decode(result["values"][0]["value"].asString());
-    Json::CharReaderBuilder builder; Json::Value value; std::string errors;
-    auto reader = std::unique_ptr<Json::CharReader>(builder.newCharReader());
-    if (!reader->parse(reinterpret_cast<const char *>(bytes.data()),
-                       reinterpret_cast<const char *>(bytes.data() + bytes.size()), &value, &errors))
-        throw std::runtime_error("A1 liquidity withdrawal state is malformed");
-    return value;
-}
-
 unsigned __int128 stateU128(afterbell::indexer::NearRpc &rpc, const std::string &contract,
                             const std::string &keyText) {
     const auto *begin = reinterpret_cast<const std::uint8_t *>(keyText.data());
@@ -475,7 +450,6 @@ Json::Value Service::liquidityOverview(const std::string &accountId) const {
     result["available_liquidity_usdc"] = viewCall(rpc, config_.contractId, "vault_available_payout", Json::Value(Json::objectValue));
     result["vault_balance_usdc"] = viewCall(rpc, config_.contractId, "vault_balance", Json::Value(Json::objectValue));
     result["total_lp_shares"] = decimal(stateU128(rpc, config_.contractId, "afterbell:a1:lp:total_shares"));
-    result["withdrawal_request"] = stateJson(rpc, config_.contractId, lpWithdrawalStateKey(accountId));
     return result;
 }
 
@@ -552,14 +526,6 @@ Json::Value Service::submitLiquidityWithdrawal(const Json::Value &request) {
     args["nonce"] = Json::UInt64(nonce); args["expires_at_ms"] = Json::UInt64(expiry); args["signature"] = request["signature"];
     std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
     auto result = relayCall(config_, "request_vault_withdrawal", args); result["account_id"] = account;
-    return result;
-}
-
-Json::Value Service::completeLiquidityWithdrawal(const std::string &accountId) {
-    validateUserAccount(accountId);
-    Json::Value args; args["account_id"] = accountId;
-    std::lock_guard<std::mutex> lock(afterbell::oracle::nearTransactionMutex());
-    auto result = relayCall(config_, "complete_vault_withdrawal", args); result["account_id"] = accountId;
     return result;
 }
 

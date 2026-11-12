@@ -12,10 +12,11 @@ owner actions, NEP-141 deposits and withdrawals, agent records and policies,
 market configuration, quote-authorized trading, a single EOA-signed oracle,
 oracle freshness/deviation circuit breakers, isolated margin, partial and full
 closes, funding, liquidation, insurance and bad-debt accounting, deferred
-profit claims, LP shares and a 24-hour withdrawal queue, delayed risk increases,
-storage-credit metering, and per-agent daily loss limits. The Rust test suite
-contains 105 tests. Findings from the three A1 review reports were reconciled
-against the current source and fixes were committed.
+profit claims, LP shares with immediate withdrawals subject to pricing, minimum
+output and available-liquidity checks, delayed risk increases, storage-credit
+metering, and per-agent daily loss limits. The Rust test suite contains 105
+tests. Findings from the three A1 review reports were reconciled against the
+current source and fixes were committed.
 
 The active contract is complete for its defined on-chain scope. Mainnet A1 has
 not yet been deployed. The testnet transaction history below records earlier

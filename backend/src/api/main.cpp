@@ -492,14 +492,8 @@ int main() {
         drogon::app().registerHandler(
             "/v1/liquidity/withdrawal",
             [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
-                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); auto body = tradingService->submitLiquidityWithdrawal(*input); logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "liquidity_withdrawal_requested", "Liquidity withdrawal requested", "Your LP shares are in the withdrawal cooldown.", "", "", (*input)["shares"].asString(), body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
+                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input) throw std::invalid_argument("request body must be JSON"); auto body = tradingService->submitLiquidityWithdrawal(*input); logActivityBestEffort(dashboardStore, network, (*input)["account_id"].asString(), "liquidity_withdrawn", "Liquidity withdrawn", "LP shares were redeemed and USDC was returned to your Afterbell balance.", "", "", "", body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
                 catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_withdrawal_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
-            }, {drogon::Post});
-        drogon::app().registerHandler(
-            "/v1/liquidity/withdrawal/complete",
-            [tradingService, dashboardStore, network = *network](const drogon::HttpRequestPtr &request, std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
-                try { if (!tradingService) throw std::runtime_error("Liquidity actions are unavailable"); const auto input = request->getJsonObject(); if (!input || !(*input)["account_id"].isString()) throw std::invalid_argument("account_id is required"); const auto account = (*input)["account_id"].asString(); auto body = tradingService->completeLiquidityWithdrawal(account); logActivityBestEffort(dashboardStore, network, account, "liquidity_withdrawal_completed", "Liquidity withdrawal completed", "USDC was returned to your Afterbell balance.", "", "", "0", body["transaction_hash"].asString()); callback(drogon::HttpResponse::newHttpJsonResponse(body)); }
-                catch (const std::exception &error) { auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("liquidity_withdrawal_completion_failed", error.what())); response->setStatusCode(drogon::k422UnprocessableEntity); callback(response); }
             }, {drogon::Post});
         drogon::app().registerHandler(
             "/v1/account/withdrawal/payload",
