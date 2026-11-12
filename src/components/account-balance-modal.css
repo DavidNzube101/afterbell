@@ -1,4 +1,4 @@
-.balance-modal-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 18px; background: #03070dcc; backdrop-filter: blur(7px); animation: balance-backdrop-in .16s ease-out both; }
+.balance-modal-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 18px; background: #03070de8; animation: balance-backdrop-in .16s ease-out both; }
 .balance-modal { width: min(440px, 100%); max-height: min(760px, calc(100dvh - 36px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #111720; border-radius: 16px; background: #111720; box-shadow: 0 24px 80px #0009; }
 .balance-modal-header { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 19px; border-bottom: 1px solid #1a232d; }
 .balance-modal-header > div { min-width: 0; display: flex; align-items: center; gap: 12px; }
