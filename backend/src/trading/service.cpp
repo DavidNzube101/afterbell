@@ -139,39 +139,6 @@ unsigned __int128 stateU128(afterbell::indexer::NearRpc &rpc, const std::string 
     return value;
 }
 
-unsigned __int128 userOpenNotional(afterbell::indexer::NearRpc &rpc,
-                                   const std::string &contract,
-                                   const std::string &account) {
-    static constexpr std::string_view prefix = "afterbell:a1:perp:open_notional:";
-    std::vector<std::uint8_t> key(prefix.begin(), prefix.end());
-    const auto length = static_cast<std::uint32_t>(account.size());
-    for (unsigned i = 0; i < 4; ++i) key.push_back(static_cast<std::uint8_t>(length >> (8 * i)));
-    key.insert(key.end(), account.begin(), account.end());
-    Json::Value query; query["request_type"] = "view_state"; query["finality"] = "final";
-    query["account_id"] = contract;
-    query["prefix_base64"] = afterbell::oracle::base64Encode(key.data(), key.size());
-    const auto result = rpc.call("query", query);
-    if (!result["values"].isArray() || result["values"].empty()) return 0;
-    const auto bytes = afterbell::oracle::base64Decode(result["values"][0]["value"].asString());
-    if (bytes.size() != 16) throw std::runtime_error("A1 account open-interest state is malformed");
-    unsigned __int128 value = 0;
-    for (unsigned i = 0; i < 16; ++i) value |= static_cast<unsigned __int128>(bytes[i]) << (8 * i);
-    return value;
-}
-
-unsigned __int128 markedNotional(const Json::Value &baseUnits, const Json::Value &price) {
-    const auto base = u128(baseUnits, "exposure base units");
-    const auto mark = u128(price, "market mark price");
-    const auto max = static_cast<unsigned __int128>(-1);
-    if (mark && base > max / mark) return max;
-    return base * mark / 100'000'000;
-}
-
-unsigned __int128 riskCap(unsigned __int128 nav, const Json::Value &bps, const char *field) {
-    const auto rate = u64(bps, field);
-    return (nav / 10'000) * rate + ((nav % 10'000) * rate) / 10'000;
-}
-
 std::string usdcDisplay(unsigned __int128 raw) {
     const auto whole = raw / 1'000'000;
     const auto fraction = static_cast<unsigned>(raw % 1'000'000);
@@ -180,132 +147,19 @@ std::string usdcDisplay(unsigned __int128 raw) {
     return decimal(whole) + "." + decimals;
 }
 
-unsigned __int128 maxRiskNotional(afterbell::indexer::NearRpc &rpc,
-                                  const Config &config,
-                                  const std::string &account,
-                                  const std::string &targetMarket,
-                                  bool isLong,
-                                  const Json::Value &targetMarketConfig,
-                                  const Json::Value &targetPrice,
-                                  std::uint64_t chainNow) {
-    Json::Value noArgs(Json::objectValue);
-    auto navRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId](auto &reader) {
-        return viewCall(reader, contract, "vault_nav_usdc", Json::Value(Json::objectValue));
-    });
-    auto riskRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId](auto &reader) {
-        return viewCall(reader, contract, "perp_global_risk_config", Json::Value(Json::objectValue));
-    });
-    auto accountOpenRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, account](auto &reader) {
-        return userOpenNotional(reader, contract, account);
-    });
-    auto targetExposureRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, targetMarket](auto &reader) {
-        Json::Value args; args["market_id"] = targetMarket;
-        return viewCall(reader, contract, "perp_exposure", args);
-    });
-    auto totalOiRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId](auto &reader) {
-        return stateU128(reader, contract, "afterbell:a1:perp:total_oi");
-    });
-    auto payoutRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId](auto &reader) {
-        return viewCall(reader, contract, "vault_available_payout", Json::Value(Json::objectValue));
-    });
-    const auto nav = u128(navRead.get(), "vault NAV");
-    const auto globalRisk = riskRead.get();
-    const auto traderCap = riskCap(nav, globalRisk["max_trader_oi_bps"], "trader OI cap");
-    const auto accountOpen = accountOpenRead.get();
-    auto allowed = traderCap > accountOpen ? traderCap - accountOpen : 0;
-
-    const auto targetExposure = targetExposureRead.get();
-    const auto targetLong = markedNotional(targetExposure["long_base_units"], targetPrice["price"]);
-    const auto targetShort = markedNotional(targetExposure["short_base_units"], targetPrice["price"]);
-    const auto targetMarketGross = targetLong + targetShort;
-    const auto marketOiCap = riskCap(nav, targetMarketConfig["max_market_oi_bps"], "market OI cap");
-    const auto marketOiRemaining = marketOiCap > targetMarketGross ? marketOiCap - targetMarketGross : 0;
-    allowed = std::min(allowed, marketOiRemaining);
-
-    const auto marketSkewCap = riskCap(nav, targetMarketConfig["max_market_skew_bps"], "market skew cap");
-    const auto targetSkew = targetLong >= targetShort
-        ? static_cast<__int128>(targetLong - targetShort)
-        : -static_cast<__int128>(targetShort - targetLong);
-    const auto marketDirectionalRemaining = marketSkewCap;
-    const auto marketSkewRoom = isLong
-        ? (targetSkew < static_cast<__int128>(marketDirectionalRemaining)
-            ? static_cast<unsigned __int128>(static_cast<__int128>(marketDirectionalRemaining) - targetSkew) : 0)
-        : (targetSkew > -static_cast<__int128>(marketDirectionalRemaining)
-            ? static_cast<unsigned __int128>(static_cast<__int128>(marketDirectionalRemaining) + targetSkew) : 0);
-    allowed = std::min(allowed, marketSkewRoom);
-
-    unsigned __int128 totalGross = targetLong + targetShort;
-    unsigned __int128 totalDirectional = targetLong >= targetShort ? targetLong - targetShort : targetShort - targetLong;
-    const auto storedTotalOi = totalOiRead.get();
-    if (storedTotalOi > 0) {
-        Json::Value ids = viewCall(rpc, config.contractId, "perp_market_ids", noArgs);
-        if (!ids.isArray()) throw std::runtime_error("A1 returned invalid market ids for risk preflight");
-        struct OtherExposure { std::string id; Json::Value exposure; };
-        std::vector<std::pair<std::string, std::future<Json::Value>>> exposureReads;
-        for (const auto &idValue : ids) {
-            if (!idValue.isString()) throw std::runtime_error("A1 returned an invalid market id for risk preflight");
-            const auto id = idValue.asString();
-            if (id == targetMarket) continue;
-            exposureReads.emplace_back(id, std::async(std::launch::async, [url = config.readRpcUrl, contract = config.contractId, id] {
-                afterbell::indexer::NearRpc reader(url);
-                Json::Value args; args["market_id"] = id;
-                return viewCall(reader, contract, "perp_exposure", args);
-            }));
-        }
-        std::vector<OtherExposure> activeExposures;
-        for (auto &read : exposureReads) {
-            auto exposure = read.second.get();
-            if (u128(exposure["long_notional_usdc"], "long exposure") == 0 &&
-                u128(exposure["short_notional_usdc"], "short exposure") == 0) continue;
-            activeExposures.push_back({read.first, std::move(exposure)});
-        }
-        struct OtherMarketState { Json::Value price; Json::Value health; Json::Value market; };
-        std::vector<std::future<OtherMarketState>> stateReads;
-        for (const auto &entry : activeExposures) {
-            stateReads.push_back(std::async(std::launch::async, [url = config.readRpcUrl, contract = config.contractId, id = entry.id] {
-                afterbell::indexer::NearRpc reader(url);
-                Json::Value args; args["market_id"] = id;
-                OtherMarketState state;
-                state.price = viewCall(reader, contract, "market_price", args);
-                state.health = viewCall(reader, contract, "oracle_health", args);
-                state.market = viewCall(reader, contract, "perp_market", args);
-                return state;
-            }));
-        }
-        for (std::size_t i = 0; i < activeExposures.size(); ++i) {
-            const auto state = stateReads[i].get();
-            if (state.price.isNull()) throw std::runtime_error("A live oracle price is required for portfolio risk preflight");
-            const auto observedAt = u64(state.price["observed_at_ms"], "portfolio market oracle timestamp");
-            if (observedAt > chainNow || chainNow - observedAt > 60'000)
-                throw std::runtime_error("A fresh oracle price is required for portfolio risk preflight");
-            if (state.health["circuit_broken"].asBool() ||
-                u64(state.health["confidence_bps"], "market confidence") > u64(state.market["max_oracle_confidence_bps"], "market confidence cap") ||
-                u64(state.health["spot_twap_deviation_bps"], "market deviation") > u64(state.market["max_execution_deviation_bps"], "market deviation cap"))
-                throw std::runtime_error("An active market oracle is unsafe for portfolio risk preflight");
-            const auto longValue = markedNotional(activeExposures[i].exposure["long_base_units"], state.price["price"]);
-            const auto shortValue = markedNotional(activeExposures[i].exposure["short_base_units"], state.price["price"]);
-            totalGross += longValue + shortValue;
-            totalDirectional += longValue >= shortValue ? longValue - shortValue : shortValue - longValue;
-        }
-    }
-    const auto globalOiCap = riskCap(nav, globalRisk["max_total_oi_bps"], "global OI cap");
-    const auto globalOiRoom = globalOiCap > totalGross ? globalOiCap - totalGross : 0;
-    allowed = std::min(allowed, globalOiRoom);
-
-    const auto globalSkewCap = riskCap(nav, globalRisk["max_global_net_bps"], "global directional cap");
-    const auto currentTargetSkew = targetLong >= targetShort
-        ? static_cast<__int128>(targetLong - targetShort)
-        : -static_cast<__int128>(targetShort - targetLong);
-    const auto currentTargetAbsolute = targetLong >= targetShort ? targetLong - targetShort : targetShort - targetLong;
-    const auto otherMarketSkew = totalDirectional >= currentTargetAbsolute ? totalDirectional - currentTargetAbsolute : 0;
-    const auto targetDirectionalRoom = globalSkewCap > otherMarketSkew ? globalSkewCap - otherMarketSkew : 0;
-    const auto globalSkewRoom = isLong
-        ? (currentTargetSkew < static_cast<__int128>(targetDirectionalRoom)
-            ? static_cast<unsigned __int128>(static_cast<__int128>(targetDirectionalRoom) - currentTargetSkew) : 0)
-        : (currentTargetSkew > -static_cast<__int128>(targetDirectionalRoom)
-            ? static_cast<unsigned __int128>(static_cast<__int128>(targetDirectionalRoom) + currentTargetSkew) : 0);
-    allowed = std::min(allowed, globalSkewRoom);
-    return std::min(allowed, u128(payoutRead.get(), "vault payout capacity"));
+Json::Value orderCapacity(afterbell::indexer::NearRpc &rpc,
+                         const std::string &contract,
+                         const std::string &account,
+                         const std::string &marketId,
+                         bool isLong) {
+    Json::Value args;
+    args["account_id"] = account;
+    args["market_id"] = marketId;
+    args["is_long"] = isLong;
+    const auto capacity = viewCall(rpc, contract, "perp_order_capacity", args);
+    if (!capacity.isObject() || !capacity.isMember("allowed_max_notional_usdc"))
+        throw std::runtime_error("A1 returned invalid order capacity data");
+    return capacity;
 }
 
 void validateUserAccount(const std::string &account) {
@@ -450,45 +304,21 @@ Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
     const auto leverage = static_cast<std::uint32_t>(leverageRaw);
     const auto slippage = static_cast<std::uint16_t>(slippageRaw);
 
-    Json::Value marketArgs; marketArgs["market_id"] = marketId;
-    auto marketRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, marketArgs](auto &reader) {
-        return viewCall(reader, contract, "perp_market", marketArgs);
-    });
-    auto pausedRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId](auto &reader) {
-        return viewCall(reader, contract, "perp_paused", Json::Value(Json::objectValue));
-    });
+    const auto capacity = orderCapacity(rpc, config.contractId, account, marketId, isLong);
+    const auto allowedNotional = u128(capacity["allowed_max_notional_usdc"], "allowed order capacity");
+    if (leverage > u64(capacity["max_leverage_bps"], "market max leverage") ||
+        slippage > u64(capacity["max_execution_deviation_bps"], "market slippage cap"))
+        throw std::invalid_argument("order exceeds the market risk limits");
+    if (notional > allowedNotional) throw RiskCapacityExceeded(decimal(allowedNotional));
+    const auto sequence = u64(capacity["price_sequence"], "oracle sequence");
+    const auto referencePrice = u128(capacity["mark_price_e8"], "oracle mark price");
+    const auto chainNow = u64(capacity["now_ms"], "NEAR block timestamp");
+    const auto expiry = chainNow + 30'000;
+
     auto ownerRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, account](auto &reader) {
         Json::Value args; args["account_id"] = account;
         return viewCall(reader, contract, "owner_of", args);
     });
-    auto priceRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, marketArgs](auto &reader) {
-        return viewCall(reader, contract, "market_price", marketArgs);
-    });
-    auto healthRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, marketArgs](auto &reader) {
-        return viewCall(reader, contract, "oracle_health", marketArgs);
-    });
-    auto chainTimeRead = asyncRpcRead(config.readRpcUrl, [](auto &reader) { return blockTimeMs(reader); });
-    const auto market = marketRead.get();
-    if (market.isNull() || !market["enabled"].asBool() || market["close_only"].asBool()) throw std::runtime_error("market is not accepting new positions");
-    if (leverage > u64(market["max_leverage_bps"], "market max leverage") ||
-        slippage > u64(market["max_execution_deviation_bps"], "market slippage cap")) throw std::invalid_argument("order exceeds the market risk limits");
-    if (pausedRead.get().asBool()) throw std::runtime_error("perpetual trading is paused");
-    if (ownerRead.get().isNull()) throw std::invalid_argument("account has no registered owner");
-    const auto price = priceRead.get();
-    if (price.isNull()) throw std::runtime_error("market oracle price is unavailable");
-    const auto chainNow = chainTimeRead.get();
-    const auto observedAt = u64(price["observed_at_ms"], "oracle timestamp");
-    if (observedAt > chainNow || chainNow - observedAt > 60'000) throw std::runtime_error("market oracle price is stale");
-    const auto health = healthRead.get();
-    if (health["circuit_broken"].asBool() ||
-        u64(health["confidence_bps"], "oracle confidence") > u64(market["max_oracle_confidence_bps"], "market confidence cap") ||
-        u64(health["spot_twap_deviation_bps"], "oracle deviation") > u64(market["max_execution_deviation_bps"], "market deviation cap")) throw std::runtime_error("oracle health checks do not allow opening this market");
-    const auto sequence = u64(price["sequence"], "oracle sequence");
-    const auto referencePrice = u128(price["price"], "oracle price");
-    auto allowedNotional = maxRiskNotional(rpc, config, account, marketId, isLong, market, price, chainNow);
-    allowedNotional = std::min(allowedNotional, u128(market["max_position_usdc"], "market position cap"));
-    if (notional > allowedNotional) throw RiskCapacityExceeded(decimal(allowedNotional));
-    const auto expiry = chainNow + 30'000;
     const auto margin = (notional * 10'000 + leverage - 1) / leverage;
     const auto fee = (notional * config.feeBps + 9'999) / 10'000;
     auto nonceRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, account](auto &reader) {
@@ -500,6 +330,7 @@ Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
     });
     const auto nonce = nonceRead.get();
     const auto balance = u128(balanceRead.get(), "USDC balance");
+    if (ownerRead.get().isNull()) throw std::invalid_argument("account has no registered owner");
     if (balance < margin + fee) throw std::runtime_error("insufficient free USDC for margin and fee");
 
     std::string positionId;
@@ -1224,22 +1055,10 @@ Json::Value Service::createLimitOrderMessage(const Json::Value &request) const {
         throw std::invalid_argument("invalid limit order fields");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
     if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
-    Json::Value marketArgs; marketArgs["market_id"] = market;
-    const auto marketConfig = viewCall(rpc, config_.contractId, "perp_market", marketArgs);
-    const auto price = viewCall(rpc, config_.contractId, "market_price", marketArgs);
-    if (marketConfig.isNull() || !marketConfig["enabled"].asBool() || marketConfig["close_only"].asBool())
-        throw std::runtime_error("market is not accepting new positions");
-    if (price.isNull()) throw std::runtime_error("market oracle price is unavailable");
-    const auto now = blockTimeMs(rpc);
-    const auto observedAt = u64(price["observed_at_ms"], "oracle timestamp");
-    if (observedAt > now || now - observedAt > 60'000) throw std::runtime_error("market oracle price is stale");
-    const auto health = viewCall(rpc, config_.contractId, "oracle_health", marketArgs);
-    if (health["circuit_broken"].asBool() ||
-        u64(health["confidence_bps"], "oracle confidence") > u64(marketConfig["max_oracle_confidence_bps"], "market confidence cap") ||
-        u64(health["spot_twap_deviation_bps"], "oracle deviation") > u64(marketConfig["max_execution_deviation_bps"], "market deviation cap"))
-        throw std::runtime_error("oracle health checks do not allow opening this market");
-    auto allowedNotional = maxRiskNotional(rpc, config_, account, market, side == "long", marketConfig, price, now);
-    allowedNotional = std::min(allowedNotional, u128(marketConfig["max_position_usdc"], "market position cap"));
+    const auto capacity = orderCapacity(rpc, config_.contractId, account, market, side == "long");
+    const auto allowedNotional = u128(capacity["allowed_max_notional_usdc"], "allowed order capacity");
+    if (leverage > u64(capacity["max_leverage_bps"], "market max leverage"))
+        throw std::invalid_argument("order exceeds the market leverage limit");
     if (notional > allowedNotional) throw RiskCapacityExceeded(decimal(allowedNotional));
     const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
     Json::Value args;

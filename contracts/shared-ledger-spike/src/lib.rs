@@ -235,6 +235,19 @@ pub struct PerpGlobalRiskConfig {
     pub max_trader_oi_bps: u16,
 }
 
+/// Live preflight data for an order. This is a read-only quote helper; the
+/// state-changing open method still repeats every risk check authoritatively.
+#[near(serializers = [json])]
+pub struct PerpOrderCapacity {
+    pub allowed_max_notional_usdc: U128,
+    pub mark_price_e8: U128,
+    pub observed_at_ms: u64,
+    pub price_sequence: u64,
+    pub now_ms: u64,
+    pub max_leverage_bps: u32,
+    pub max_execution_deviation_bps: u16,
+}
+
 /// Isolated position held by one user or agent logical record.
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -558,6 +571,81 @@ impl SharedLedger {
 
     pub fn perp_global_risk_config(&self) -> PerpGlobalRiskConfig {
         read_perp_global_risk_config()
+    }
+
+    /// Return the maximum additional notional currently permitted for an
+    /// account/market/side. The opening transaction independently enforces
+    /// the same limits, so this view never reserves capacity.
+    pub fn perp_order_capacity(
+        &self,
+        account_id: String,
+        market_id: String,
+        is_long: bool,
+    ) -> PerpOrderCapacity {
+        assert_valid_market_id(&market_id);
+        assert!(!self.perp_paused(), "perpetual trading is paused");
+        let market = read_perp_market(&market_id).expect("market is not configured");
+        assert!(
+            market.enabled && !market.close_only,
+            "market is not accepting new positions"
+        );
+        let price = require_fresh_market_price(&market_id);
+        let health = read_oracle_health(&market_id);
+        assert!(
+            !health.circuit_broken
+                && health.confidence_bps <= market.max_oracle_confidence_bps
+                && health.spot_twap_deviation_bps <= market.max_execution_deviation_bps,
+            "oracle health checks do not allow opening this market"
+        );
+
+        let nav = vault_nav(&self.balances);
+        let global_risk = read_perp_global_risk_config();
+        let exposure = read_perp_exposure(&market_id);
+        let long = revalue_exposure(exposure.long_base_units.0, price.price.0);
+        let short = revalue_exposure(exposure.short_base_units.0, price.price.0);
+        let trader_cap = nav.saturating_mul(u128::from(global_risk.max_trader_oi_bps)) / 10_000;
+        let trader_open = read_perp_open_notional(&account_id);
+        let market_oi_cap = nav.saturating_mul(u128::from(market.max_market_oi_bps)) / 10_000;
+        let market_skew_cap = nav.saturating_mul(u128::from(market.max_market_skew_bps)) / 10_000;
+        let (global_oi, global_skew) =
+            marked_global_exposure(&market_id, price.price.0, is_long, 0);
+        let global_oi_cap = nav.saturating_mul(u128::from(global_risk.max_total_oi_bps)) / 10_000;
+        let global_skew_cap =
+            nav.saturating_mul(u128::from(global_risk.max_global_net_bps)) / 10_000;
+        let target_skew = long.abs_diff(short);
+        let global_skew = u128::try_from(global_skew).expect("invalid global directional exposure");
+        let other_market_skew = global_skew.saturating_sub(target_skew);
+        let target_global_skew_cap = global_skew_cap.saturating_sub(other_market_skew);
+
+        let allowed = market
+            .max_position_usdc
+            .0
+            .min(trader_cap.saturating_sub(trader_open))
+            .min(market_oi_cap.saturating_sub(long.saturating_add(short)))
+            .min(directional_add_capacity(
+                long,
+                short,
+                market_skew_cap,
+                is_long,
+            ))
+            .min(global_oi_cap.saturating_sub(global_oi))
+            .min(directional_add_capacity(
+                long,
+                short,
+                target_global_skew_cap,
+                is_long,
+            ))
+            .min(vault_risk_available(&self.balances));
+
+        PerpOrderCapacity {
+            allowed_max_notional_usdc: U128(allowed),
+            mark_price_e8: price.price,
+            observed_at_ms: price.observed_at_ms,
+            price_sequence: price.sequence,
+            now_ms: env::block_timestamp() / 1_000_000,
+            max_leverage_bps: market.max_leverage_bps,
+            max_execution_deviation_bps: market.max_execution_deviation_bps,
+        }
     }
 
     pub fn pending_perp_global_risk_config(&self) -> Option<PerpGlobalRiskConfig> {
@@ -5014,6 +5102,15 @@ fn revalue_exposure(base_units: u128, mark_price: u128) -> u128 {
         .checked_mul(mark_price)
         .map(|value| value / PERP_BASE_UNITS_SCALE)
         .unwrap_or(u128::MAX)
+}
+
+fn directional_add_capacity(long: u128, short: u128, skew_cap: u128, is_long: bool) -> u128 {
+    match (is_long, long >= short) {
+        (true, true) => skew_cap.saturating_sub(long - short),
+        (true, false) => skew_cap.saturating_add(short - long),
+        (false, true) => skew_cap.saturating_add(long - short),
+        (false, false) => skew_cap.saturating_sub(short - long),
+    }
 }
 
 fn marked_global_exposure(
