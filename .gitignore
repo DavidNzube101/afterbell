@@ -50,6 +50,7 @@ cache/
 contracts/deployer/
 contracts/oracle-publisher/
 contracts/jjwin.testnet.json
+contracts/jjwindawg.testnet.json
 contracts/afterbell-test-relay-7c2.testnet.json
 contracts/afterbell-auth-stress/
 # Separately versioned landing API repository
