@@ -7,7 +7,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY backend/scripts/install_drogon.sh ./backend/scripts/install_drogon.sh
-RUN bash backend/scripts/install_drogon.sh
+RUN DROGON_INSTALL_PREFIX=/usr/local bash backend/scripts/install_drogon.sh
 
 COPY backend ./backend
 RUN cmake -S backend -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DAFTERBELL_REQUIRE_DROGON=ON \

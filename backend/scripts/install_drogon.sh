@@ -4,7 +4,7 @@ set -euo pipefail
 # Ubuntu 24.04's packaged Drogon predates async response streams. Keep CI and
 # production builds on the same upstream version because Otto streams SSE.
 drogon_version="${DROGON_VERSION:-v1.9.13}"
-install_prefix="${DROGON_INSTALL_PREFIX:-/usr/local}"
+install_prefix="${DROGON_INSTALL_PREFIX:-${RUNNER_TEMP:-/tmp}/afterbell-drogon}"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 

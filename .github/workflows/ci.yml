@@ -29,10 +29,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends clang-tidy cmake g++ git libcurl4-openssl-dev libjsoncpp-dev libpq-dev libssl-dev pkg-config uuid-dev zlib1g-dev
       - name: Install pinned Drogon with async stream support
-        run: bash backend/scripts/install_drogon.sh
+        run: DROGON_INSTALL_PREFIX="$RUNNER_TEMP/afterbell-drogon" bash backend/scripts/install_drogon.sh
 
       - name: Configure
-        run: cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DAFTERBELL_REQUIRE_DROGON=ON
+        run: cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DAFTERBELL_REQUIRE_DROGON=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/afterbell-drogon"
 
       - name: Lint
         run: |
