@@ -40,13 +40,6 @@ button, input, select, textarea { font: inherit; }
 .otto-starter { min-height: 58px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 12px; border: 1px solid #151c26; border-radius: 13px; background: #151c26; color: #b3bdc8; font: inherit; font-size: 11px; line-height: 1.4; transition: color .16s ease, transform .16s ease; }
 .otto-starter:hover { color: #eff5fb; transform: translateY(-2px); }
 .otto-starter > span { color: #84baff; font-size: 14px; }
-.otto-carousel-controls { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 13px; }
-.otto-carousel-controls > button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #748191; }
-.otto-carousel-controls > button:hover { background: #151c26; color: #eaf1f8; }
-.otto-carousel-controls svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.otto-carousel-controls > span { display: inline-flex; align-items: center; gap: 6px; }
-.otto-carousel-controls > span button { width: 5px; height: 5px; padding: 0; border: 0; border-radius: 99px; background: #44505e; transition: width .25s ease, background .25s ease; }
-.otto-carousel-controls > span button.active { width: 17px; background: #3988e9; }
 .otto-market-modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: #03070bc7; backdrop-filter: blur(8px); animation: otto-market-fade .16s ease both; }
 @keyframes otto-market-fade { from { opacity: 0; } to { opacity: 1; } }
 .otto-market-modal { position: relative; width: min(100%, 430px); max-height: min(90dvh, 560px); overflow: auto; margin: 0; padding: 0; border: 1px solid #26313e; border-radius: 16px; background: #111821; color: inherit; box-shadow: 0 28px 90px #0009; animation: otto-market-rise .22s cubic-bezier(.2,.8,.2,1) both; }

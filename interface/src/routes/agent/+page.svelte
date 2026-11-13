@@ -37,8 +37,6 @@
 		return () => { if (carouselTimer) window.clearInterval(carouselTimer); document.removeEventListener('keydown', onKeydown) }
 	})
 
-	function moveCarousel(direction: number) { starterPage = (starterPage + direction + starterPages.length) % starterPages.length }
-
 	function chooseStarter(prompt: string) {
 		message = `${prompt} for ${marketPair.replace('-USDC', '')}.`
 		requestAnimationFrame(() => { textarea?.focus(); resizeComposer() })
@@ -93,11 +91,6 @@
 								{/each}
 							</div>
 						{/each}
-					</div>
-					<div class="otto-carousel-controls">
-						<button type="button" aria-label="Previous starter prompts" onclick={() => moveCarousel(-1)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
-						<span>{#each starterPages as _, pageIndex (`dot-${pageIndex}`)}<button type="button" class:active={starterPage === pageIndex} aria-label={`Show starter prompts ${pageIndex + 1}`} aria-current={starterPage === pageIndex ? 'true' : undefined} onclick={() => starterPage = pageIndex}></button>{/each}</span>
-						<button type="button" aria-label="Next starter prompts" onclick={() => moveCarousel(1)}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
 					</div>
 				</div>
 				<p class="otto-disclaimer">Otto is an AI assistant. Review market information before making trading decisions.</p>
