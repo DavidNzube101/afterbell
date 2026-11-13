@@ -36,6 +36,8 @@
 	let byokUrl = $state('https://api.openai.com/v1')
 	let byokModel = $state('gpt-4o-mini')
 	let byokKey = $state('')
+	let markdownParser: typeof import('marked').marked | null = null
+	let markdownSanitizer: typeof import('dompurify').default | null = null
 	const starters = [
 		{ icon: '↗', label: 'Break down the latest price action' },
 		{ icon: '◷', label: 'Explain funding and open interest' },
@@ -50,6 +52,11 @@
 	const providerLabel = $derived(provider === 'near_ai' ? 'NEAR AI' : provider === 'qwen' ? 'Qwen · Groq' : provider === 'byok' ? 'BYOK' : 'Choose provider')
 
 	onMount(() => {
+		void Promise.all([import('marked'), import('dompurify')]).then(([markedModule, purifierModule]) => {
+			markedModule.marked.setOptions({ gfm: true, breaks: true })
+			markdownParser = markedModule.marked
+			markdownSanitizer = purifierModule.default
+		}).catch(() => {})
 		initializeWalletSession()
 		if (!$walletSession) { void goto('/', { replaceState: true }); return }
 		try {
@@ -74,6 +81,15 @@
 		document.addEventListener('keydown', onKeydown)
 		return () => { if (carouselTimer) window.clearInterval(carouselTimer); abortController?.abort(); document.removeEventListener('keydown', onKeydown) }
 	})
+
+	function escapeHtml(value: string) {
+		return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)
+	}
+	function renderMarkdown(value: string) {
+		if (!markdownParser || !markdownSanitizer) return escapeHtml(value).replace(/\n/g, '<br>')
+		const html = markdownParser.parse(value, { async: false }) as string
+		return markdownSanitizer.sanitize(html, { USE_PROFILES: { html: true } })
+	}
 
 	function chooseStarter(prompt: string) {
 		message = `${prompt} for ${marketPair.replace('-USDC', '')}.`
@@ -273,7 +289,11 @@
 						{#each messages as item, index (`${index}:${item.role}`)}
 							<div class:otto-user-message={item.role === 'user'} class:otto-assistant-message={item.role === 'assistant'} class="otto-message">
 								{#if item.role === 'assistant'}<img src="/assets/afterbell-otto-logo.png" alt="Otto" />{/if}
-								<div class="otto-message-content">{item.content || (sending && index === messages.length - 1 ? streamStatus : '')}</div>
+								{#if item.role === 'assistant'}
+									<div class="otto-message-content">{@html renderMarkdown(item.content || (sending && index === messages.length - 1 ? streamStatus : ''))}</div>
+								{:else}
+									<div class="otto-message-content">{item.content}</div>
+								{/if}
 							</div>
 						{/each}
 					</div>

@@ -14,6 +14,7 @@
 #include <cctype>
 #include <deque>
 #include <future>
+#include <iostream>
 #include <memory>
 #include <iomanip>
 #include <limits>
@@ -47,6 +48,8 @@ struct RequestTarget {
 struct StreamState {
     drogon::ResponseStream *stream = nullptr;
     std::string lineBuffer;
+    std::string errorBody;
+    std::string upstreamRequestId;
     long status = 0;
     bool disconnected = false;
     bool doneSent = false;
@@ -285,14 +288,34 @@ std::size_t receiveHeaders(char *data, std::size_t size, std::size_t count, void
     const auto bytes = size * count;
     auto &state = *static_cast<StreamState *>(opaque);
     std::string line(data, bytes);
-    if (line.rfind("HTTP/", 0) == 0) consumeLine(state, std::move(line));
+    if (line.rfind("HTTP/", 0) == 0) {
+        consumeLine(state, std::move(line));
+    } else {
+        constexpr std::string_view requestIdHeader = "x-request-id:";
+        std::string lower = line;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (lower.rfind(requestIdHeader, 0) == 0) {
+            auto value = line.substr(requestIdHeader.size());
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
+            if (value.size() <= 128 && value.find_first_of("\r\n") == std::string::npos)
+                state.upstreamRequestId = std::move(value);
+        }
+    }
     return bytes;
 }
 
 std::size_t receiveBody(char *data, std::size_t size, std::size_t count, void *opaque) {
     const auto bytes = size * count;
     auto &state = *static_cast<StreamState *>(opaque);
-    if (state.status < 200 || state.status >= 300) return bytes;
+    if (state.status < 200 || state.status >= 300) {
+        constexpr std::size_t maxErrorBodyBytes = 8192;
+        const auto remaining = maxErrorBodyBytes - std::min(maxErrorBodyBytes, state.errorBody.size());
+        state.errorBody.append(data, std::min(bytes, remaining));
+        return bytes;
+    }
     state.lineBuffer.append(data, bytes);
     std::size_t newline = 0;
     while ((newline = state.lineBuffer.find('\n')) != std::string::npos) {
@@ -302,6 +325,45 @@ std::size_t receiveBody(char *data, std::size_t size, std::size_t count, void *o
         if (state.disconnected) return 0;
     }
     return bytes;
+}
+
+std::string safeProviderErrorDetail(const std::string &body, const std::string &apiKey) {
+    Json::Value parsed;
+    std::istringstream input(body);
+    std::string parseError;
+    if (!Json::parseFromStream(Json::CharReaderBuilder{}, input, &parsed, &parseError)) return {};
+    auto message = parsed["error"]["message"].asString();
+    if (message.empty()) return {};
+    if (!apiKey.empty()) {
+        std::size_t position = 0;
+        while ((position = message.find(apiKey, position)) != std::string::npos) {
+            message.replace(position, apiKey.size(), "[redacted]");
+            position += 10;
+        }
+    }
+    message.erase(std::remove_if(message.begin(), message.end(), [](unsigned char c) {
+        return std::iscntrl(c) && !std::isspace(c);
+    }), message.end());
+    if (message.size() > 300) message.resize(300);
+    return message;
+}
+
+std::string providerRejectionMessage(const std::string &provider, const std::string &model,
+                                     long status, const std::string &body, const std::string &apiKey) {
+    const auto name = provider == "near_ai" ? "NEAR AI" : provider == "qwen" ? "Qwen/Groq" : "BYOK provider";
+    if (status == 401 || status == 403)
+        return std::string(name) + " rejected the API key or denied access to this model. Check the key and model permissions.";
+    if (status == 402)
+        return std::string(name) + " has no available credits for this request. Check its billing balance.";
+    if (provider == "near_ai" && status == 404) {
+        if (model == "openai/privacy-filter")
+            return "NEAR_AI_MODEL is set to openai/privacy-filter, which is only for privacy redaction. Set it to a chat model such as zai-org/GLM-5.1-FP8.";
+        return "NEAR AI did not find the configured chat model '" + model + "'. Check NEAR_AI_MODEL against the available model IDs.";
+    }
+    if (status == 429) return std::string(name) + " is busy or rate-limited. Please try again shortly.";
+    const auto detail = safeProviderErrorDetail(body, apiKey);
+    if (!detail.empty()) return std::string(name) + " rejected the request: " + detail;
+    return std::string(name) + " rejected the request (HTTP " + std::to_string(status) + "). Check its model and API key.";
 }
 
 std::size_t collectBody(char *data, std::size_t size, std::size_t count, void *opaque) {
@@ -364,7 +426,8 @@ void redactNearMessages(Json::Value &messages, const std::string &apiKey) {
 }
 
 void runProvider(Json::Value input, ProviderConfig config, std::function<Json::Value()> contextProvider, drogon::ResponseStreamPtr stream) {
-    StreamState state{stream.get(), {}, 0, false, false};
+    StreamState state;
+    state.stream = stream.get();
     try {
         static const bool curlInitialized = [] {
             if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
@@ -477,10 +540,10 @@ void runProvider(Json::Value input, ProviderConfig config, std::function<Json::V
                 sendEvent(state, "error", error);
             }
         } else if (status < 200 || status >= 300) {
+            std::clog << "otto.provider_rejected provider=" << provider << " model=" << model
+                      << " status=" << status << " request_id=" << state.upstreamRequestId << '\n';
             Json::Value error;
-            error["message"] = status == 429
-                                   ? "The selected provider is busy or rate-limited. Please try again shortly."
-                                   : "The selected provider rejected the request. Check its model and API key.";
+            error["message"] = providerRejectionMessage(provider, model, status, state.errorBody, apiKey);
             sendEvent(state, "error", error);
         } else if (!state.disconnected && !state.doneSent) {
             if (!state.lineBuffer.empty()) consumeLine(state, std::move(state.lineBuffer));
@@ -506,8 +569,11 @@ void runProvider(Json::Value input, ProviderConfig config, std::function<Json::V
 
 Json::Value providerStatus(const ProviderConfig &config) {
     Json::Value providers(Json::objectValue);
-    providers["near_ai"]["available"] = !config.nearApiKey.empty() && !config.nearModel.empty();
+    const bool nearModelConfigured = !config.nearModel.empty() && config.nearModel != "openai/privacy-filter";
+    providers["near_ai"]["available"] = !config.nearApiKey.empty() && nearModelConfigured;
     providers["near_ai"]["model"] = config.nearModel;
+    if (!nearModelConfigured)
+        providers["near_ai"]["message"] = "Set NEAR_AI_MODEL to a chat model. openai/privacy-filter is reserved for privacy redaction.";
     providers["qwen"]["available"] = !config.groqApiKey.empty() && !config.groqModel.empty();
     providers["qwen"]["model"] = config.groqModel;
     providers["byok"]["available"] = true;

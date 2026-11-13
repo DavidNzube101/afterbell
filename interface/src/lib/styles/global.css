@@ -77,6 +77,24 @@ button, input, select, textarea { font: inherit; }
 .otto-user-message { justify-content: flex-end; }
 .otto-user-message .otto-message-content { max-width: 86%; padding: 10px 14px; border: 1px solid #202b38; border-radius: 14px 14px 3px 14px; background: #182331; }
 .otto-assistant-message .otto-message-content { min-height: 24px; padding: 2px 0 8px; }
+.otto-assistant-message .otto-message-content { white-space: normal; }
+.otto-assistant-message .otto-message-content > :first-child { margin-top: 0; }
+.otto-assistant-message .otto-message-content > :last-child { margin-bottom: 0; }
+.otto-assistant-message .otto-message-content p { margin: 0 0 12px; }
+.otto-assistant-message .otto-message-content h1, .otto-assistant-message .otto-message-content h2, .otto-assistant-message .otto-message-content h3 { margin: 16px 0 8px; color: #f1f5f9; line-height: 1.35; }
+.otto-assistant-message .otto-message-content h1 { font-size: 20px; }
+.otto-assistant-message .otto-message-content h2 { font-size: 17px; }
+.otto-assistant-message .otto-message-content h3 { font-size: 15px; }
+.otto-assistant-message .otto-message-content ul, .otto-assistant-message .otto-message-content ol { margin: 8px 0 12px; padding-left: 22px; }
+.otto-assistant-message .otto-message-content li + li { margin-top: 4px; }
+.otto-assistant-message .otto-message-content blockquote { margin: 10px 0; padding: 2px 0 2px 12px; border-left: 2px solid #526b86; color: #aab7c5; }
+.otto-assistant-message .otto-message-content :not(pre) > code { padding: 2px 5px; border: 1px solid #253243; border-radius: 5px; background: #111923; color: #c6d7ea; font-size: .92em; }
+.otto-assistant-message .otto-message-content pre { overflow-x: auto; margin: 10px 0 14px; padding: 12px 14px; border: 1px solid #253243; border-radius: 9px; background: #101720; white-space: pre; }
+.otto-assistant-message .otto-message-content pre code { color: #d5e1ed; font-size: 12px; }
+.otto-assistant-message .otto-message-content a { color: #8abaff; text-decoration: underline; text-underline-offset: 2px; }
+.otto-assistant-message .otto-message-content hr { border: 0; border-top: 1px solid #26313e; }
+.otto-assistant-message .otto-message-content table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.otto-assistant-message .otto-message-content th, .otto-assistant-message .otto-message-content td { padding: 6px 9px; border: 1px solid #293543; text-align: left; }
 .otto-chat-mode .otto-composer { width: min(100%, 820px); flex: 0 0 auto; align-self: center; }
 .otto-chat-mode .otto-disclaimer { align-self: center; margin: 12px 0 0; }
 .otto-spinner { width: 16px; height: 16px; border: 2px solid #ffffff55; border-top-color: #fff; border-radius: 50%; animation: otto-spin .7s linear infinite; }

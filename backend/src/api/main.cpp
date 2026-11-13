@@ -468,10 +468,13 @@ int main() {
                     return;
                 }
                 const auto provider = (*input)["provider"].asString();
-                if ((provider == "near_ai" && (ottoConfig.nearApiKey.empty() || ottoConfig.nearModel.empty())) ||
+                if ((provider == "near_ai" && (ottoConfig.nearApiKey.empty() || ottoConfig.nearModel.empty() ||
+                                                ottoConfig.nearModel == "openai/privacy-filter")) ||
                     (provider == "qwen" && (ottoConfig.groqApiKey.empty() || ottoConfig.groqModel.empty()))) {
-                    Json::Value body = errorBody("otto_provider_unavailable",
-                        "This Otto provider is not configured. Choose another provider or contact support.");
+                    const auto detail = provider == "near_ai" && ottoConfig.nearModel == "openai/privacy-filter"
+                        ? "NEAR_AI_MODEL must be a chat model. openai/privacy-filter is reserved for privacy redaction."
+                        : "This Otto provider is not configured. Choose another provider or contact support.";
+                    Json::Value body = errorBody("otto_provider_unavailable", detail);
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
                     response->setStatusCode(drogon::k503ServiceUnavailable);
                     callback(response);
