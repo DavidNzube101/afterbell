@@ -5,14 +5,13 @@
 [![CI](https://github.com/DavidNzube101/afterbell/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DavidNzube101/afterbell/actions/workflows/ci.yml)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-contracts-000000?logo=rust&logoColor=white)
-![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
-![TanStack Router](https://img.shields.io/badge/TanStack-Router-FF4154?logo=reactquery&logoColor=white)
+![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
 ![Bun](https://img.shields.io/badge/Bun-1.4-f9f1e1?logo=bun&logoColor=000000)
 ![NEAR Protocol](https://img.shields.io/badge/Chain-NEAR%20Protocol-00C08B?logo=near&logoColor=white)
 
 Afterbell is an open-source perpetuals trading dapp for synthetic US equity markets. Users connect a supported wallet, fund a shared A1 account with USDC, and open long or short positions against oracle-priced markets. A1 manages account ownership, margin, positions, limits, and shared liquidity on NEAR. The market registry is extensible; the initial launch markets are NVDA, AAPL, GOOGL, META, and TSLA.
 
-The project is built in the open. This public repository contains the React dapp, C++ API and workers, and Rust NEAR contracts so builders can inspect the implementation, follow development, and contribute.
+The project is built in the open. This public repository contains the SvelteKit dapp, C++ API and workers, and Rust NEAR contracts so builders can inspect the implementation, follow development, and contribute.
 
 ## Try Afterbell on testnet
 
@@ -37,7 +36,7 @@ NEAR AI platform-credit payment transaction: [view on NEAR Intents Explorer](htt
 
 ## About this repository
 
-The public landing page is at [afterbellfx.xyz](https://afterbellfx.xyz). This repository contains the trading frontend at its root, C++ workers in `backend/`, and NEAR contracts in `contracts/`.
+The public landing page is at [afterbellfx.xyz](https://afterbellfx.xyz). This repository contains the trading frontend in `interface/`, C++ workers in `backend/`, and NEAR contracts in `contracts/`.
 
 ## Repository layout
 
@@ -45,16 +44,17 @@ The public landing page is at [afterbellfx.xyz](https://afterbellfx.xyz). This r
 app/
 ├── backend/       # C++ off-chain services, including the NEAR deposit indexer
 ├── contracts/     # NEAR smart contracts
+├── interface/     # SvelteKit trading dapp
 ├── openapi.yaml   # Public HTTP API contract
 └── README.md
 ```
 
 ## Dapp frontend
 
-The TanStack React dapp is served from this repository root. Its API requests use
-`/api` paths: Vite proxies them to `VITE_API_PROXY_TARGET` during local
-development, while Vercel forwards them to `https://api.afterbellfx.xyz`. This
-keeps browser requests same-origin and avoids requiring cross-origin API access.
+The SvelteKit dapp lives in `interface/`. Its API requests use `/api` paths:
+Vite proxies them to `VITE_API_PROXY_TARGET` during local development, while
+Vercel forwards them to `https://api.afterbellfx.xyz`. This keeps browser
+requests same-origin and avoids requiring cross-origin API access.
 
 The dapp connects Solana, EVM, and NEAR wallets and uses each chain's native
 message-signing format to register the wallet as the owner of an A1 logical
@@ -63,16 +63,19 @@ bounded NEAR storage for the A1 owner record. Configure the frontend's
 `VITE_NEAR_NETWORK` and `VITE_A1_CONTRACT_ID` to match the API deployment, and
 set `OWNER_REGISTRATION_STORAGE_DEPOSIT_YOCTO` on the API service.
 
-For local frontend development, run the API on port `8080`, then:
+For local frontend development, run the API on port `8080`, then install and
+start the interface:
 
 ```sh
-bun install
+cd interface
+bun install --frozen-lockfile
 bun run dev
 ```
 
-To point the local dapp at the deployed API instead, copy `.env.example` to
-`.env.local` and set `VITE_API_PROXY_TARGET=https://api.afterbellfx.xyz`.
-Vercel builds this repository root with `bun run build` and serves `dist`.
+To point the local dapp at the deployed API instead, create `interface/.env`
+with `VITE_API_PROXY_TARGET=https://api.afterbellfx.xyz`. Vercel builds the
+`interface/` project with `bun run build`; SvelteKit's static adapter serves
+the generated `build/` output and SPA fallback.
 
 ## C++ API and workers
 
