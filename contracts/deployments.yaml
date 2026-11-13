@@ -8,8 +8,8 @@ networks:
     usdc_token_id: 3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
     active_a1_contract_id: afterbellfx-dev-faucet.testnet
     verified_code:
-      sha256: 2d11e53853523593ca65bf568b13d91959a099e64f9f20f9321abaf58addb234
-      verified_at_block_height: 277460500
+      sha256: 6f4ced79752a4d937befff7d805774b06fe48fff96d908041983004375e6a085
+      verified_at_block_height: 277466896
     deployments:
       - component: a1
         release: initial shared ledger
@@ -109,6 +109,14 @@ networks:
         wasm_size_bytes: 709200
         source_commit: bf47d8c
         deployed_at_utc: 2026-11-13T04:20:03.727Z
+      - component: a1
+        release: tolerate oracle updates during signed position closes
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: BshMqm8uiZSY15ZfnXPbwGH8yKefcKHYfTqPG2pboFEv
+        wasm_sha256: 6f4ced79752a4d937befff7d805774b06fe48fff96d908041983004375e6a085
+        wasm_size_bytes: 716009
+        source_commit: 9bdf5b9
+        deployed_at_utc: 2026-11-13T05:22:00Z
     state_migrations:
       - component: a1
         method: initialize_protocol_admin
