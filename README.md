@@ -6,137 +6,129 @@
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-contracts-000000?logo=rust&logoColor=white)
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
-![Bun](https://img.shields.io/badge/Bun-1.4-f9f1e1?logo=bun&logoColor=000000)
 ![NEAR Protocol](https://img.shields.io/badge/Chain-NEAR%20Protocol-00C08B?logo=near&logoColor=white)
 
-Afterbell is an open-source perpetuals trading dapp for synthetic US equity markets. Users connect a supported wallet, fund a shared A1 account with USDC, and open long or short positions against oracle-priced markets. A1 manages account ownership, margin, positions, limits, and shared liquidity on NEAR. The market registry is extensible; the initial launch markets are NVDA, AAPL, GOOGL, META, and TSLA.
+Afterbell is an on-chain perpetual trading system for synthetic US equity markets. Traders, liquidity providers, market data services, and AI assistance meet through one shared account and a single NEAR contract.
 
-The project is built in the open. This public repository contains the SvelteKit dapp, C++ API and workers, and Rust NEAR contracts so builders can inspect the implementation, follow development, and contribute.
+## Thesis
 
-## Try Afterbell on testnet
+On-chain trading should feel like one coherent product: connect a wallet once, hold one USDC balance, trade across markets, and provide liquidity through the same account. A shared contract keeps settlement and account state composable, while fast off-chain services handle quotes, market data, indexing, and AI context. Wallet signatures authorize actions; A1 verifies and settles them on NEAR.
 
-The dapp is live on NEAR Testnet at **[testnet.afterbellfx.xyz](https://testnet.afterbellfx.xyz)**. Testnet assets have no monetary value.
-
-To get test USDC, open [Circle's Testnet Faucet](https://faucet.circle.com/), choose **USDC** and **Near Testnet**, then enter your NEAR Testnet account ID. Circle currently allows 20 test USDC per address and network every two hours. Make sure the wallet and faucet are both set to NEAR Testnet.
+## Product links
 
 | | Link |
 |---|---|
 | Dapp | [testnet.afterbellfx.xyz](https://testnet.afterbellfx.xyz) |
 | Website | [afterbellfx.xyz](https://afterbellfx.xyz) |
+| Docs | [docs.afterbellfx.xyz](https://docs.afterbellfx.xyz) |
 | X | [@afterbellfx](https://x.com/afterbellfx) |
-| Source code | [github.com/DavidNzube101/afterbell](https://github.com/DavidNzube101/afterbell) |
+| Source | [github.com/DavidNzube101/afterbell](https://github.com/DavidNzube101/afterbell) |
 
-Afterbell is in active development. Testnet behavior, market availability, and displayed prices may change as the contracts and trading infrastructure evolve.
+### Deployments and addresses
 
-## Mainnet milestone
+| Network / component | Address or integration | Explorer |
+|---|---|---|
+| NEAR Testnet · A1 shared contract | `afterbellfx-dev-faucet.testnet` | [NEARBlocks](https://testnet.nearblocks.io/address/afterbellfx-dev-faucet.testnet) |
+| NEAR Testnet · USDC | `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` | [NEARBlocks](https://testnet.nearblocks.io/address/3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af) |
+| NEAR Mainnet · 1Click deposits | Mainnet deposit integration through NEAR Intents; separate from the testnet A1 trading deployment | [NEAR Intents](https://near-intents.org/) |
+| NEAR Mainnet · USDC | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` | [NEARBlocks](https://nearblocks.io/address/17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1) |
 
-A working **1Click deposit deployment is live on NEAR mainnet**, maintained separately from Afterbell’s currently live testnet trading deployment. This is a deposit integration milestone; the trading app described above remains testnet-first.
+A1 is deployed on NEAR Testnet. The mainnet milestone is the separate 1Click deposit integration; A1 itself is not listed as a mainnet contract deployment. The machine-readable A1 deployment record is [`contracts/deployments.yaml`](contracts/deployments.yaml).
 
-NEAR AI platform-credit payment transaction: [view on NEAR Intents Explorer](https://explorer.near-intents.org/transactions/24502f58e8485a30c7be6e079f74b8a341fef610cbdeb031a785c5e88a2c37b2).
+## How the system works
 
-## About this repository
-
-The public landing page is at [afterbellfx.xyz](https://afterbellfx.xyz). This repository contains the trading frontend in `interface/`, C++ workers in `backend/`, and NEAR contracts in `contracts/`.
-
-## Repository layout
-
-```text
-app/
-├── backend/       # C++ off-chain services, including the NEAR deposit indexer
-├── contracts/     # NEAR smart contracts
-├── interface/     # SvelteKit trading dapp
-├── openapi.yaml   # Public HTTP API contract
-└── README.md
+```mermaid
+flowchart LR
+  W[Trader or LP wallet] -->|signs action| UI[SvelteKit dapp]
+  UI -->|same-origin API| API[C++ API and quote service]
+  API -->|reads / submits signed actions| A1[A1 shared contract on NEAR]
+  A1 -->|balances, positions, LP shares| UI
+  RH[Robinhood Chain market pools] -->|spot and TWAP| OR[Oracle worker]
+  OR -->|signed price attestations| A1
+  FN[FastNear RPC and history] --> IDX[Deposit indexer]
+  A1 -->|finalized events| IDX
+  IDX --> DB[(PostgreSQL)]
+  DB --> API
+  API -->|live market and account context| OTTO[Otto]
+  OTTO -->|NEAR AI / Qwen via Groq / BYOK| UI
 ```
 
-## Dapp frontend
+The browser handles wallet connection, user experience, and wallet signatures. The C++ API builds quotes, relays signed actions, serves snapshots and history, and assembles Otto's live context. A dedicated worker reads Robinhood Chain pools and publishes signed market prices to A1. The indexer uses FastNear to discover finalized A1 deposit activity and stores it in PostgreSQL for fast account history and notifications; A1 remains authoritative for balances and settlement.
 
-The SvelteKit dapp lives in `interface/`. Its API requests use `/api` paths:
-Vite proxies them to `VITE_API_PROXY_TARGET` during local development, while
-Vercel forwards them to `https://api.afterbellfx.xyz`. This keeps browser
-requests same-origin and avoids requiring cross-origin API access.
+## A1 shared contract
 
-The dapp connects Solana, EVM, and NEAR wallets and uses each chain's native
-message-signing format to register the wallet as the owner of an A1 logical
-account. First-time account setup is relayed by the backend, which sponsors
-bounded NEAR storage for the A1 owner record. Configure the frontend's
-`VITE_NEAR_NETWORK` and `VITE_A1_CONTRACT_ID` to match the API deployment, and
-set `OWNER_REGISTRATION_STORAGE_DEPOSIT_YOCTO` on the API service.
+A1 is Afterbell's current shared-contract system: one NEAR deployment serves logical accounts across NEAR, Solana, and EVM wallets. Users keep one USDC balance for trading and liquidity; positions use isolated margin, while LP shares represent a claim on the shared vault. A1 verifies owner and quote signatures and performs accounting and settlement on-chain.
 
-For local frontend development, run the API on port `8080`, then install and
-start the interface:
-
-```sh
-cd interface
-bun install --frozen-lockfile
-bun run dev
+```mermaid
+flowchart TB
+  subgraph Owners[Wallet owners]
+    N[NEAR]
+    S[Solana]
+    E[EVM]
+  end
+  N -->|register owner / sign| A1
+  S -->|register owner / sign| A1
+  E -->|register owner / sign| A1
+  U[NEP-141 USDC] -->|deposit callback| A1[A1 · shared ledger and perp engine]
+  A1 --> B[Logical account balances]
+  A1 --> P[Isolated-margin positions]
+  A1 --> L[LP shares and vault]
+  A1 --> O[Oracle marks, funding, and risk state]
+  B -->|signed withdrawal| U
 ```
 
-To point the local dapp at the deployed API instead, create `interface/.env`
-with `VITE_API_PROXY_TARGET=https://api.afterbellfx.xyz`. Vercel builds the
-`interface/` project with `bun run build`; SvelteKit's static adapter serves
-the generated `build/` output and SPA fallback.
+The active app deployment is **A1** (`afterbellfx-dev-faucet.testnet`). Earlier factory and per-user-account prototypes are not part of the current system.
 
-## C++ API and workers
+## Core features
 
-The backend provides the HTTP trading API, a NEAR deposit indexer, an optional Robinhood Chain price publisher, and a standing limit-order keeper. Set `PERP_TRADING_ENABLED=true` to enable trade routes; set `INDEXER_ENABLED=true` and `ORACLE_ENABLED=true` to run their workers as managed background threads inside the API process. The indexer also remains available as a standalone executable for local development and operations.
+- **Trading:** open long and short positions, manage isolated margin, reduce or close positions, and place or cancel standing limit orders. Quotes bind the owner signature to the market mark and sequence; A1 verifies authorization and settles the action.
+- **Liquidity:** deposit USDC into the shared vault, receive LP shares, view vault/account metrics, and withdraw by redeeming shares.
+- **Otto:** ask about live prices, positions, and account context. Otto supports NEAR AI with privacy filtering and TEE-backed inference, Qwen through Groq as the platform default/fallback, and OpenAI-compatible BYOK providers. Platform credentials stay on the backend; BYOK keys are request-scoped.
+- **Markets:** follow AAPL, GOOGL, META, NVDA, and TSLA prices, history, and volume. The oracle reads Robinhood Chain stock/USDG pools and publishes signed marks to A1 on NEAR.
+- **Deposits:** use NEAR USDC for A1 testnet deposits and the separate 1Click integration for NEAR mainnet deposits.
 
-On macOS, install the build dependencies with Homebrew:
+NEAR AI platform-credit payment: [view transaction on NEAR Intents Explorer](https://explorer.near-intents.org/transactions/24502f58e8485a30c7be6e079f74b8a341fef610cbdeb031a785c5e88a2c37b2).
+
+## Run locally
+
+Requirements: Bun 1.4+, CMake, a C++17 compiler, PostgreSQL, and the backend libraries. On macOS:
 
 ```sh
 brew install cmake pkg-config postgresql@17 curl jsoncpp drogon openssl@3
 ```
 
-Keep `backend/.env` private. From the `app/` root, build and run the existing indexer tests, then start either service:
+1. Configure the backend from [`backend/.env.example`](backend/.env.example) into `backend/.env`. Set `DATABASE_URL`, the NEAR network/RPC, A1 contract, and USDC token. Enable trading/oracle workers and provider keys only when needed. Keep private keys and API keys out of Git.
+2. Build and start the API from the repository root:
 
-```sh
-export CMAKE_PREFIX_PATH="$(brew --prefix postgresql@17):$(brew --prefix curl):$(brew --prefix jsoncpp)"
-make build
-ctest --test-dir backend/build --output-on-failure
-make api
-make indexer
-```
+   ```sh
+   export CMAKE_PREFIX_PATH="$(brew --prefix postgresql@17):$(brew --prefix curl):$(brew --prefix jsoncpp)"
+   make build
+   make api
+   ```
 
-`make api` and `make indexer` stay attached to their processes; stop either with Ctrl-C. The API listens on `PORT` (default `8080`) and needs `DATABASE_URL` for its readiness check. Account onboarding stores unique usernames in `afterbell_user_profiles` and looks up reclaimed reservations in `waitlist_signups`; set optional `WAITLIST_DATABASE_URL` if those waitlist records are in a different PostgreSQL database, otherwise it uses `DATABASE_URL`. Its `GET /v1/markets` endpoint reads `backend/rh_stocks_addresses.json`. Set `INDEXER_ENABLED=true` to run indexing in the API process. Render logs include a structured startup event and one JSON record per HTTP request, with request ID, method, path, status, and duration; query values are omitted. The indexer uses libpq parameterized queries and explicit transactions, which work through a PostgreSQL transaction pooler without named prepared statements.
+3. In another terminal, configure [`interface/.env.example`](interface/.env.example) as `interface/.env`, install dependencies, and start the dapp:
 
-Trading routes are available when `PERP_TRADING_ENABLED=true`, with `A1_CONTRACT_ID`, network-matched NEAR RPC settings, `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `PERP_QUOTE_SIGNER_PRIVATE_KEY` configured. `POST /v1/trade/quote` and `/open` create and execute owner-authorized market opens. `GET /v1/trade/positions?account_id=...` lists current positions; `POST /v1/trade/close/quote` and `/close` authorize and relay closes. For standing limits, call `POST /v1/trade/limits/quote`, have the wallet sign its message, then `POST /v1/trade/limits` with the signature. A1 stores that owner authorization, and the backend keeper attempts execution when the A1 mark reaches the limit. `GET /v1/trade/limits?account_id=...` lists orders; `/limits/cancel/quote` and `/limits/cancel` provide signed cancellation. Limit orders do not reserve margin; execution rechecks balance and all current A1 risk rules. Keep the quote signer key private and configure its matching public key in A1.
+   ```sh
+   cd interface
+   bun install --frozen-lockfile
+   bun run dev
+   ```
 
-## NEAR deposit indexer
+The API listens on port `8080`; the interface defaults its local API proxy to `http://localhost:8080`. Run the C++ indexer tests with `ctest --test-dir backend/build --output-on-failure`. Set `INDEXER_ENABLED=true` to run the indexer with the API, or use `make indexer` to run it separately.
 
-`backend/` includes a C++ A1 deposit indexer. It asks FastNear's indexed account API for transactions associated with A1, fetches their receipt outcomes in batches, filters NEAR USDC `ft_transfer_call` transactions, and stores successful A1 `deposit_credited` logs. This avoids downloading every historical block from an archival RPC. Each event is keyed by `(network, receipt_id, log_index)`, so a repeated `deposit_id` in a later token transfer is recorded as a separate deposit. Event inserts and the scanned-height cursor commit in one PostgreSQL transaction; a restart resumes from the cursor with a configurable overlap to catch indexing delays. Set `FASTNEAR_API_KEY` in the backend environment to authenticate FastNear RPC and transaction-history requests; the key is sent only to FastNear hosts. A1 remains the source of truth for balances; FastNear is only the off-chain event discovery source.
+## Environment files
 
-Copy `backend/.env.example` to `backend/.env` or set these variables in the process environment. Keep the existing `.env` private. `NEAR_NETWORK`, either `FASTNEAR_API_KEY` or a matching RPC URL (`NEAR_TESTNET_RPC_URL` for testnet or `NEAR_RPC_URL` for mainnet), `INDEXER_TX_API_URL`, `A1_CONTRACT_ID`, `NEAR_USDC_TOKEN_ID`, and `DATABASE_URL` are required when the indexer runs. `WAITLIST_DATABASE_URL` is optional; set it only when the landing waitlist tables live in a different PostgreSQL database. With `FASTNEAR_API_KEY` set, the API and standalone indexer select FastNear RPC automatically; set `NEAR_RPC_PROVIDER=configured` to use `NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL` instead. The service verifies the selected RPC's chain ID at startup and logs the provider name without logging credentials. `NEAR_TESTNET_TX_RPC_URL` optionally selects a transaction submission endpoint for the testnet oracle; it defaults to the read RPC if unset. Set it when the selected read provider does not support transaction broadcast. `INDEXER_START_BLOCK` defaults to A1's testnet deployment block (`274456124`) for the first run; subsequent runs use the database cursor. Change it for another deployment/network or to backfill from a later point. `INDEXER_FINALITY_LAG_BLOCKS` controls how far behind the finalized head to query; `INDEXER_RESCAN_OVERLAP_BLOCKS` rechecks recent history to tolerate FastNear indexing delay. `INDEXER_POLL_INTERVAL_MS` controls history polling frequency. Oracle sampling defaults to a 5-second pause between completed market sweeps.
+Use one example file per app and copy it to the matching `.env` file. `VITE_` variables are public frontend configuration; never put secrets in the interface environment.
 
-### Robinhood oracle publisher
+| App | Environment file | Main settings |
+|---|---|---|
+| Interface | [`interface/.env.example`](interface/.env.example) | `VITE_API_PROXY_TARGET`, `VITE_NEAR_NETWORK`, `VITE_A1_CONTRACT_ID` |
+| Backend | [`backend/.env.example`](backend/.env.example) | NEAR RPC/network, A1 and USDC IDs, database, FastNear, oracle/trading switches, NEAR AI/Groq credentials |
 
-The optional publisher reads each listed stock's Uniswap V3 stock/USDG pool on Robinhood Chain (chain ID `4663`), computes a 5-minute `observe()` TWAP and current spot tick, signs A1's EIP-191 `OracleAttestation` with `ORACLE_SIGNER_PRIVATE_KEY`, and submits it to A1 using the NEAR account in `ORACLE_RELAYER_ACCOUNT_ID`. Its signer address must already be configured in A1 with `configure_oracle_signer`. The publisher checks the NEAR RPC network, the configured A1 signer, each pool's factory registration and exact stock/USDG token pair, active liquidity, sample freshness, and A1's 50-bps spot/TWAP bound. It publishes on a 10-bps price move or a 45-second heartbeat, avoiding NEAR gas for unchanged prices.
+## API and documentation
 
-The verified pool list is in [`backend/rh_uniswap_pools.json`](backend/rh_uniswap_pools.json). Pools are selected from live factory lookups and ranked by USDG liquidity, cross-checked against Floatsheets' NVDA and TSLA markets. The quote token is Robinhood USDG, so this oracle assumes USDG remains worth one US dollar; that peg must be monitored before enabling real trading. The publisher does not send transactions or pay gas on Robinhood Chain. `ROBINHOOD_RPC_URL` is used for reads only; NEAR gas comes from the dedicated relayer account. Testnet currently uses `afterbellfx-oracle.testnet`, with its key in the ignored `contracts/oracle-publisher/` directory. The account was faucet-created with 10 NEAR for testing.
+The complete OpenAPI 3.1 specification is [`openapi.yaml`](openapi.yaml). It covers account setup, market data, trading, LP actions, Otto, notifications, and waitlist routes. Product guides and user documentation are at [docs.afterbellfx.xyz](https://docs.afterbellfx.xyz).
 
-Leave `ORACLE_ENABLED=false` until A1 has its EVM signer configured and the Render service has `ROBINHOOD_RPC_URL`, the matching network RPC URL (`NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`), a transaction endpoint that supports broadcasts (`NEAR_TESTNET_TX_RPC_URL` on testnet if needed), `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `ORACLE_SIGNER_PRIVATE_KEY`. Never put either private key in Git. Oracle state and recent per-market sampling/publishing status are exposed at `GET /health/status` and `GET /health/ready`.
+## Mainnet integration
 
-Build and run from the `app/` directory:
-
-```sh
-make build
-ctest --test-dir backend/build --output-on-failure
-make indexer
-```
-
-The indexer creates `near_indexer_cursors` and `near_deposit_events` if they do not exist. It does not write user balances or replay-suppress deposits; A1 remains the source of truth for credited funds. FastNear is a third-party index source, so reconcile the event table against A1 state before using it for reporting or accounting.
-
-## Container deployment
-
-GitHub Actions follows the landing-server pipeline: lint, unit tests, build both binaries, build the container, and publish `ghcr.io/davidnzube101/afterbell` on pushes to `main`. Pull requests build the image without publishing it. Set the GitHub Actions secret `RENDER_DEPLOY_HOOK_URL` to trigger a Render deploy after a successful publish. Make the GHCR package public or configure Render with credentials to pull a private package.
-
-Create one Render **Docker Web Service** from the GHCR image. The default command runs the API; set `INDEXER_ENABLED=true` so its C++ indexer runs in the background in that same service:
-
-| Service | Start command | Health check | Required environment |
-|---|---|---|---|
-| API, indexer, oracle, and trading keeper | default image command (`./afterbell-api`) | `/health/ready` | `DATABASE_URL`, `NEAR_NETWORK`, matching `NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`, `A1_CONTRACT_ID`, `MARKET_REGISTRY_PATH=/app/backend/rh_stocks_addresses.json`, `INDEXER_ENABLED=true`, `NEAR_USDC_TOKEN_ID`, `INDEXER_TX_API_URL`, `INDEXER_START_BLOCK` on first run |
-
-Render supplies `PORT`. The indexer uses FastNear's testnet transaction API to discover A1 history without a full archival NEAR RPC scan. Configure `INDEXER_FINALITY_LAG_BLOCKS`, `INDEXER_RESCAN_OVERLAP_BLOCKS`, and `INDEXER_POLL_INTERVAL_MS` as needed. Do not set `INDEXER_START_BLOCK` earlier than the deployed A1 instance. The existing standalone `./afterbell-indexer` command is available if we later decide to run the worker as its own Render service.
-
-To enable price publishing later, also set `ORACLE_ENABLED=true`, `ROBINHOOD_RPC_URL`, the matching network RPC URL (`NEAR_TESTNET_RPC_URL` or `NEAR_RPC_URL`), a transaction RPC (`NEAR_TESTNET_TX_RPC_URL` for this testnet deployment), `ORACLE_RELAYER_ACCOUNT_ID`, `ORACLE_RELAYER_PRIVATE_KEY`, and `ORACLE_SIGNER_PRIVATE_KEY` in Render. Do not turn it on until `oracle_signer()` on the target A1 contract returns the EVM address paired with the EVM private key.
-
-To enable trading and the limit keeper, set `PERP_TRADING_ENABLED=true` and `PERP_QUOTE_SIGNER_PRIVATE_KEY` in Render. The quote signer's public key must already be configured in A1. The keeper runs in the API process and uses the shared NEAR relayer settings above; it does not require a separate Render service.
+The 1Click deposit integration is deployed for NEAR mainnet separately from the testnet A1 trading app. This gives Afterbell a mainnet deposit path while the shared A1 trading deployment remains on testnet. Mainnet USDC contract address and the 1Click integration are linked above.
