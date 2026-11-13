@@ -158,7 +158,16 @@ std::string NearPublisher::publish(const PriceAttestation &price) {
     Json::Value headArgs; headArgs["finality"]="final";
     const auto head=rpc.call("block",headArgs);
     const auto chainNowMs=asU64(head["header"]["timestamp_nanosec"],"NEAR block timestamp")/1'000'000;
-    if (price.observedAtMs>chainNowMs || chainNowMs-price.observedAtMs>60'000) throw std::runtime_error("oracle sample is stale or future dated relative to NEAR block time");
+    // Robinhood Chain and NEAR block timestamps can differ by a couple of
+    // seconds. Accept a small forward skew and anchor it to the finalized NEAR
+    // clock; the contract only accepts attestations at or before its own clock.
+    auto observedAtMs = price.observedAtMs;
+    if (observedAtMs > chainNowMs) {
+        if (observedAtMs - chainNowMs > 5'000)
+            throw std::runtime_error("oracle sample is too far in the future relative to NEAR block time");
+        observedAtMs = chainNowMs;
+    }
+    if (chainNowMs-observedAtMs>60'000) throw std::runtime_error("oracle sample is stale relative to NEAR block time");
     if (price.price==0 || price.spotPrice==0 || price.sourceRound.empty() || price.sourceRound.size()>128) throw std::invalid_argument("oracle attestation has invalid price or source round");
     const auto deviation=(price.price>price.spotPrice?price.price-price.spotPrice:price.spotPrice-price.price)*10'000/price.price;
     if (deviation>50) throw std::runtime_error("oracle sample spot and TWAP exceed A1's 50 bps bound");
@@ -170,7 +179,7 @@ std::string NearPublisher::publish(const PriceAttestation &price) {
         if(chainNowMs>=oldObserved&&chainNowMs-oldObserved<45'000&&move<10)return {};
     }
     const auto expiry=chainNowMs+45'000;
-    std::string message="afterbell:v1\ncontract:"+contractId_+"\naction:publish_market_price\nmarket:"+price.marketId+"\nprice:"+std::to_string(price.price)+"\nspot_price:"+std::to_string(price.spotPrice)+"\nconfidence_bps:"+std::to_string(price.confidenceBps)+"\nobserved_at_ms:"+std::to_string(price.observedAtMs)+"\nsequence:"+std::to_string(sequence)+"\nsource_round:"+price.sourceRound+"\nexpires_at_ms:"+std::to_string(expiry);
+    std::string message="afterbell:v1\ncontract:"+contractId_+"\naction:publish_market_price\nmarket:"+price.marketId+"\nprice:"+std::to_string(price.price)+"\nspot_price:"+std::to_string(price.spotPrice)+"\nconfidence_bps:"+std::to_string(price.confidenceBps)+"\nobserved_at_ms:"+std::to_string(observedAtMs)+"\nsequence:"+std::to_string(sequence)+"\nsource_round:"+price.sourceRound+"\nexpires_at_ms:"+std::to_string(expiry);
     const auto evmSignature=eip191Sign(message, oracleSignerPrivateKey_);
 
     Json::Value attestation;
@@ -178,7 +187,7 @@ std::string NearPublisher::publish(const PriceAttestation &price) {
     attestation["price"]=std::to_string(price.price);
     attestation["spot_price"]=std::to_string(price.spotPrice);
     attestation["confidence_bps"]=price.confidenceBps;
-    attestation["observed_at_ms"]=Json::UInt64(price.observedAtMs);
+    attestation["observed_at_ms"]=Json::UInt64(observedAtMs);
     attestation["sequence"]=Json::UInt64(sequence);
     attestation["source_round"]=price.sourceRound;
     attestation["expires_at_ms"]=Json::UInt64(expiry);

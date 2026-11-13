@@ -156,7 +156,14 @@ Json::Value orderCapacity(afterbell::indexer::NearRpc &rpc,
     args["account_id"] = account;
     args["market_id"] = marketId;
     args["is_long"] = isLong;
-    const auto capacity = viewCall(rpc, contract, "perp_order_capacity", args);
+    Json::Value capacity;
+    try {
+        capacity = viewCall(rpc, contract, "perp_order_capacity", args);
+    } catch (const std::runtime_error &error) {
+        if (std::string_view(error.what()) == "A1 view call returned no bytes")
+            throw std::runtime_error("A1 has no fresh oracle price for " + marketId + "; wait for market data to refresh and retry");
+        throw;
+    }
     if (!capacity.isObject() || !capacity.isMember("allowed_max_notional_usdc"))
         throw std::runtime_error("A1 returned invalid order capacity data");
     return capacity;
