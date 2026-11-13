@@ -14,6 +14,8 @@ Afterbell is an on-chain perpetual trading system for synthetic US equity market
 
 On-chain trading should feel like one coherent product: connect a wallet once, hold one USDC balance, trade across markets, and provide liquidity through the same account. A shared contract keeps settlement and account state composable, while fast off-chain services handle quotes, market data, indexing, and AI context. Wallet signatures authorize actions; A1 verifies and settles them on NEAR.
 
+This build began on Nov 2, 2026, during the opening days of NEAR HACKATHON.
+
 ## Product links
 
 | | Link |
