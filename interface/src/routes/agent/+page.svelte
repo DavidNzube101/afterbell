@@ -19,6 +19,8 @@
 	let carouselPaused = $state(false)
 	let marketPickerOpen = $state(false)
 	let providerPickerOpen = $state(false)
+	let providerPickerStep = $state<'providers' | 'byok'>('providers')
+	let providerPickerDirection = $state<'forward' | 'backward' | null>(null)
 	let provider = $state<Provider | null>(null)
 	let providerChoice = $state<Provider | null>(null)
 	let providers = $state<Record<Provider, ProviderStatus>>({
@@ -98,7 +100,21 @@
 	function openProviderPicker() {
 		pendingPrompt = ''
 		providerChoice = preferredChoice()
+		providerPickerStep = 'providers'
+		providerPickerDirection = null
 		providerPickerOpen = true
+	}
+	function selectProviderOption(next: Provider) {
+		if (next !== 'byok' && !providers[next].available) return
+		providerChoice = next
+		if (next === 'byok') {
+			providerPickerDirection = 'forward'
+			providerPickerStep = 'byok'
+		}
+	}
+	function backToProviderOptions() {
+		providerPickerDirection = 'backward'
+		providerPickerStep = 'providers'
 	}
 	function submit() {
 		const prompt = message.trim()
@@ -323,27 +339,37 @@
 {#if providerPickerOpen}
 	<div class="otto-market-modal-backdrop otto-provider-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) providerPickerOpen = false }}>
 		<dialog open class="otto-market-modal otto-provider-modal" aria-labelledby="otto-provider-title">
-			<header><div><h2 id="otto-provider-title">Choose Otto’s AI provider</h2><p>Your choice is saved for this wallet. Changing providers starts a new conversation.</p></div><button type="button" class="otto-market-close" aria-label="Close provider picker" onclick={() => { providerPickerOpen = false; pendingPrompt = '' }}>×</button></header>
-			<div class="otto-market-options otto-provider-options">
-				<button type="button" class:selected={providerChoice === 'near_ai'} disabled={!providers.near_ai.available} onclick={() => providerChoice = 'near_ai'}>
-					<span class="otto-provider-logo near"><img src="/assets/wallet-icons/chain-icons/near.jpeg" alt="" /></span><span class="otto-provider-copy"><b>NEAR AI</b><small>Powered by NEAR · privacy filter with private TEE support</small></span>{#if providerChoice === 'near_ai'}<span class="otto-provider-check">✓</span>{/if}
-				</button>
-				<button type="button" class:selected={providerChoice === 'qwen'} disabled={!providers.qwen.available} onclick={() => providerChoice = 'qwen'}>
-					<span class="otto-provider-logo qwen"><img src="/assets/qwen.png" alt="" /></span><span class="otto-provider-copy"><b>Qwen <em>Default</em></b><small>Fast answers powered by Groq</small></span>{#if providerChoice === 'qwen'}<span class="otto-provider-check">✓</span>{/if}
-				</button>
-				<button type="button" class:selected={providerChoice === 'byok'} onclick={() => providerChoice = 'byok'}>
-					<span class="otto-provider-logo byok"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.4 12.4 8.1 8.1m-3.2-3.2 2-2m-5-1 2-2"/></svg></span><span class="otto-provider-copy"><b>BYOK</b><small>Use your OpenAI-compatible API key</small></span>{#if providerChoice === 'byok'}<span class="otto-provider-check">✓</span>{/if}
-				</button>
-			</div>
-			{#if providerChoice === 'byok'}
-				<div class="otto-byok-fields">
-					<label>API base URL<input bind:value={byokUrl} type="url" placeholder="https://api.openai.com/v1" autocomplete="url" /></label>
-					<label>Model<input bind:value={byokModel} placeholder="gpt-4o-mini" autocomplete="off" /></label>
-					<label>API key<input bind:value={byokKey} type="password" placeholder="Paste your API key" autocomplete="new-password" /></label>
-					<p>Your key stays in this browser session and is sent only for your requests. It is not saved to this device.</p>
+			<header class="otto-provider-modal-header">
+				<div class="otto-provider-header-title">
+					{#if providerPickerStep === 'byok'}<button type="button" class="wallet-modal-back" onclick={backToProviderOptions} aria-label="Back to AI provider list"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
+					<div><h2 id="otto-provider-title">{providerPickerStep === 'byok' ? 'Connect your AI provider' : 'Choose Otto’s AI provider'}</h2><p>{providerPickerStep === 'byok' ? 'Add an OpenAI-compatible endpoint for this session.' : 'Your choice is saved for this wallet. Changing providers starts a new conversation.'}</p></div>
 				</div>
-			{/if}
-			<footer><span>{#if providerChoice && providerChoice !== 'byok'}Model: {providers[providerChoice].model || 'configured by Afterbell'}{:else}No API key is needed for platform providers.{/if}</span><button type="button" class="otto-provider-continue" disabled={!providerChoice || (providerChoice !== 'byok' && !providers[providerChoice].available)} onclick={confirmProvider}>{pendingPrompt ? 'Continue and send' : 'Use this provider'}<span aria-hidden="true">→</span></button></footer>
+				<button type="button" class="otto-market-close" aria-label="Close provider picker" onclick={() => { providerPickerOpen = false; providerPickerStep = 'providers'; pendingPrompt = '' }}>×</button>
+			</header>
+			<div class={`otto-provider-stage${providerPickerDirection ? ` otto-provider-stage-${providerPickerDirection}` : ''}`}>
+				{#if providerPickerStep === 'providers'}
+					<div class="otto-market-options otto-provider-options">
+						<button type="button" class:selected={providerChoice === 'near_ai'} disabled={!providers.near_ai.available} onclick={() => selectProviderOption('near_ai')}>
+							<img class="otto-provider-brand near" src="/assets/wallet-icons/chain-icons/near.jpeg" alt="NEAR" /><span class="otto-provider-copy"><b>NEAR AI</b><small>Powered by NEAR · privacy filter with private TEE support</small></span>{#if providerChoice === 'near_ai'}<span class="otto-provider-check">✓</span>{/if}
+						</button>
+						<button type="button" class:selected={providerChoice === 'qwen'} disabled={!providers.qwen.available} onclick={() => selectProviderOption('qwen')}>
+							<img class="otto-provider-brand qwen" src="/assets/qwen.png" alt="Qwen" /><span class="otto-provider-copy"><b>Qwen <em>Default</em></b><small>Fast answers powered by Groq</small></span>{#if providerChoice === 'qwen'}<span class="otto-provider-check">✓</span>{/if}
+						</button>
+						<button type="button" class:selected={providerChoice === 'byok'} onclick={() => selectProviderOption('byok')}>
+							<span class="otto-provider-logo byok"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg></span><span class="otto-provider-copy"><b>BYOK</b><small>Use your OpenAI-compatible API key</small></span>
+						</button>
+					</div>
+					<footer><span>{#if providerChoice && providerChoice !== 'byok'}Model: {providers[providerChoice].model || 'configured by Afterbell'}{:else}Choose a provider to continue.{/if}</span><button type="button" class="otto-provider-continue" disabled={!providerChoice || providerChoice === 'byok' || !providers[providerChoice].available} onclick={confirmProvider}>{pendingPrompt ? 'Continue and send' : 'Use this provider'}<span aria-hidden="true">→</span></button></footer>
+				{:else}
+					<div class="otto-byok-fields">
+						<label>API base URL<input bind:value={byokUrl} type="url" placeholder="https://api.openai.com/v1" autocomplete="url" /></label>
+						<label>Model<input bind:value={byokModel} placeholder="gpt-4o-mini" autocomplete="off" /></label>
+						<label>API key<input bind:value={byokKey} type="password" placeholder="Paste your API key" autocomplete="new-password" /></label>
+						<p>Your key stays in this browser session and is sent only for your requests. It is not saved to this device.</p>
+					</div>
+					<footer><span>Compatible with OpenAI-style chat completions.</span><button type="button" class="otto-provider-continue" onclick={confirmProvider}>{pendingPrompt ? 'Continue and send' : 'Use BYOK'}<span aria-hidden="true">→</span></button></footer>
+				{/if}
+			</div>
 		</dialog>
 	</div>
 {/if}

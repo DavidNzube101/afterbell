@@ -82,8 +82,15 @@ button, input, select, textarea { font: inherit; }
 .otto-spinner { width: 16px; height: 16px; border: 2px solid #ffffff55; border-top-color: #fff; border-radius: 50%; animation: otto-spin .7s linear infinite; }
 @keyframes otto-spin { to { transform: rotate(360deg); } }
 .otto-provider-backdrop { z-index: 90; }
-.otto-provider-modal { width: min(100%, 480px); }
+.otto-provider-modal { width: min(100%, 480px); height: min(430px, 90dvh); display: flex; flex-direction: column; }
 .otto-provider-modal > header { padding: 23px 24px 18px; }
+.otto-provider-modal > header { align-items: center; }
+.otto-provider-header-title { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.otto-provider-header-title .wallet-modal-back { flex: 0 0 auto; }
+.otto-provider-header-title > div { min-width: 0; }
+.otto-provider-stage { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.otto-provider-stage-forward { animation: wallet-content-wipe-forward 300ms cubic-bezier(.22, .75, .25, 1) both; }
+.otto-provider-stage-backward { animation: wallet-content-wipe-backward 300ms cubic-bezier(.22, .75, .25, 1) both; }
 .otto-provider-options { gap: 5px; padding: 10px; }
 .otto-provider-options > button { min-height: 62px; }
 .otto-provider-options > button:hover:not(:disabled), .otto-provider-options > button.selected { border-color: #111821; background: #1a2531; }
@@ -91,9 +98,10 @@ button, input, select, textarea { font: inherit; }
 .otto-provider-logo { width: 39px; height: 39px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid #26313e; border-radius: 11px; background: #192330; color: #d9e6f5; }
 .otto-provider-logo svg { width: 20px; height: 20px; fill: currentColor; }
 .otto-provider-logo.byok svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.otto-provider-logo.qwen { background: #211a31; }
-.otto-provider-logo img { width: 24px; height: 24px; object-fit: contain; border-radius: 5px; }
-.otto-provider-logo.near img { width: 26px; height: 26px; border-radius: 7px; }
+.otto-provider-logo.byok svg circle { fill: currentColor; stroke: none; }
+.otto-provider-brand { width: 38px; height: 38px; flex: 0 0 auto; object-fit: contain; }
+.otto-provider-brand.near { border-radius: 7px; }
+.otto-provider-brand.qwen { width: 42px; height: 42px; }
 .otto-provider-copy { display: grid; gap: 5px; }
 .otto-provider-copy b { font-size: 12px; font-weight: 600; }
 .otto-provider-copy small { color: #8491a0; font-size: 10px; }
@@ -104,7 +112,7 @@ button, input, select, textarea { font: inherit; }
 .otto-byok-fields input { width: 100%; min-height: 40px; padding: 0 11px; border: 1px solid #273342; border-radius: 9px; outline: none; background: #0d131a; color: #e8eef5; font-size: 12px; }
 .otto-byok-fields input:focus { border-color: #3977c6; box-shadow: 0 0 0 2px #3977c622; }
 .otto-byok-fields p { margin: 1px 0 0; color: #718090; font-size: 10px; line-height: 1.5; }
-.otto-provider-modal > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px 18px; color: #748191; font-size: 10px; }
+.otto-provider-stage > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: auto; padding: 16px 18px 18px; color: #748191; font-size: 10px; }
 .otto-provider-continue { min-height: 39px; display: inline-flex; align-items: center; gap: 10px; padding: 0 14px; border: 0; border-radius: 9px; background: #2468c8; color: white; font-size: 11px; cursor: pointer; }
 .otto-provider-continue:hover:not(:disabled) { background: #347de0; }
 .otto-provider-continue:disabled { opacity: .45; cursor: not-allowed; }
