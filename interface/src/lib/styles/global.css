@@ -84,15 +84,16 @@ button, input, select, textarea { font: inherit; }
 .otto-provider-backdrop { z-index: 90; }
 .otto-provider-modal { width: min(100%, 480px); }
 .otto-provider-modal > header { padding: 23px 24px 18px; }
-.otto-provider-options { display: grid; gap: 8px; padding: 14px 16px 6px; }
-.otto-provider-options > button { min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #111821; border-radius: 12px; background: #111821; color: #edf2f7; text-align: left; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
-.otto-provider-options > button:hover:not(:disabled), .otto-provider-options > button.selected { border-color: #2d68b4; background: #162334; }
+.otto-provider-options { gap: 5px; padding: 10px; }
+.otto-provider-options > button { min-height: 62px; }
+.otto-provider-options > button:hover:not(:disabled), .otto-provider-options > button.selected { border-color: #111821; background: #1a2531; }
 .otto-provider-options > button:disabled { opacity: .42; cursor: not-allowed; }
 .otto-provider-logo { width: 39px; height: 39px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid #26313e; border-radius: 11px; background: #192330; color: #d9e6f5; }
 .otto-provider-logo svg { width: 20px; height: 20px; fill: currentColor; }
 .otto-provider-logo.byok svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .otto-provider-logo.qwen { background: #211a31; }
 .otto-provider-logo img { width: 24px; height: 24px; object-fit: contain; border-radius: 5px; }
+.otto-provider-logo.near img { width: 26px; height: 26px; border-radius: 7px; }
 .otto-provider-copy { display: grid; gap: 5px; }
 .otto-provider-copy b { font-size: 12px; font-weight: 600; }
 .otto-provider-copy small { color: #8491a0; font-size: 10px; }

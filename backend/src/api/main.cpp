@@ -21,6 +21,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -393,8 +394,47 @@ int main() {
             },
             {drogon::Get});
         drogon::app().registerHandler(
+            "/v1/otto/session/challenge",
+            [accountService, contractId = *contractId](const drogon::HttpRequestPtr &request,
+                         std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try {
+                    if (!accountService) throw std::runtime_error("Wallet sessions are unavailable.");
+                    const auto input = request->getJsonObject();
+                    if (!input || !(*input)["account_id"].isString()) throw std::invalid_argument("Connect a wallet to use Otto.");
+                    const auto accountId = (*input)["account_id"].asString();
+                    const auto owner = accountService->ownerStatus(accountId);
+                    if (!owner["registered"].asBool()) throw std::invalid_argument("Finish setting up this Afterbell account before using Otto.");
+                    callback(drogon::HttpResponse::newHttpJsonResponse(afterbell::ai::createWalletChallenge(accountId, owner["owner"], contractId)));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("otto_session_challenge_failed", error.what()));
+                    response->setStatusCode(drogon::k401Unauthorized); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
+            "/v1/otto/session/verify",
+            [accountService](const drogon::HttpRequestPtr &request,
+                         std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                try {
+                    if (!accountService) throw std::runtime_error("Wallet sessions are unavailable.");
+                    const auto input = request->getJsonObject();
+                    if (!input || !(*input)["challenge_id"].isString() || !(*input)["signature"].isString())
+                        throw std::invalid_argument("Wallet signature is required.");
+                    const auto challengeId = (*input)["challenge_id"].asString();
+                    const auto accountId = afterbell::ai::walletChallengeAccount(challengeId);
+                    if (accountId.empty()) throw std::invalid_argument("Wallet session request expired. Please try again.");
+                    const auto owner = accountService->ownerStatus(accountId);
+                    if (!owner["registered"].asBool()) throw std::invalid_argument("Afterbell account owner could not be verified.");
+                    Json::Value body; body["token"] = afterbell::ai::verifyWalletChallenge(challengeId, (*input)["signature"].asString(), owner["owner"]);
+                    body["expires_in_seconds"] = 1800;
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const std::exception &error) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("otto_session_verification_failed", error.what()));
+                    response->setStatusCode(drogon::k401Unauthorized); callback(response);
+                }
+            }, {drogon::Post});
+        drogon::app().registerHandler(
             "/v1/otto/chat",
-            [ottoConfig](const drogon::HttpRequestPtr &request,
+            [ottoConfig, tradingService](const drogon::HttpRequestPtr &request,
                          std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
                 const auto input = request->getJsonObject();
                 std::string validationError;
@@ -408,7 +448,18 @@ int main() {
                     callback(response);
                     return;
                 }
-                if (!afterbell::ai::allowRequestForAccount((*input)["account_id"].asString())) {
+                const auto authorization = request->getHeader("authorization");
+                constexpr std::string_view bearer = "Bearer ";
+                if (authorization.rfind(bearer, 0) != 0) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("otto_session_required", "Sign with your wallet to start a secure Otto session."));
+                    response->setStatusCode(drogon::k401Unauthorized); callback(response); return;
+                }
+                const auto accountId = afterbell::ai::walletSessionAccount(authorization.substr(bearer.size()));
+                if (accountId.empty()) {
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(errorBody("otto_session_expired", "Your Otto wallet session expired. Please send your message again to renew it."));
+                    response->setStatusCode(drogon::k401Unauthorized); callback(response); return;
+                }
+                if (!afterbell::ai::allowRequestForAccount(accountId)) {
                     Json::Value body = errorBody("otto_rate_limited",
                         "You’ve reached Otto’s request limit. Please wait a minute and try again.");
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
@@ -426,7 +477,30 @@ int main() {
                     callback(response);
                     return;
                 }
-                callback(afterbell::ai::streamChat(*input, ottoConfig));
+                Json::Value authenticatedInput = *input;
+                authenticatedInput["account_id"] = accountId;
+                const auto marketId = authenticatedInput["market_id"].asString();
+                auto contextProvider = [tradingService, accountId, marketId]() {
+                    Json::Value context(Json::objectValue);
+                    if (!tradingService) { context["context_error"] = "Trading context is unavailable."; return context; }
+                    auto marketFuture = std::async(std::launch::async, [tradingService, marketId] { return tradingService->marketSnapshot(marketId); });
+                    auto balanceFuture = std::async(std::launch::async, [tradingService, accountId] { return tradingService->accountBalance(accountId); });
+                    auto positionsFuture = std::async(std::launch::async, [tradingService, accountId] { return tradingService->listPositions(accountId); });
+                    try { context["market"] = marketFuture.get(); } catch (...) { context["market_error"] = "Current market snapshot unavailable."; }
+                    try { context["account"] = balanceFuture.get(); } catch (...) { context["account_error"] = "Current account balance unavailable."; }
+                    try {
+                        const auto positions = positionsFuture.get();
+                        context["positions"] = Json::Value(Json::arrayValue);
+                        for (Json::ArrayIndex i = 0; i < positions.size() && i < 10; ++i) {
+                            Json::Value position(Json::objectValue);
+                            for (const auto *key : {"market_id", "is_long", "notional_usdc", "margin_usdc", "leverage_bps", "entry_price", "mark_price", "mark_observed_at_ms", "unrealized_pnl_usdc"})
+                                if (positions[i].isMember(key)) position[key] = positions[i][key];
+                            context["positions"].append(std::move(position));
+                        }
+                    } catch (...) { context["positions_error"] = "Current positions unavailable."; }
+                    return context;
+                };
+                callback(afterbell::ai::streamChat(std::move(authenticatedInput), ottoConfig, std::move(contextProvider)));
             },
             {drogon::Post});
         drogon::app().registerHandler(

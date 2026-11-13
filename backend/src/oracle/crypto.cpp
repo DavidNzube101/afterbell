@@ -167,6 +167,34 @@ std::vector<std::uint8_t> eip191Sign(const std::string &message, const std::stri
     return out;
 }
 
+bool eip191Verify(const std::string &message, const std::vector<std::uint8_t> &signature,
+                  const std::vector<std::uint8_t> &expectedAddress) {
+    if (signature.size() != 65 || expectedAddress.size() != 20) return false;
+    const int parity = signature[64] >= 27 ? signature[64] - 27 : signature[64];
+    if (parity < 0 || parity > 1) return false;
+    const std::string personal = std::string(1, '\x19') + "Ethereum Signed Message:\n" + std::to_string(message.size()) + message;
+    const auto digest = keccak256(reinterpret_cast<const std::uint8_t *>(personal.data()), personal.size());
+    GroupPtr group(EC_GROUP_new_by_curve_name(NID_secp256k1), EC_GROUP_free);
+    CtxPtr ctx(BN_CTX_new(), BN_CTX_free);
+    BnPtr order(BN_new(), BN_free), r(BN_bin2bn(signature.data(), 32, nullptr), BN_free),
+        s(BN_bin2bn(signature.data() + 32, 32, nullptr), BN_free), x(BN_dup(r.get()), BN_free),
+        z(BN_bin2bn(digest.data(), 32, nullptr), BN_free), rinv(BN_new(), BN_free), u1(BN_new(), BN_free), u2(BN_new(), BN_free);
+    PointPtr R(group ? EC_POINT_new(group.get()) : nullptr, EC_POINT_free), Q(group ? EC_POINT_new(group.get()) : nullptr, EC_POINT_free);
+    if (!group || !ctx || !order || !r || !s || !x || !z || !rinv || !u1 || !u2 || !R || !Q ||
+        EC_GROUP_get_order(group.get(), order.get(), ctx.get()) != 1 || BN_is_zero(r.get()) || BN_is_zero(s.get()) ||
+        BN_cmp(r.get(), order.get()) >= 0 || BN_cmp(s.get(), order.get()) >= 0 ||
+        EC_POINT_set_compressed_coordinates(group.get(), R.get(), x.get(), parity, ctx.get()) != 1 ||
+        !BN_mod_inverse(rinv.get(), r.get(), order.get(), ctx.get()) || BN_mod(z.get(), z.get(), order.get(), ctx.get()) != 1 ||
+        BN_mod_sub(u1.get(), order.get(), z.get(), order.get(), ctx.get()) != 1 ||
+        BN_mod_mul(u1.get(), u1.get(), rinv.get(), order.get(), ctx.get()) != 1 ||
+        BN_mod_mul(u2.get(), s.get(), rinv.get(), order.get(), ctx.get()) != 1 ||
+        EC_POINT_mul(group.get(), Q.get(), u1.get(), R.get(), u2.get(), ctx.get()) != 1) return false;
+    std::array<std::uint8_t, 65> encoded{};
+    if (EC_POINT_point2oct(group.get(), Q.get(), POINT_CONVERSION_UNCOMPRESSED, encoded.data(), encoded.size(), ctx.get()) != encoded.size()) return false;
+    const auto hash = keccak256(encoded.data() + 1, 64);
+    return std::equal(expectedAddress.begin(), expectedAddress.end(), hash.begin() + 12);
+}
+
 std::vector<std::uint8_t> base58Decode(const std::string &input) {
     static constexpr char alphabet[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     std::vector<std::uint8_t> out(1, 0);

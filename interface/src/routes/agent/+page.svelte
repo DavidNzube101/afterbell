@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte'
 	import { goto } from '$app/navigation'
-	import { siNear } from 'simple-icons'
 	import DashboardHeader from '../../lib/DashboardHeader.svelte'
 	import TickerIcon from '../../lib/TickerIcon.svelte'
 	import { markets } from '../../lib/market-data'
@@ -27,6 +26,7 @@
 	})
 	let messages = $state<Message[]>([])
 	let sending = $state(false)
+	let streamStatus = $state('Thinking…')
 	let streamError = $state('')
 	let pendingPrompt = $state('')
 	let carouselTimer: number | undefined
@@ -130,6 +130,7 @@
 		message = ''
 		resizeComposer()
 		sending = true
+		streamStatus = 'Thinking…'
 		streamError = ''
 		abortController = new AbortController()
 		await tick()
@@ -137,15 +138,21 @@
 		try {
 			const body: Record<string, unknown> = {
 				provider,
-				account_id: $walletSession?.accountId,
 				market_id: selectedTicker,
 				messages: nextMessages.slice(0, -1).slice(-16),
 			}
 			if (provider === 'byok') Object.assign(body, { base_url: byokUrl.trim(), model: byokModel.trim(), api_key: byokKey })
-			const response = await fetch('/api/v1/otto/chat', {
-				method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+			const auth = await getOttoSession()
+			const requestOptions = {
+				method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Authorization: `Bearer ${auth}` },
 				body: JSON.stringify(body), signal: abortController.signal,
-			})
+			} satisfies RequestInit
+			let response = await fetch('/api/v1/otto/chat', requestOptions)
+			if (response.status === 401) {
+				if ($walletSession) sessionStorage.removeItem(`afterbell.otto-session.v1:${$walletSession.accountId}`)
+				const renewed = await getOttoSession(true)
+				response = await fetch('/api/v1/otto/chat', { ...requestOptions, headers: { ...requestOptions.headers, Authorization: `Bearer ${renewed}` } })
+			}
 			if (!response.ok) {
 				let detail = 'Otto could not start this response. Please try again.'
 				try { const error = await response.json(); detail = error.error?.message ?? detail } catch { /* Keep generic message. */ }
@@ -168,7 +175,10 @@
 					if (!dataLine) continue
 					let data: { text?: string; message?: string } = {}
 					try { data = JSON.parse(dataLine) } catch { continue }
-					if (event === 'delta' && data.text) {
+					if (event === 'status' && data.message) {
+						streamStatus = data.message
+					} else if (event === 'delta' && data.text) {
+						streamStatus = ''
 						const last = messages.length - 1
 						messages[last] = { ...messages[last], content: messages[last].content + data.text }
 						if (conversationEl && conversationEl.scrollHeight - conversationEl.scrollTop - conversationEl.clientHeight < 160) conversationEl.scrollTop = conversationEl.scrollHeight
@@ -189,6 +199,27 @@
 			sending = false
 			abortController = undefined
 		}
+	}
+	async function getOttoSession(force = false): Promise<string> {
+		const sessionKey = `afterbell.otto-session.v1:${$walletSession?.accountId}`
+		const saved = sessionStorage.getItem(sessionKey)
+		if (saved && !force) return saved
+		const challengeResponse = await fetch('/api/v1/otto/session/challenge', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ account_id: $walletSession?.accountId }),
+		})
+		const challenge = await challengeResponse.json()
+		if (!challengeResponse.ok) throw new Error(challenge.error?.message || 'Could not start a secure Otto session.')
+		const { signWalletMessage } = await import('../../lib/wallet-core')
+		const signature = await signWalletMessage(challenge.payload)
+		const sessionResponse = await fetch('/api/v1/otto/session/verify', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ challenge_id: challenge.challenge_id, signature }),
+		})
+		const result = await sessionResponse.json()
+		if (!sessionResponse.ok) throw new Error(result.error?.message || 'Wallet signature could not be verified.')
+		sessionStorage.setItem(sessionKey, result.token)
+		return result.token as string
 	}
 	function newConversation() {
 		abortController?.abort()
@@ -226,7 +257,7 @@
 						{#each messages as item, index (`${index}:${item.role}`)}
 							<div class:otto-user-message={item.role === 'user'} class:otto-assistant-message={item.role === 'assistant'} class="otto-message">
 								{#if item.role === 'assistant'}<img src="/assets/afterbell-otto-logo.png" alt="Otto" />{/if}
-								<div class="otto-message-content">{item.content || (sending && index === messages.length - 1 ? 'Thinking…' : '')}</div>
+								<div class="otto-message-content">{item.content || (sending && index === messages.length - 1 ? streamStatus : '')}</div>
 							</div>
 						{/each}
 					</div>
@@ -242,7 +273,7 @@
 								<svg class="otto-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
 							</button>
 							<button type="button" class="otto-provider-chip" onclick={openProviderPicker} aria-label={`AI provider: ${providerLabel}. Change provider`}>
-								{#if provider === 'near_ai'}<svg viewBox="0 0 24 24" aria-hidden="true"><path d={siNear.path}/></svg>{:else if provider === 'qwen'}<img src="/assets/qwen.png" alt="" />{:else}<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5z"/><circle cx="12" cy="15" r="1"/></svg>{/if}
+				{#if provider === 'near_ai'}<img src="/assets/wallet-icons/chain-icons/near.jpeg" alt="" />{:else if provider === 'qwen'}<img src="/assets/qwen.png" alt="" />{:else}<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.4 12.4 8.1 8.1m-3.2-3.2 2-2m-5-1 2-2"/></svg>{/if}
 								<span>{providerLabel}</span><span class="otto-chip-caret">⌄</span>
 							</button>
 						</div>
@@ -293,15 +324,15 @@
 	<div class="otto-market-modal-backdrop otto-provider-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) providerPickerOpen = false }}>
 		<dialog open class="otto-market-modal otto-provider-modal" aria-labelledby="otto-provider-title">
 			<header><div><h2 id="otto-provider-title">Choose Otto’s AI provider</h2><p>Your choice is saved for this wallet. Changing providers starts a new conversation.</p></div><button type="button" class="otto-market-close" aria-label="Close provider picker" onclick={() => { providerPickerOpen = false; pendingPrompt = '' }}>×</button></header>
-			<div class="otto-provider-options">
+			<div class="otto-market-options otto-provider-options">
 				<button type="button" class:selected={providerChoice === 'near_ai'} disabled={!providers.near_ai.available} onclick={() => providerChoice = 'near_ai'}>
-					<span class="otto-provider-logo near"><svg viewBox="0 0 24 24" aria-hidden="true"><path d={siNear.path}/></svg></span><span class="otto-provider-copy"><b>NEAR AI</b><small>Powered by NEAR · privacy depends on model tier</small></span>{#if providerChoice === 'near_ai'}<span class="otto-provider-check">✓</span>{/if}
+					<span class="otto-provider-logo near"><img src="/assets/wallet-icons/chain-icons/near.jpeg" alt="" /></span><span class="otto-provider-copy"><b>NEAR AI</b><small>Powered by NEAR · privacy filter with private TEE support</small></span>{#if providerChoice === 'near_ai'}<span class="otto-provider-check">✓</span>{/if}
 				</button>
 				<button type="button" class:selected={providerChoice === 'qwen'} disabled={!providers.qwen.available} onclick={() => providerChoice = 'qwen'}>
 					<span class="otto-provider-logo qwen"><img src="/assets/qwen.png" alt="" /></span><span class="otto-provider-copy"><b>Qwen <em>Default</em></b><small>Fast answers powered by Groq</small></span>{#if providerChoice === 'qwen'}<span class="otto-provider-check">✓</span>{/if}
 				</button>
 				<button type="button" class:selected={providerChoice === 'byok'} onclick={() => providerChoice = 'byok'}>
-					<span class="otto-provider-logo byok"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5z"/><circle cx="12" cy="15" r="1"/></svg></span><span class="otto-provider-copy"><b>BYOK</b><small>Use your OpenAI-compatible API key</small></span>{#if providerChoice === 'byok'}<span class="otto-provider-check">✓</span>{/if}
+					<span class="otto-provider-logo byok"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.4 12.4 8.1 8.1m-3.2-3.2 2-2m-5-1 2-2"/></svg></span><span class="otto-provider-copy"><b>BYOK</b><small>Use your OpenAI-compatible API key</small></span>{#if providerChoice === 'byok'}<span class="otto-provider-check">✓</span>{/if}
 				</button>
 			</div>
 			{#if providerChoice === 'byok'}

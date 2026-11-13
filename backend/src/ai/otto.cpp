@@ -1,6 +1,9 @@
 #include "ai/otto.hpp"
 
 #include <curl/curl.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include "oracle/crypto.hpp"
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -10,7 +13,10 @@
 #include <chrono>
 #include <cctype>
 #include <deque>
+#include <future>
 #include <memory>
+#include <iomanip>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -48,6 +54,86 @@ struct StreamState {
 
 std::mutex rateMutex;
 std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> recentRequests;
+
+struct WalletChallenge {
+    std::string accountId;
+    std::string message;
+    std::string nonce;
+    std::string recipient;
+    Json::Value owner;
+    std::chrono::system_clock::time_point expires;
+};
+std::mutex sessionMutex;
+std::unordered_map<std::string, WalletChallenge> challenges;
+std::unordered_map<std::string, std::pair<std::string, std::chrono::system_clock::time_point>> sessions;
+
+std::vector<std::uint8_t> secureRandom(std::size_t size) {
+    std::vector<std::uint8_t> bytes(size);
+    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max()) || RAND_bytes(bytes.data(), static_cast<int>(size)) != 1)
+        throw std::runtime_error("Secure wallet session could not be initialized.");
+    return bytes;
+}
+std::string hexBytes(const std::vector<std::uint8_t> &bytes) {
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (auto b : bytes) out << std::setw(2) << static_cast<unsigned>(b);
+    return out.str();
+}
+std::vector<std::uint8_t> ownerBytes(const Json::Value &owner, const std::string &variant, const std::string &field) {
+    const auto &values = owner[variant][field];
+    if (!values.isArray()) throw std::invalid_argument("Wallet owner key is invalid.");
+    std::vector<std::uint8_t> bytes;
+    for (const auto &value : values) {
+        if (!value.isUInt() || value.asUInt() > 255) throw std::invalid_argument("Wallet owner key is invalid.");
+        bytes.push_back(static_cast<std::uint8_t>(value.asUInt()));
+    }
+    return bytes;
+}
+void appendLe32(std::vector<std::uint8_t> &out, std::uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) out.push_back(static_cast<std::uint8_t>(value >> (8 * i)));
+}
+void appendBorshString(std::vector<std::uint8_t> &out, const std::string &value) {
+    if (value.size() > std::numeric_limits<std::uint32_t>::max()) throw std::invalid_argument("Invalid wallet signature message.");
+    appendLe32(out, static_cast<std::uint32_t>(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+}
+bool verifyEd25519(const std::vector<std::uint8_t> &key, const std::vector<std::uint8_t> &message,
+                   const std::vector<std::uint8_t> &signature) {
+    if (key.size() != 32 || signature.size() != 64) return false;
+    EVP_PKEY *raw = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, key.data(), key.size());
+    if (!raw) return false;
+    std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(raw, EVP_PKEY_free);
+    EVP_MD_CTX *rawCtx = EVP_MD_CTX_new();
+    if (!rawCtx) return false;
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(rawCtx, EVP_MD_CTX_free);
+    return EVP_DigestVerifyInit(ctx.get(), nullptr, nullptr, nullptr, pkey.get()) == 1 &&
+           EVP_DigestVerify(ctx.get(), signature.data(), signature.size(), message.data(), message.size()) == 1;
+}
+bool verifyWalletSignature(const WalletChallenge &challenge, const std::vector<std::uint8_t> &signature) {
+    const auto &owner = challenge.owner;
+    if (challenge.accountId.rfind("solana:", 0) == 0) {
+        const auto key = ownerBytes(owner, "SolanaEd25519", "public_key");
+        return verifyEd25519(key, std::vector<std::uint8_t>(challenge.message.begin(), challenge.message.end()), signature);
+    }
+    if (challenge.accountId.rfind("ethereum:", 0) == 0) {
+        const auto address = ownerBytes(owner, "Ethereum", "address");
+        return afterbell::oracle::eip191Verify(challenge.message, signature, address);
+    }
+    if (challenge.accountId.rfind("near:", 0) == 0) {
+        const auto key = ownerBytes(owner, "NearEd25519", "public_key");
+        auto nonce = afterbell::oracle::base64Decode(challenge.nonce);
+        if (nonce.size() != 32) return false;
+        std::vector<std::uint8_t> borsh;
+        appendLe32(borsh, 2147484061U); // NEP-413 tag: 2^31 + 413
+        appendBorshString(borsh, challenge.message);
+        borsh.insert(borsh.end(), nonce.begin(), nonce.end());
+        appendBorshString(borsh, challenge.recipient);
+        borsh.push_back(0); // callbackUrl: None
+        const auto hash = afterbell::oracle::sha256(borsh.data(), borsh.size());
+        return verifyEd25519(key, std::vector<std::uint8_t>(hash.begin(), hash.end()), signature);
+    }
+    return false;
+}
 
 bool accountRequestAllowed(const std::string &accountId) {
     const auto now = std::chrono::steady_clock::now();
@@ -218,7 +304,66 @@ std::size_t receiveBody(char *data, std::size_t size, std::size_t count, void *o
     return bytes;
 }
 
-void runProvider(Json::Value input, ProviderConfig config, drogon::ResponseStreamPtr stream) {
+std::size_t collectBody(char *data, std::size_t size, std::size_t count, void *opaque) {
+    const auto bytes = size * count;
+    auto *body = static_cast<std::string *>(opaque);
+    if (body->size() + bytes > 128 * 1024) return 0;
+    body->append(data, bytes);
+    return bytes;
+}
+
+void redactNearMessages(Json::Value &messages, const std::string &apiKey) {
+    Json::Value inputs(Json::arrayValue);
+    std::vector<Json::ArrayIndex> userMessageIndexes;
+    for (Json::ArrayIndex i = 0; i < messages.size(); ++i) {
+        if (messages[i]["role"].asString() != "user") continue;
+        inputs.append(messages[i]["content"]);
+        userMessageIndexes.push_back(i);
+    }
+    Json::Value payload;
+    payload["model"] = "openai/privacy-filter";
+    payload["input"] = inputs;
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    const auto body = Json::writeString(writer, payload);
+    CurlPtr curl(curl_easy_init(), curl_easy_cleanup);
+    if (!curl) throw std::runtime_error("NEAR AI privacy filtering is unavailable. Your message was not sent.");
+    HeaderPtr headers(nullptr, curl_slist_free_all);
+    headers.reset(curl_slist_append(nullptr, "Content-Type: application/json"));
+    const auto auth = "Authorization: Bearer " + apiKey;
+    headers.reset(curl_slist_append(headers.release(), auth.c_str()));
+    std::string responseBody;
+    curl_easy_setopt(curl.get(), CURLOPT_URL, "https://cloud-api.near.ai/v1/privacy/redact");
+    curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
+    curl_easy_setopt(curl.get(), CURLOPT_POST, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, body.data());
+    curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, collectBody);
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &responseBody);
+    curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, 8L);
+    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 20L);
+    curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "https");
+    const auto result = curl_easy_perform(curl.get());
+    long status = 0;
+    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+    if (result != CURLE_OK || status < 200 || status >= 300)
+        throw std::runtime_error("NEAR AI privacy filtering is unavailable. Your message was not sent.");
+    Json::Value redacted;
+    std::istringstream stream(responseBody);
+    std::string errors;
+    if (!Json::parseFromStream(Json::CharReaderBuilder{}, stream, &redacted, &errors) ||
+        !redacted["data"].isArray() || redacted["data"].size() != userMessageIndexes.size())
+        throw std::runtime_error("NEAR AI privacy filtering returned an invalid response. Your message was not sent.");
+    for (Json::ArrayIndex i = 0; i < userMessageIndexes.size(); ++i) {
+        if (!redacted["data"][i]["redacted"].isString())
+            throw std::runtime_error("NEAR AI privacy filtering returned an invalid response. Your message was not sent.");
+        messages[userMessageIndexes[i]]["content"] = redacted["data"][i]["redacted"];
+    }
+}
+
+void runProvider(Json::Value input, ProviderConfig config, std::function<Json::Value()> contextProvider, drogon::ResponseStreamPtr stream) {
     StreamState state{stream.get(), {}, 0, false, false};
     try {
         static const bool curlInitialized = [] {
@@ -255,15 +400,29 @@ void runProvider(Json::Value input, ProviderConfig config, drogon::ResponseStrea
         payload["stream"] = true;
         payload["temperature"] = 0.35;
         payload["max_tokens"] = 900;
+        Json::Value context(Json::objectValue);
+        if (contextProvider) {
+            Json::Value status; status["message"] = "Fetching your latest market and account data…";
+            sendEvent(state, "status", status);
+            try { context = contextProvider(); }
+            catch (...) { context["context_error"] = "Some live account context could not be loaded."; }
+        }
+        Json::StreamWriterBuilder contextWriter;
+        contextWriter["indentation"] = "";
         Json::Value system;
         system["role"] = "system";
-        system["content"] = "You are Otto, Afterbell's trading and market education assistant. Be concise, clear, and factual. The user selected " + input["market_id"].asString() + "-USDC; this is context only. No live market data has been supplied unless it appears in the conversation. Never invent prices, funding, balances, positions, or market events. Explain uncertainty and do not present yourself as financial advice. You cannot submit or execute trades.";
+        system["content"] = "You are Otto, Afterbell's trading and market education assistant. Be concise, clear, and factual. The user selected " + input["market_id"].asString() + "-USDC. The following trusted, server-fetched live account and market context was loaded for this request: " + Json::writeString(contextWriter, context) + ". Treat timestamps as milliseconds since Unix epoch. Prices are E8 integers; USDC values are raw 6-decimal integers unless explicitly serialized as decimal USDC strings. State the observed time when freshness matters, never invent missing values or claim stale data is current, and distinguish current snapshots from historical price action. Explain uncertainty and do not present yourself as financial advice. You cannot submit or execute trades.";
         payload["messages"].append(system);
         for (const auto &message : input["messages"]) {
             Json::Value item;
             item["role"] = message["role"];
             item["content"] = message["content"];
             payload["messages"].append(item);
+        }
+        if (provider == "near_ai") {
+            Json::Value status; status["message"] = "Applying NEAR AI privacy filtering…";
+            sendEvent(state, "status", status);
+            redactNearMessages(payload["messages"], apiKey);
         }
 
         Json::StreamWriterBuilder writer;
@@ -365,11 +524,6 @@ bool validChatRequest(const Json::Value &input, std::string &error) {
         error = "Unknown Otto provider.";
         return false;
     }
-    if (!input["account_id"].isString() || input["account_id"].asString().empty() ||
-        input["account_id"].asString().size() > 128) {
-        error = "A connected wallet account is required to use Otto.";
-        return false;
-    }
     if (!input["market_id"].isString()) {
         error = "Choose a valid market pair.";
         return false;
@@ -416,10 +570,93 @@ bool allowRequestForAccount(const std::string &accountId) {
     return accountRequestAllowed(accountId);
 }
 
-drogon::HttpResponsePtr streamChat(Json::Value input, ProviderConfig config) {
+Json::Value createWalletChallenge(const std::string &accountId, const Json::Value &owner, const std::string &recipient) {
+    if (recipient.empty() || (accountId.rfind("near:", 0) != 0 && accountId.rfind("solana:", 0) != 0 && accountId.rfind("ethereum:", 0) != 0))
+        throw std::invalid_argument("Connect a supported registered wallet to use Otto.");
+    const auto randomId = secureRandom(24);
+    const auto nonceBytes = secureRandom(32);
+    const auto nonce = afterbell::oracle::base64Encode(nonceBytes.data(), nonceBytes.size());
+    const auto challengeId = hexBytes(randomId);
+    const auto expires = std::chrono::system_clock::now() + std::chrono::minutes(5);
+    const auto expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(expires.time_since_epoch()).count();
+    WalletChallenge challenge;
+    challenge.accountId = accountId;
+    challenge.nonce = nonce;
+    challenge.recipient = recipient;
+    challenge.owner = owner;
+    challenge.expires = expires;
+    challenge.message = "Afterbell Otto wallet session\nAccount: " + accountId + "\nDomain: " + recipient + "\nNonce: " + hexBytes(nonceBytes) + "\nExpires: " + std::to_string(expiresMs) + "\nThis signature only creates a temporary Otto chat session. It cannot move funds or submit transactions.";
+    {
+        std::lock_guard<std::mutex> lock(sessionMutex);
+        for (auto it = challenges.begin(); it != challenges.end();) {
+            if (it->second.expires < std::chrono::system_clock::now()) it = challenges.erase(it);
+            else ++it;
+        }
+        challenges[challengeId] = challenge;
+    }
+    Json::Value payload;
+    payload["message"] = challenge.message;
+    payload["nonce"] = nonce;
+    payload["recipient"] = recipient;
+    Json::Value result;
+    result["challenge_id"] = challengeId;
+    result["payload"] = payload;
+    result["expires_at_ms"] = Json::Int64(expiresMs);
+    return result;
+}
+
+std::string walletChallengeAccount(const std::string &challengeId) {
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    const auto found = challenges.find(challengeId);
+    return found == challenges.end() || found->second.expires < std::chrono::system_clock::now() ? std::string{} : found->second.accountId;
+}
+
+std::string verifyWalletChallenge(const std::string &challengeId, const std::string &signatureBase64, const Json::Value &currentOwner) {
+    WalletChallenge challenge;
+    {
+        std::lock_guard<std::mutex> lock(sessionMutex);
+        const auto found = challenges.find(challengeId);
+        if (found == challenges.end()) throw std::invalid_argument("Wallet session request expired. Please try again.");
+        challenge = found->second;
+        challenges.erase(found); // every challenge can only be attempted once
+    }
+    if (challenge.expires < std::chrono::system_clock::now()) throw std::invalid_argument("Wallet session request expired. Please try again.");
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    if (Json::writeString(writer, challenge.owner) != Json::writeString(writer, currentOwner))
+        throw std::invalid_argument("The connected wallet no longer matches this Afterbell account.");
+    std::vector<std::uint8_t> signature;
+    try { signature = afterbell::oracle::base64Decode(signatureBase64); }
+    catch (...) { throw std::invalid_argument("Wallet signature was invalid."); }
+    if (!verifyWalletSignature(challenge, signature)) throw std::invalid_argument("Wallet signature could not be verified.");
+    const auto token = hexBytes(secureRandom(32));
+    {
+        std::lock_guard<std::mutex> lock(sessionMutex);
+        for (auto it = sessions.begin(); it != sessions.end();) {
+            if (it->second.second < std::chrono::system_clock::now()) it = sessions.erase(it);
+            else ++it;
+        }
+        sessions[token] = {challenge.accountId, std::chrono::system_clock::now() + std::chrono::minutes(30)};
+    }
+    return token;
+}
+
+std::string walletSessionAccount(const std::string &token) {
+    if (token.empty() || token.size() > 128) return {};
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    const auto found = sessions.find(token);
+    if (found == sessions.end()) return {};
+    if (found->second.second < std::chrono::system_clock::now()) {
+        sessions.erase(found);
+        return {};
+    }
+    return found->second.first;
+}
+
+drogon::HttpResponsePtr streamChat(Json::Value input, ProviderConfig config, std::function<Json::Value()> contextProvider) {
     auto response = drogon::HttpResponse::newAsyncStreamResponse(
-        [input = std::move(input), config = std::move(config)](drogon::ResponseStreamPtr stream) mutable {
-            std::thread(runProvider, std::move(input), std::move(config), std::move(stream)).detach();
+        [input = std::move(input), config = std::move(config), contextProvider = std::move(contextProvider)](drogon::ResponseStreamPtr stream) mutable {
+            std::thread(runProvider, std::move(input), std::move(config), std::move(contextProvider), std::move(stream)).detach();
         }, true);
     response->setContentTypeCodeAndCustomString(drogon::CT_CUSTOM, "text/event-stream; charset=utf-8");
     response->addHeader("Cache-Control", "no-cache, no-transform");
