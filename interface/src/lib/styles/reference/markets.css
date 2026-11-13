@@ -32,6 +32,8 @@
 .market-open-link.short { border-color: #2a171d; background: #2a171d; color: #ff9ba5; }
 .market-open-link.short:hover { border-color: #3a2028; background: #3a2028; color: #ffb3ba; }
 .markets-no-results { padding: 42px 20px; color: #8290a0; font-size: 12px; text-align: center; }
+.market-skeleton { display: inline-block; width: var(--skeleton-width, 56px); height: 12px; border-radius: 5px; background: linear-gradient(90deg, #1b2632 25%, #293745 45%, #1b2632 65%); background-size: 220% 100%; animation: market-skeleton-shimmer 1.25s ease-in-out infinite; vertical-align: middle; }
+@keyframes market-skeleton-shimmer { to { background-position-x: -220%; } }
 .supported-market-row > span:not(.market-type):not(.market-network) { color: #a0acb9; font-size: 10px; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 760px) {

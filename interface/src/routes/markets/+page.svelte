@@ -12,6 +12,8 @@
 	let markets = $state(fallbackMarkets as Array<{ ticker: string; name: string; tradingEnabled?: boolean }>)
 	let snapshots = $state<MarketSnapshot[]>([])
 	let volumes = $state<Record<string, string>>({})
+	let snapshotsLoaded = $state(false)
+	let volumesLoaded = $state(false)
 	let query = $state('')
 	let loadError = $state(false)
 	let active = false
@@ -37,7 +39,9 @@
 		if (!active) return
 		if (snapshotResult.status === 'fulfilled') { snapshots = snapshotResult.value; visible = true }
 		else visible = false
+		snapshotsLoaded = true
 		if (volumeResult.status === 'fulfilled') volumes = Object.fromEntries(volumeResult.value.map(row => [row.market_id, row.volume_usdc_raw]))
+		volumesLoaded = true
 	}
 	function money(value: number) { return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 </script>
@@ -58,10 +62,10 @@
 					<article class="supported-market-row">
 						<div class="supported-market-name"><span class="market-brand-icon"><TickerIcon ticker={market.ticker} size={20}/></span><span><b>{market.ticker}</b><small>{market.name}</small></span></div>
 						<span class="market-type">{market.ticker}-USDC</span>
-						<span>{snapshot?.mark_price_e8 ? money(dollars(snapshot.mark_price_e8)) : 'Unavailable'}</span>
-						<span>{volumes[market.ticker] ? money(usdc(volumes[market.ticker])) : '$0.00'}</span>
-						<span>{snapshot ? money(usdc(snapshot.open_interest_usdc)) : 'Unavailable'}</span>
-						<span>{snapshot ? `${(snapshot.funding_rate_bps_8h / 100).toFixed(4)}%` : 'Unavailable'}</span>
+						<span>{#if !snapshotsLoaded}<span class="market-skeleton" style="--skeleton-width:62px" aria-label="Loading market data"></span>{:else if snapshot?.mark_price_e8}{money(dollars(snapshot.mark_price_e8))}{:else}Unavailable{/if}</span>
+						<span>{#if !volumesLoaded}<span class="market-skeleton" style="--skeleton-width:58px" aria-label="Loading market data"></span>{:else if volumes[market.ticker]}{money(usdc(volumes[market.ticker]))}{:else}$0.00{/if}</span>
+						<span>{#if !snapshotsLoaded}<span class="market-skeleton" style="--skeleton-width:58px" aria-label="Loading market data"></span>{:else if snapshot}{money(usdc(snapshot.open_interest_usdc))}{:else}Unavailable{/if}</span>
+						<span>{#if !snapshotsLoaded}<span class="market-skeleton" style="--skeleton-width:54px" aria-label="Loading market data"></span>{:else if snapshot}{(snapshot.funding_rate_bps_8h / 100).toFixed(4)}%{:else}Unavailable{/if}</span>
 						<span class="market-network"><span class="robinhood-icon" role="img" aria-label="Robinhood Chain"><svg viewBox="0 0 24 24" aria-hidden="true"><path d={siRobinhood.path}/></svg></span>Robinhood Chain</span>
 						<div class="market-actions"><a class="market-open-link long" href={`/trade?market=${market.ticker}&side=long`}>Long</a><a class="market-open-link short" href={`/trade?market=${market.ticker}&side=short`}>Short</a></div>
 					</article>
