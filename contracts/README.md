@@ -9,7 +9,8 @@ the directory name is historical and A1 is the product contract.
 
 As of 13 Nov 2026, A1 implements the shared ledger, signed NEAR/Solana/Ethereum
 owner actions, NEP-141 deposits and withdrawals, agent records and policies,
-market configuration, quote-authorized trading, a single EOA-signed oracle,
+market configuration, quote-authorized trading with an on-chain order-capacity
+preflight view, a single EOA-signed oracle,
 oracle freshness/deviation circuit breakers, isolated margin, partial and full
 closes, funding, liquidation, insurance and bad-debt accounting, deferred
 profit claims, LP shares with immediate withdrawals subject to pricing, minimum
@@ -86,6 +87,7 @@ contain the value.
 |---|---|---|
 | A1 shared ledger | `afterbellfx-dev-faucet.testnet` | [Deploy and initialize](https://explorer.testnet.near.org/transactions/5UqcRFyCmQuhPdtrVJhsVhVtBnJgdLAe1JxE9SMRDrVf) |
 | A1 delayed 65% NAV risk configuration | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/4nhXY6uSA881ySTfiGHgGLtbFED4cU4XiKHKaCcVsmSz) · WASM SHA-256 `369dd716a4349dd6db44fa66ff17aac79f87992e90244530180db2ca5c86e0c6` · 695,801 bytes |
+| A1 on-chain order capacity preflight view | `afterbellfx-dev-faucet.testnet` | [In-place upgrade](https://explorer.testnet.near.org/transactions/HtsCzLZWevci1EHWe295Kw2hyTvZYTjbSjAVrR94XoLg) · WASM SHA-256 `838cf817c177e32bd9b5e1c82f2514201a60e3159db4296aa33aaa533f900024` · 702,983 bytes |
 | A1 immediate LP withdrawals | `afterbellfx-dev-faucet.testnet` | [Upgrade](https://explorer.testnet.near.org/transactions/9acfJpECaH71LeQ8jggmNW8owDTe1nzZcgZF92hCUuRK) · WASM SHA-256 `778906267ecaeae4b1b779f9b166c0e9c3b4d791e804df0543d220fad728ce26` · 687,234 bytes |
 | A1 shared-signature upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy updated code](https://explorer.testnet.near.org/transactions/7oUEY62WJ9REoxf5MEQkJR2hjr9L2ToTLpeWjfEAxfiT) |
 | A1 agent-foundation upgrade | `afterbellfx-dev-faucet.testnet` | [Deploy agent-record and position reservation code](https://explorer.testnet.near.org/transactions/2Cc8rBcDRerRaehHYH7c2WaypkxrFSMR7Gxn2K3mEAyb) |

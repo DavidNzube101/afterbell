@@ -8,8 +8,8 @@ networks:
     usdc_token_id: 3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
     active_a1_contract_id: afterbellfx-dev-faucet.testnet
     verified_code:
-      sha256: 369dd716a4349dd6db44fa66ff17aac79f87992e90244530180db2ca5c86e0c6
-      verified_at_block_height: 277435660
+      sha256: 838cf817c177e32bd9b5e1c82f2514201a60e3159db4296aa33aaa533f900024
+      verified_at_block_height: 277455048
     deployments:
       - component: a1
         release: initial shared ledger
@@ -93,6 +93,14 @@ networks:
         wasm_size_bytes: 695801
         source_commit: 2272031
         deployed_at_utc: 2026-11-12T23:50:46.789Z
+      - component: a1
+        release: on-chain order capacity preflight view
+        contract_id: afterbellfx-dev-faucet.testnet
+        transaction_id: HtsCzLZWevci1EHWe295Kw2hyTvZYTjbSjAVrR94XoLg
+        wasm_sha256: 838cf817c177e32bd9b5e1c82f2514201a60e3159db4296aa33aaa533f900024
+        wasm_size_bytes: 702983
+        source_commit: 321e983
+        deployed_at_utc: 2026-11-13T03:27:07Z
     state_migrations:
       - component: a1
         method: initialize_protocol_admin
