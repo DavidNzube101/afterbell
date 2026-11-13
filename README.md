@@ -129,6 +129,3 @@ Use one example file per app and copy it to the matching `.env` file. `VITE_` va
 
 The complete OpenAPI 3.1 specification is [`openapi.yaml`](openapi.yaml). It covers account setup, market data, trading, LP actions, Otto, notifications, and waitlist routes. Product guides and user documentation are at [docs.afterbellfx.xyz](https://docs.afterbellfx.xyz).
 
-## Mainnet integration
-
-The 1Click deposit integration is deployed for NEAR mainnet separately from the testnet A1 trading app. This gives Afterbell a mainnet deposit path while the shared A1 trading deployment remains on testnet. Mainnet USDC contract address and the 1Click integration are linked above.
