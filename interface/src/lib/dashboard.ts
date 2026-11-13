@@ -31,7 +31,7 @@ export type PricePoint = { price_e8: string; timestamp_ms: number }
 export type VolumePoint = { volume_usdg_raw: string; timestamp_ms: number }
 export type PositionRecord = {
   position_id: string; market_id: string; is_long: boolean; notional_usdc: string; margin_usdc?: string
-  leverage_bps: number; entry_price: string; mark_price?: string; unrealized_pnl_usdc?: string; mark_observed_at_ms?: number
+  leverage_bps?: number; entry_price: string; mark_price?: string; unrealized_pnl_usdc?: string; mark_observed_at_ms?: number
 }
 export type LimitOrderRecord = { order_id: string; market_id: string; is_long: boolean; notional_usdc: string; leverage_bps: number; limit_price: string; expires_at_ms: number }
 export type ActivityRecord = { id: string; event_type: string; title: string; message: string; market_id: string; side: string; amount_usdc: string; transaction_hash: string; created_at_ms: number }

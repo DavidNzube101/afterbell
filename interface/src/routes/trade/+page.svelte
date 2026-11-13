@@ -59,6 +59,15 @@
 	let selectedMarketInfo = $derived(markets.find(item => item.ticker === selectedMarket) ?? markets[0])
 	let snapshot = $derived(snapshots.find(item => item.market_id === selectedMarket))
 	let markPrice = $derived(snapshot?.mark_price_e8 ? dollars(snapshot.mark_price_e8) : 0)
+	function leverageDisplay(position: PositionRecord) {
+		const storedBps = Number(position.leverage_bps)
+		if (Number.isFinite(storedBps) && storedBps > 0) return `${(storedBps / 10_000).toFixed(1)}×`
+		const notional = Number(position.notional_usdc)
+		const margin = Number(position.margin_usdc)
+		return Number.isFinite(notional) && Number.isFinite(margin) && notional > 0 && margin > 0
+			? `${(notional / margin).toFixed(1)}×`
+			: '—'
+	}
 	let maxLeverage = $derived(snapshot?.max_leverage_bps ? Number(snapshot.max_leverage_bps) / 10_000 : 10)
 	let tradingEnabled = $derived(Boolean(selectedMarketInfo?.tradingEnabled && snapshot?.enabled && !snapshot.close_only))
 	let filteredMarkets = $derived(markets.filter(item => `${item.ticker} ${item.name}`.toLowerCase().includes(marketSearch.trim().toLowerCase())))
@@ -274,7 +283,7 @@
 								{@const notional = usdc(position.notional_usdc)}
 								{@const pnl = usdc(position.unrealized_pnl_usdc)}
 								{@const mark = dollars(position.mark_price)}
-								<tr><td><span class="table-market"><span class="stock-avatar tiny"><TickerIcon ticker={position.market_id} size={13}/></span><b>{position.market_id}</b><small>USDC</small></span></td><td><span class:long-side={position.is_long} class:short-side={!position.is_long}>{position.is_long ? '↗ Long' : '↘ Short'}</span></td><td>{money(notional)}</td><td>{money(usdc(position.margin_usdc ?? String(Math.ceil(Number(position.notional_usdc) * 10_000 / position.leverage_bps))))}</td><td>{(position.leverage_bps / 10_000).toFixed(1)}×</td><td>{money(dollars(position.entry_price))}</td><td>{mark ? money(mark) : 'Unavailable'}</td><td><span class:green-pnl={pnl >= 0} class:short-side={pnl < 0}>{pnl >= 0 ? '+' : ''}{money(pnl)}</span></td><td><div class="position-actions"><button class="share-position" aria-label={`Share ${position.market_id} trade`} onclick={() => { sharePosition = { ticker: position.market_id, side: position.is_long ? 'Long' : 'Short', size: money(notional), leverage: `${(position.leverage_bps / 10_000).toFixed(1)}×`, entry: money(dollars(position.entry_price)), mark: mark ? money(mark) : 'Unavailable', pnl: `${pnl >= 0 ? '+' : ''}${money(pnl)}`, change: `${notional ? (pnl / notional * 100).toFixed(2) : '0.00'}%` } }}>Share</button><button class="close-position" disabled={submitting} onclick={() => void closePosition(position)}>Close</button></div></td></tr>
+								<tr><td><span class="table-market"><span class="stock-avatar tiny"><TickerIcon ticker={position.market_id} size={13}/></span><b>{position.market_id}</b><small>USDC</small></span></td><td><span class:long-side={position.is_long} class:short-side={!position.is_long}>{position.is_long ? '↗ Long' : '↘ Short'}</span></td><td>{money(notional)}</td><td>{money(usdc(position.margin_usdc ?? '0'))}</td><td>{leverageDisplay(position)}</td><td>{money(dollars(position.entry_price))}</td><td>{mark ? money(mark) : 'Unavailable'}</td><td><span class:green-pnl={pnl >= 0} class:short-side={pnl < 0}>{pnl >= 0 ? '+' : ''}{money(pnl)}</span></td><td><div class="position-actions"><button class="share-position" aria-label={`Share ${position.market_id} trade`} onclick={() => { sharePosition = { ticker: position.market_id, side: position.is_long ? 'Long' : 'Short', size: money(notional), leverage: leverageDisplay(position), entry: money(dollars(position.entry_price)), mark: mark ? money(mark) : 'Unavailable', pnl: `${pnl >= 0 ? '+' : ''}${money(pnl)}`, change: `${notional ? (pnl / notional * 100).toFixed(2) : '0.00'}%` } }}>Share</button><button class="close-position" disabled={submitting} onclick={() => void closePosition(position)}>Close</button></div></td></tr>
 							{/each}
 						{:else if activeTab === 'Open orders'}
 							{#each limitOrders as order (order.order_id)}<tr><td><span class="table-market"><span class="stock-avatar tiny"><TickerIcon ticker={order.market_id} size={13}/></span><b>{order.market_id}</b><small>USDC</small></span></td><td>{order.is_long ? 'Long' : 'Short'}</td><td>{money(usdc(order.notional_usdc))}</td><td>{money(dollars(order.limit_price))}</td><td>{(order.leverage_bps / 10_000).toFixed(1)}×</td><td>Limit</td><td>—</td><td>Pending</td><td><button class="close-position" disabled={submitting} onclick={() => void cancelLimit(order)}>Cancel</button></td></tr>{/each}
