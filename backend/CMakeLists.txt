@@ -44,6 +44,7 @@ target_compile_options(afterbell-indexer PRIVATE -Wall -Wextra -Wpedantic)
 if(Drogon_FOUND)
     add_executable(afterbell-api
         src/api/main.cpp
+        src/ai/otto.cpp
         src/api/profile_store.cpp
         src/http/request_logger.cpp
     )

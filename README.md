@@ -29,6 +29,12 @@ To get test USDC, open [Circle's Testnet Faucet](https://faucet.circle.com/), ch
 
 Afterbell is in active development. Testnet behavior, market availability, and displayed prices may change as the contracts and trading infrastructure evolve.
 
+## Mainnet milestone
+
+A working **1Click deposit deployment is live on NEAR mainnet**, maintained separately from Afterbell’s currently live testnet trading deployment. This is a deposit integration milestone; the trading app described above remains testnet-first.
+
+NEAR AI platform-credit payment transaction: [view on NEAR Intents Explorer](https://explorer.near-intents.org/transactions/24502f58e8485a30c7be6e079f74b8a341fef610cbdeb031a785c5e88a2c37b2).
+
 ## About this repository
 
 The public landing page is at [afterbellfx.xyz](https://afterbellfx.xyz). This repository contains the trading frontend at its root, C++ workers in `backend/`, and NEAR contracts in `contracts/`.

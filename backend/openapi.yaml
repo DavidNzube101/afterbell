@@ -10,6 +10,7 @@ tags:
   - name: Health
   - name: Markets
   - name: Trading
+  - name: Otto
 paths:
   /health/live:
     get:
@@ -115,6 +116,73 @@ paths:
                         tokenAddress: { type: string }
                         status: { type: string, const: development }
                         tradingEnabled: { type: boolean, const: false }
+  /v1/otto/providers:
+    get:
+      tags: [Otto]
+      operationId: getOttoProviders
+      summary: Get configured Otto provider availability
+      responses:
+        '200':
+          description: Provider availability and configured model IDs; API keys are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  near_ai: { $ref: '#/components/schemas/OttoProviderStatus' }
+                  qwen: { $ref: '#/components/schemas/OttoProviderStatus' }
+                  byok: { $ref: '#/components/schemas/OttoProviderStatus' }
+  /v1/otto/chat:
+    post:
+      tags: [Otto]
+      operationId: streamOttoChat
+      summary: Stream an Otto response
+      description: Streams OpenAI-compatible chat deltas as Server-Sent Events. Platform API keys remain server-side. BYOK credentials are accepted for this request only and are not persisted. Requests are limited to twelve per minute per supplied account ID; wallet ownership is not verified by this endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, account_id, market_id, messages]
+              properties:
+                provider: { type: string, enum: [near_ai, qwen, byok] }
+                account_id: { type: string, maxLength: 128 }
+                market_id: { type: string, enum: [AAPL, GOOGL, META, NVDA, TSLA] }
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 16
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      content: { type: string, maxLength: 4000 }
+                base_url: { type: string, description: Required for BYOK; HTTPS only, port 443, public DNS host, root or /v1 path. }
+                model: { type: string, description: Required for BYOK. }
+                api_key: { type: string, writeOnly: true, description: Required for BYOK; request-scoped and never persisted. }
+      responses:
+        '200':
+          description: Server-Sent Events; event names are delta, done, and error.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400':
+          description: Invalid provider, market, or message payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429':
+          description: Otto request limit reached for the supplied account ID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Selected platform provider is not configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /v1/trade/quote:
     post:
       tags: [Trading]
@@ -309,6 +377,12 @@ paths:
         '422': { description: Invalid or stale owner authorization }
 components:
   schemas:
+    OttoProviderStatus:
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        model: { type: string, description: Configured model identifier; omitted when not configured. }
     CloseQuote:
       type: object
       required: [account_id, position_id, market_id, reference_price, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms, message, quote_signature]

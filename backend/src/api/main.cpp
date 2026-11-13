@@ -1,6 +1,7 @@
 #include <drogon/drogon.h>
 
 #include "http/request_logger.hpp"
+#include "ai/otto.hpp"
 #include "api/profile_store.hpp"
 #include "api/dashboard_store.hpp"
 #include "indexer/worker.hpp"
@@ -259,6 +260,12 @@ int main() {
                                         : "rh_stocks_addresses.json";
         }
         const auto markets = loadMarkets(*registryPath);
+        const afterbell::ai::ProviderConfig ottoConfig{
+            env("NEAR_AI_API_KEY").value_or(""),
+            env("NEAR_AI_MODEL").value_or(""),
+            env("GROQ_API_KEY").value_or(""),
+            env("GROQ_MODEL").value_or(""),
+        };
 
         const bool runIndexer = indexerEnabled();
         const bool runOracle = oracleEnabled();
@@ -377,6 +384,51 @@ int main() {
                 callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
             {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/otto/providers",
+            [ottoConfig](const drogon::HttpRequestPtr &,
+                         std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                callback(drogon::HttpResponse::newHttpJsonResponse(
+                    afterbell::ai::providerStatus(ottoConfig)));
+            },
+            {drogon::Get});
+        drogon::app().registerHandler(
+            "/v1/otto/chat",
+            [ottoConfig](const drogon::HttpRequestPtr &request,
+                         std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+                const auto input = request->getJsonObject();
+                std::string validationError;
+                if (request->body().size() > 32 * 1024 || !input ||
+                    !afterbell::ai::validChatRequest(*input, validationError)) {
+                    if (request->body().size() > 32 * 1024) validationError = "Otto request is too large.";
+                    Json::Value body = errorBody("otto_request_invalid",
+                        input ? validationError : "Request body must be JSON.");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k400BadRequest);
+                    callback(response);
+                    return;
+                }
+                if (!afterbell::ai::allowRequestForAccount((*input)["account_id"].asString())) {
+                    Json::Value body = errorBody("otto_rate_limited",
+                        "You’ve reached Otto’s request limit. Please wait a minute and try again.");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k429TooManyRequests);
+                    callback(response);
+                    return;
+                }
+                const auto provider = (*input)["provider"].asString();
+                if ((provider == "near_ai" && (ottoConfig.nearApiKey.empty() || ottoConfig.nearModel.empty())) ||
+                    (provider == "qwen" && (ottoConfig.groqApiKey.empty() || ottoConfig.groqModel.empty()))) {
+                    Json::Value body = errorBody("otto_provider_unavailable",
+                        "This Otto provider is not configured. Choose another provider or contact support.");
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k503ServiceUnavailable);
+                    callback(response);
+                    return;
+                }
+                callback(afterbell::ai::streamChat(*input, ottoConfig));
+            },
+            {drogon::Post});
         drogon::app().registerHandler(
             "/health/status",
             [databaseUrl = *databaseUrl, indexerWorker, oracleWorker](
