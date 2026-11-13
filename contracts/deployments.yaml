@@ -9,7 +9,7 @@ networks:
     active_a1_contract_id: afterbellfx-dev-faucet.testnet
     verified_code:
       sha256: 369dd716a4349dd6db44fa66ff17aac79f87992e90244530180db2ca5c86e0c6
-      verified_at_block_height: 277433010
+      verified_at_block_height: 277435660
     deployments:
       - component: a1
         release: initial shared ledger
@@ -115,35 +115,34 @@ networks:
             result: correct signer active; oracle_signer view verified
       perp_global_risk:
         active_config:
-          max_global_net_bps: 1000
-          max_total_oi_bps: 5000
-          max_trader_oi_bps: 50
-        pending_config:
           max_global_net_bps: 6500
           max_total_oi_bps: 6500
           max_trader_oi_bps: 6500
-          transaction_id: 2zRFfyyQBxyzF7tjTqqRK2egtEh9nsF32daRzXjfeahd
-          applies_after_utc: 2026-11-13T00:11:35.841Z
+        history:
+          - action: configure_and_apply
+            transaction_id: 2zRFfyyQBxyzF7tjTqqRK2egtEh9nsF32daRzXjfeahd
+            apply_transaction_id: DvTVbyNVnJZhD6vTkJzk7eFJehd6jtK4kNeL9kahCcKV
+            result: active; perp_global_risk_config view verified
       perp_market_risk:
-        pending_config:
+        active_config:
           max_market_oi_bps: 6500
           max_market_skew_bps: 6500
           markets:
             AAPL:
-              transaction_id: 5aiiheXbLpD6eGMTebicgHfHWrCHPYZJnrZEkmJLxU5F
-              applies_after_utc: 2026-11-13T00:11:40.597Z
+              configure_transaction_id: 5aiiheXbLpD6eGMTebicgHfHWrCHPYZJnrZEkmJLxU5F
+              apply_transaction_id: J1cCvDMoGVLoiFFiHEN2t251J8xT5XgRrDz4GiTjoSj3
             GOOGL:
-              transaction_id: G2juFuBAWSn6488Rg6sM3vB8X5jJt4ybHrx82g4GEocY
-              applies_after_utc: 2026-11-13T00:11:44.776Z
+              configure_transaction_id: G2juFuBAWSn6488Rg6sM3vB8X5jJt4ybHrx82g4GEocY
+              apply_transaction_id: 5LoQj2BEpsBWKEY1F6px9NexWD7DN1ChdNC8yrP59fvA
             META:
-              transaction_id: 26J4XtMYJVAxdK2Y2WRU3JKNk7WLvncUPM6i6K7Ydejn
-              applies_after_utc: 2026-11-13T00:11:48.438Z
+              configure_transaction_id: 26J4XtMYJVAxdK2Y2WRU3JKNk7WLvncUPM6i6K7Ydejn
+              apply_transaction_id: 25hMc6PZWrZAKycy3g1AThLaKN78PNn5SejRg9495tUq
             NVDA:
-              transaction_id: 8VP9W2tNoT4MMtm18dF94SHY2YZvRMfnHoJbXgPZRpKN
-              applies_after_utc: 2026-11-13T00:11:52.348Z
+              configure_transaction_id: 8VP9W2tNoT4MMtm18dF94SHY2YZvRMfnHoJbXgPZRpKN
+              apply_transaction_id: 6Q7th2d346t2omDPAWg5b2DLF1qt3aXTbiSQ4aRVERqp
             TSLA:
-              transaction_id: 2yVbYGnbAb8ymJ2EEYBtk5WVXCAqtVRLQ6wAYhJDxPSM
-              applies_after_utc: 2026-11-13T00:11:57.176Z
+              configure_transaction_id: 2yVbYGnbAb8ymJ2EEYBtk5WVXCAqtVRLQ6wAYhJDxPSM
+              apply_transaction_id: G6W9XesnUwd3Lfap3nNPmY6k8anUuH1YYMh83qeS2g5W
 
   mainnet:
     network_id: mainnet
