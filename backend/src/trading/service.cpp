@@ -921,7 +921,8 @@ Json::Value Service::createCloseQuote(const Json::Value &request) const {
     if (observed > now || now - observed > 60'000 || health["circuit_broken"].asBool()) throw std::runtime_error("market oracle is stale or unsafe");
     const auto sequence = u64(price["sequence"], "oracle sequence");
     const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
-    const auto expiry = now + 30'000;
+    // Leave room under A1's 60s hard TTL for view-call and block-time drift.
+    const auto expiry = now + 55'000;
     Json::Value messageArgs;
     messageArgs["account_id"] = account; messageArgs["position_id"] = positionId;
     messageArgs["reference_price"] = price["price"];
@@ -975,7 +976,8 @@ Json::Value Service::submitClose(const Json::Value &request) {
     const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
     const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
     if (u64(price["observed_at_ms"], "oracle timestamp") > now || now - u64(price["observed_at_ms"], "oracle timestamp") > 60'000 ||
-        u64(request["price_sequence"], "price_sequence") != sequence || u128(request["reference_price"], "reference_price") != u128(price["price"], "price") ||
+        u64(request["price_sequence"], "price_sequence") > sequence ||
+        u128(request["reference_price"], "reference_price") == 0 ||
         u64(request["nonce"], "nonce") != nonce || expiry <= now || expiry > now + 60'000 ||
         u64(request["fee_bps"], "fee_bps") != config_.feeBps ||
         u64(request["max_slippage_bps"], "max_slippage_bps") > 1'000) throw std::runtime_error("close quote is stale or altered; request a fresh quote");
@@ -1014,7 +1016,15 @@ Json::Value Service::submitClose(const Json::Value &request) {
     tx.insert(tx.end(), txSignature.begin(), txSignature.end());
     Json::Value txParams(Json::arrayValue); txParams.append(afterbell::oracle::base64Encode(tx.data(), tx.size()));
     const auto result = txRpc.call("broadcast_tx_commit", txParams);
-    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE") throw std::runtime_error("A1 rejected the close transaction");
+    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE") {
+        const auto executionError = result["status"]["Failure"]["ActionError"]["kind"]["FunctionCallError"]["ExecutionError"];
+        std::string message = "A1 rejected the close transaction";
+        if (executionError.isString() && !executionError.asString().empty())
+            message += ": " + executionError.asString();
+        const auto transactionHash = result["transaction"]["hash"].asString();
+        if (!transactionHash.empty()) message += " (transaction " + transactionHash + ")";
+        throw std::runtime_error(message);
+    }
     Json::Value response; response["status"] = "finalized";
     response["transaction_hash"] = result["transaction"]["hash"]; response["position_id"] = positionId;
     return response;

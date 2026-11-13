@@ -1922,8 +1922,9 @@ impl SharedLedger {
             "fee or slippage exceeds hard bound"
         );
         let mark = require_healthy_market_price(&position.market_id);
-        assert_eq!(mark.sequence, price_sequence, "stale quote sequence");
-        // PnL settlement is blocked while the oracle mark is unsafe.
+        assert!(mark.sequence >= price_sequence, "close quote sequence is from the future");
+        // Allow the oracle to advance after the owner signs, but only settle
+        // within the price deviation bound signed in the close authorization.
         assert!(reference_price.0 > 0, "reference price must be positive");
         let deviation = mark
             .price
