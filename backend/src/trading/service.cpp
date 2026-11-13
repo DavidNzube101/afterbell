@@ -855,7 +855,15 @@ Json::Value Service::submitOpen(const Json::Value &request) {
     tx.push_back(0); tx.insert(tx.end(), signature.begin(), signature.end());
     Json::Value params(Json::arrayValue); params.append(afterbell::oracle::base64Encode(tx.data(), tx.size()));
     const auto result = txRpc.call("broadcast_tx_commit", params);
-    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE") throw std::runtime_error("A1 rejected the trade transaction");
+    if (result["status"].isMember("Failure") || result["final_execution_status"] == "FAILURE") {
+        const auto executionError = result["status"]["Failure"]["ActionError"]["kind"]["FunctionCallError"]["ExecutionError"];
+        const auto transactionHash = result["transaction"]["hash"].asString();
+        std::string message = "A1 rejected the trade transaction";
+        if (executionError.isString() && !executionError.asString().empty())
+            message += ": " + executionError.asString();
+        if (!transactionHash.empty()) message += " (transaction " + transactionHash + ")";
+        throw std::runtime_error(message);
+    }
     Json::Value response; response["status"] = "finalized";
     response["transaction_hash"] = result["transaction"]["hash"];
     response["position_id"] = request["position_id"];
