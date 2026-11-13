@@ -6,8 +6,13 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 12_000):
   const timeout = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs)
   try {
   const response = await fetch(`${root}${path}`, { ...init, signal: init?.signal ?? controller.signal, headers: { Accept: 'application/json', ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers } })
-  const body = await response.json().catch(() => ({})) as { error?: { message?: string } }
-  if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`)
+  const body = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string; allowed_max_notional_usdc?: string } }
+  if (!response.ok) {
+    const error = new Error(body.error?.message || `Request failed (${response.status})`) as Error & { code?: string; allowedMaxNotionalUsdc?: string }
+    error.code = body.error?.code
+    error.allowedMaxNotionalUsdc = body.error?.allowed_max_notional_usdc
+    throw error
+  }
   return body as T
   } catch (error) {
     if (controller.signal.aborted) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds`)

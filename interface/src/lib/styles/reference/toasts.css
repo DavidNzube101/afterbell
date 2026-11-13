@@ -4,6 +4,7 @@
 .app-toast-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .app-toast-error .app-toast-icon { background: #e5484d1c; color: #ff7277; }
 .app-toast-success .app-toast-icon { background: #31b9811c; color: #4cdb9b; }
+.app-toast-warning .app-toast-icon { background: #f0b4291c; color: #f5c451; }
 .app-toast-waiting .app-toast-icon { background: #0065d21c; color: #79baff; }
 .app-toast-message { min-width: 0; flex: 1; font-size: 12px; line-height: 1.45; }
 .app-toast-dismiss { width: 29px; height: 29px; display: grid; flex: 0 0 auto; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #8994a2; cursor: pointer; }

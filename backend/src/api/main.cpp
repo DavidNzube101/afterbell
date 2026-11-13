@@ -698,6 +698,12 @@ int main() {
                     if (!input) throw std::invalid_argument("request body must be JSON");
                     auto body = tradingService->createOpenQuote(*input);
                     callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                } catch (const afterbell::trading::RiskCapacityExceeded &error) {
+                    Json::Value body = errorBody("risk_capacity_exceeded", error.what());
+                    body["error"]["allowed_max_notional_usdc"] = error.allowedMaxRaw();
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity);
+                    callback(response);
                 } catch (const std::exception &error) {
                     Json::Value body = errorBody("quote_rejected", error.what());
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
@@ -850,6 +856,11 @@ int main() {
                     const auto input = request->getJsonObject();
                     if (!input) throw std::invalid_argument("request body must be JSON");
                     callback(drogon::HttpResponse::newHttpJsonResponse(tradingService->createLimitOrderMessage(*input)));
+                } catch (const afterbell::trading::RiskCapacityExceeded &error) {
+                    Json::Value body = errorBody("risk_capacity_exceeded", error.what());
+                    body["error"]["allowed_max_notional_usdc"] = error.allowedMaxRaw();
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+                    response->setStatusCode(drogon::k422UnprocessableEntity); callback(response);
                 } catch (const std::exception &error) {
                     Json::Value body = errorBody("limit_quote_rejected", error.what());
                     auto response = drogon::HttpResponse::newHttpJsonResponse(body);

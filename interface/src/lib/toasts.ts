@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store'
 
-export type ToastKind = 'waiting' | 'success' | 'error'
+export type ToastKind = 'waiting' | 'success' | 'error' | 'warning'
 export type ToastItem = { id: number; kind: ToastKind; message: string }
 
 export const toasts = writable<ToastItem[]>([])

@@ -120,7 +120,7 @@ paths:
       tags: [Trading]
       operationId: createPerpOpenQuote
       summary: Create an A1-signed market-open quote
-      description: Returns the exact A1 authorization message for the owner wallet to sign, along with the configured quote signer signature. Amounts are raw USDC units (6 decimals). The quote expires quickly and is bound to the current oracle sequence and trading nonce.
+      description: Returns the exact A1 authorization message for the owner wallet to sign, along with the configured quote signer signature. The backend preflights current account, market, portfolio, and vault capacity before returning a quote. Amounts are raw USDC units (6 decimals). The quote expires quickly and is bound to the current oracle sequence and trading nonce.
       requestBody:
         required: true
         content:
@@ -142,7 +142,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TradeQuote' }
         '422':
-          description: Market, oracle, account, balance, or request validation failed
+          description: Market, oracle, account, balance, or request validation failed. A risk_capacity_exceeded error includes error.allowed_max_notional_usdc in raw USDC units.
   /v1/trade/open:
     post:
       tags: [Trading]
@@ -273,6 +273,7 @@ paths:
       tags: [Trading]
       operationId: createPerpLimitOrderAuthorization
       summary: Create the owner-signing message for a standing limit order
+      description: Preflights current account, market, portfolio, and vault capacity before returning the owner-signing message. Capacity is checked again when a standing order is executed.
       requestBody:
         required: true
         content:
@@ -280,7 +281,7 @@ paths:
             schema: { type: object, required: [account_id, order_id, market_id, side, notional_usdc, leverage_bps, limit_price, expires_at_ms] }
       responses:
         '200': { description: Canonical order fields and owner-signing message }
-        '422': { description: Invalid order terms }
+        '422': { description: Invalid order terms. A risk_capacity_exceeded error includes error.allowed_max_notional_usdc in raw USDC units. }
   /v1/trade/limits/cancel/quote:
     post:
       tags: [Trading]
@@ -325,7 +326,7 @@ components:
         quote_signature: { type: string, contentEncoding: base64 }
     TradeQuote:
       type: object
-      required: [account_id, position_id, market_id, side, notional_usdc, leverage_bps, reference_price, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms, message, quote_signature]
+      required: [account_id, position_id, market_id, side, notional_usdc, leverage_bps, reference_price, max_slippage_bps, price_sequence, fee_bps, nonce, expires_at_ms, message, quote_signature, allowed_max_notional_usdc]
       properties:
         account_id: { type: string }
         position_id: { type: string }
@@ -344,6 +345,7 @@ components:
         required_margin_usdc: { type: string }
         fee_usdc: { type: string }
         free_balance_usdc: { type: string }
+        allowed_max_notional_usdc: { type: string, description: Maximum additional notional allowed by current risk and payout limits, in raw USDC units }
     IndexerStatus:
       type: object
       required: [enabled, status, lastIndexedBlock]
@@ -362,3 +364,4 @@ components:
           properties:
             code: { type: string }
             message: { type: string }
+            allowed_max_notional_usdc: { type: string, description: Present for risk_capacity_exceeded responses; raw USDC units with 6 decimals }

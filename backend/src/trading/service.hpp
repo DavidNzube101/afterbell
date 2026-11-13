@@ -7,8 +7,17 @@
 #include <atomic>
 #include <string>
 #include <thread>
+#include <stdexcept>
 
 namespace afterbell::trading {
+
+class RiskCapacityExceeded : public std::runtime_error {
+  public:
+    explicit RiskCapacityExceeded(std::string allowedMaxRaw);
+    const std::string &allowedMaxRaw() const noexcept { return allowedMaxRaw_; }
+  private:
+    std::string allowedMaxRaw_;
+};
 
 struct Config {
     std::string network;

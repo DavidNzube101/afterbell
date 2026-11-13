@@ -10,6 +10,8 @@
 					<span class="toast-spinner" aria-hidden="true"></span>
 				{:else if toast.kind === 'success'}
 					<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg>
+				{:else if toast.kind === 'warning'}
+					<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3 18 17H2L10 3Z" /><path d="M10 8v4m0 2v.1" /></svg>
 				{:else}
 					<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>
 				{/if}

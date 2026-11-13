@@ -146,7 +146,9 @@
 			showToast('success', `${order.side === 'long' ? 'Long' : 'Short'} order submitted.`)
 			void refreshDashboard()
 		} catch (reason) {
-			showToast('error', reason instanceof Error ? reason.message : 'Order could not be submitted.')
+			const failure = reason as (Error & { code?: string }) | null
+			if (failure?.code === 'risk_capacity_exceeded') showToast('warning', failure.message, 9000)
+			else showToast('error', reason instanceof Error ? reason.message : 'Order could not be submitted.')
 		} finally { submitting = false }
 	}
 
