@@ -27,7 +27,9 @@ jobs:
       - name: Install C++ dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends clang-tidy cmake g++ libbrotli-dev libcurl4-openssl-dev libdrogon-dev libhiredis-dev libjsoncpp-dev libmariadb-dev libmariadb-dev-compat libpq-dev libsqlite3-dev libssl-dev libyaml-cpp-dev pkg-config uuid-dev
+          sudo apt-get install --yes --no-install-recommends clang-tidy cmake g++ git libcurl4-openssl-dev libjsoncpp-dev libpq-dev libssl-dev pkg-config uuid-dev zlib1g-dev
+      - name: Install pinned Drogon with async stream support
+        run: bash backend/scripts/install_drogon.sh
 
       - name: Configure
         run: cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DAFTERBELL_REQUIRE_DROGON=ON
