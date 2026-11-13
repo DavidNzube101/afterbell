@@ -18,8 +18,8 @@ On-chain trading should feel like one coherent product: connect a wallet once, h
 
 | | Link |
 |---|---|
-| Dapp | [testnet.afterbellfx.xyz](https://testnet.afterbellfx.xyz) |
-| Website | [afterbellfx.xyz](https://afterbellfx.xyz) |
+| Dapp | [afterbellfx.xyz](https://afterbellfx.xyz) |
+| Website | [testnet.afterbellfx.xyz](https://testnet.afterbellfx.xyz) |
 | Docs | [docs.afterbellfx.xyz](https://docs.afterbellfx.xyz) |
 | X | [@afterbellfx](https://x.com/afterbellfx) |
 | Source | [github.com/DavidNzube101/afterbell](https://github.com/DavidNzube101/afterbell) |
