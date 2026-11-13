@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "cd interface && bun install --frozen-lockfile",
+  "installCommand": "bun install --frozen-lockfile",
   "buildCommand": "bun run build",
-  "outputDirectory": "interface/build",
+  "outputDirectory": "build",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://api.afterbellfx.xyz/$1" },
     { "source": "/(.*)", "destination": "/200.html" }
