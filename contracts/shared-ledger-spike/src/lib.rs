@@ -248,6 +248,19 @@ pub struct PerpOrderCapacity {
     pub max_execution_deviation_bps: u16,
 }
 
+/// One-call read-only quote data for the backend. The open transaction still
+/// repeats authorization, balance, nonce, oracle, and risk checks.
+#[near(serializers = [json])]
+pub struct PerpQuotePreflight {
+    pub capacity: PerpOrderCapacity,
+    pub owner: Option<OwnerKey>,
+    pub balance_usdc: U128,
+    pub nonce: u64,
+    pub quote_signer: Option<OwnerKey>,
+    pub expires_at_ms: u64,
+    pub message: String,
+}
+
 /// Isolated position held by one user or agent logical record.
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -645,6 +658,54 @@ impl SharedLedger {
             now_ms: env::block_timestamp() / 1_000_000,
             max_leverage_bps: market.max_leverage_bps,
             max_execution_deviation_bps: market.max_execution_deviation_bps,
+        }
+    }
+
+    /// Combine capacity and quote fields into one NEAR view call, avoiding
+    /// sequential RPC waves for balance, nonce, owner, signer, and message.
+    pub fn perp_quote_preflight(
+        &self,
+        account_id: String,
+        position_id: String,
+        market_id: String,
+        is_long: bool,
+        notional: U128,
+        leverage_bps: u32,
+        max_slippage_bps: u16,
+        fee_bps: u16,
+        expires_at_ms: u64,
+    ) -> PerpQuotePreflight {
+        let capacity = self.perp_order_capacity(account_id.clone(), market_id.clone(), is_long);
+        let nonce = read_user_perp_nonce(&account_id)
+            .checked_add(1)
+            .expect("trading nonce overflow");
+        let expiry = if expires_at_ms == 0 {
+            capacity.now_ms.saturating_add(30_000)
+        } else {
+            expires_at_ms
+        };
+        let message = perp_trade_message(
+            &account_id,
+            &position_id,
+            &market_id,
+            is_long,
+            notional,
+            leverage_bps,
+            capacity.mark_price_e8,
+            max_slippage_bps,
+            capacity.price_sequence,
+            fee_bps,
+            nonce,
+            expiry,
+        );
+        PerpQuotePreflight {
+            capacity,
+            owner: read_owner(&account_id),
+            balance_usdc: U128(self.balances.get(&account_id).unwrap_or_default()),
+            nonce,
+            quote_signer: read_perp_quote_signer(),
+            expires_at_ms: expiry,
+            message,
         }
     }
 

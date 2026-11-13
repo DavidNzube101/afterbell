@@ -311,35 +311,6 @@ Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
     const auto leverage = static_cast<std::uint32_t>(leverageRaw);
     const auto slippage = static_cast<std::uint16_t>(slippageRaw);
 
-    const auto capacity = orderCapacity(rpc, config.contractId, account, marketId, isLong);
-    const auto allowedNotional = u128(capacity["allowed_max_notional_usdc"], "allowed order capacity");
-    if (leverage > u64(capacity["max_leverage_bps"], "market max leverage") ||
-        slippage > u64(capacity["max_execution_deviation_bps"], "market slippage cap"))
-        throw std::invalid_argument("order exceeds the market risk limits");
-    if (notional > allowedNotional) throw RiskCapacityExceeded(decimal(allowedNotional));
-    const auto sequence = u64(capacity["price_sequence"], "oracle sequence");
-    const auto referencePrice = u128(capacity["mark_price_e8"], "oracle mark price");
-    const auto chainNow = u64(capacity["now_ms"], "NEAR block timestamp");
-    const auto expiry = chainNow + 30'000;
-
-    auto ownerRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, account](auto &reader) {
-        Json::Value args; args["account_id"] = account;
-        return viewCall(reader, contract, "owner_of", args);
-    });
-    const auto margin = (notional * 10'000 + leverage - 1) / leverage;
-    const auto fee = (notional * config.feeBps + 9'999) / 10'000;
-    auto nonceRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, account](auto &reader) {
-        return tradingNonce(reader, contract, account) + 1;
-    });
-    auto balanceRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, account](auto &reader) {
-        Json::Value args; args["account_id"] = account;
-        return viewCall(reader, contract, "balance_of", args);
-    });
-    const auto nonce = nonceRead.get();
-    const auto balance = u128(balanceRead.get(), "USDC balance");
-    if (ownerRead.get().isNull()) throw std::invalid_argument("account has no registered owner");
-    if (balance < margin + fee) throw std::runtime_error("insufficient free USDC for margin and fee");
-
     std::string positionId;
     if (create) {
         std::array<std::uint8_t, 12> random{};
@@ -350,6 +321,44 @@ Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
     } else {
         positionId = input["position_id"].asString();
         if (positionId.empty() || positionId.size() > 64) throw std::invalid_argument("invalid position_id");
+    }
+
+    Json::Value preflightArgs;
+    preflightArgs["account_id"] = account;
+    preflightArgs["position_id"] = positionId;
+    preflightArgs["market_id"] = marketId;
+    preflightArgs["is_long"] = isLong;
+    preflightArgs["notional"] = decimal(notional);
+    preflightArgs["leverage_bps"] = leverage;
+    preflightArgs["max_slippage_bps"] = slippage;
+    preflightArgs["fee_bps"] = config.feeBps;
+    preflightArgs["expires_at_ms"] = create ? Json::UInt64(0) : input["expires_at_ms"];
+    Json::Value preflight;
+    try {
+        preflight = viewCall(rpc, config.contractId, "perp_quote_preflight", preflightArgs);
+    } catch (const std::runtime_error &error) {
+        if (std::string_view(error.what()) == "A1 view call returned no bytes")
+            throw std::runtime_error("A1 has no fresh oracle price for " + marketId + "; wait for market data to refresh and retry");
+        throw;
+    }
+    const auto &capacity = preflight["capacity"];
+    const auto allowedNotional = u128(capacity["allowed_max_notional_usdc"], "allowed order capacity");
+    if (leverage > u64(capacity["max_leverage_bps"], "market max leverage") ||
+        slippage > u64(capacity["max_execution_deviation_bps"], "market slippage cap"))
+        throw std::invalid_argument("order exceeds the market risk limits");
+    if (notional > allowedNotional) throw RiskCapacityExceeded(decimal(allowedNotional));
+    const auto sequence = u64(capacity["price_sequence"], "oracle sequence");
+    const auto referencePrice = u128(capacity["mark_price_e8"], "oracle mark price");
+    const auto chainNow = u64(capacity["now_ms"], "NEAR block timestamp");
+    const auto expiry = u64(preflight["expires_at_ms"], "quote expiry");
+    const auto margin = (notional * 10'000 + leverage - 1) / leverage;
+    const auto fee = (notional * config.feeBps + 9'999) / 10'000;
+    const auto nonce = u64(preflight["nonce"], "trading nonce");
+    const auto balance = u128(preflight["balance_usdc"], "USDC balance");
+    if (preflight["owner"].isNull()) throw std::invalid_argument("account has no registered owner");
+    if (balance < margin + fee) throw std::runtime_error("insufficient free USDC for margin and fee");
+
+    if (!create) {
         if (u64(input["nonce"], "nonce") != nonce || u64(input["price_sequence"], "price_sequence") != sequence ||
             u128(input["reference_price"], "reference_price") != referencePrice || u64(input["expires_at_ms"], "expires_at_ms") <= chainNow ||
             u64(input["expires_at_ms"], "expires_at_ms") > chainNow + 60'000 ||
@@ -358,23 +367,10 @@ Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
             u64(input["max_slippage_bps"], "max_slippage_bps") != slippage) throw std::runtime_error("quote is stale or altered; request a new quote");
     }
 
-    Json::Value quoteArgs;
-    quoteArgs["account_id"] = account; quoteArgs["position_id"] = positionId;
-    quoteArgs["market_id"] = marketId; quoteArgs["is_long"] = isLong;
-    quoteArgs["notional"] = decimal(notional); quoteArgs["leverage_bps"] = leverage;
-    quoteArgs["reference_price"] = decimal(referencePrice); quoteArgs["max_slippage_bps"] = slippage;
-    quoteArgs["price_sequence"] = Json::UInt64(sequence); quoteArgs["fee_bps"] = config.feeBps;
-    quoteArgs["nonce"] = Json::UInt64(nonce); quoteArgs["expires_at_ms"] = Json::UInt64(create ? expiry : u64(input["expires_at_ms"], "expires_at_ms"));
-    auto messageRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId, quoteArgs](auto &reader) {
-        return viewCall(reader, contract, "trade_quote_message", quoteArgs);
-    });
-    auto signerRead = asyncRpcRead(config.readRpcUrl, [contract = config.contractId](auto &reader) {
-        return viewCall(reader, contract, "perp_quote_signer", Json::Value(Json::objectValue));
-    });
-    const auto messageValue = messageRead.get();
+    const auto messageValue = preflight["message"];
     if (!messageValue.isString()) throw std::runtime_error("A1 did not return a trade authorization message");
 
-    Json::Value signer = signerRead.get();
+    const Json::Value signer = preflight["quote_signer"];
     const auto expectedAddress = afterbell::oracle::ethereumAddress(config.quoteSignerPrivateKey);
     const auto &addressBytes = signer["Ethereum"]["address"];
     if (!addressBytes.isArray() || addressBytes.size() != 20) throw std::runtime_error("A1 quote signer is not configured as the backend EVM signer");
@@ -394,7 +390,7 @@ Json::Value checkedQuote(afterbell::indexer::NearRpc &rpc, const Config &config,
     quote["notional_usdc"] = decimal(notional); quote["leverage_bps"] = leverage;
     quote["reference_price"] = decimal(referencePrice); quote["max_slippage_bps"] = slippage;
     quote["price_sequence"] = Json::UInt64(sequence); quote["fee_bps"] = config.feeBps;
-    quote["nonce"] = Json::UInt64(nonce); quote["expires_at_ms"] = quoteArgs["expires_at_ms"];
+    quote["nonce"] = Json::UInt64(nonce); quote["expires_at_ms"] = Json::UInt64(expiry);
     quote["message"] = messageValue.asString();
     quote["quote_signature"] = afterbell::oracle::base64Encode(signature.data(), signature.size());
     quote["required_margin_usdc"] = decimal(margin); quote["fee_usdc"] = decimal(fee);
