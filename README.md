@@ -33,7 +33,7 @@ On-chain trading should feel like one coherent product: connect a wallet once, h
 | NEAR Mainnet · 1Click deposits | Mainnet deposit integration through NEAR Intents; separate from the testnet A1 trading deployment | [NEAR Intents](https://near-intents.org/) |
 | NEAR Mainnet · USDC | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` | [NEARBlocks](https://nearblocks.io/address/17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1) |
 
-A1 is deployed on NEAR Testnet. The mainnet milestone is the separate 1Click deposit integration; A1 itself is not listed as a mainnet contract deployment. The machine-readable A1 deployment record is [`contracts/deployments.yaml`](contracts/deployments.yaml).
+A1 is deployed on NEAR Testnet. The mainnet milestone is the separate 1Click deposit integration. The machine-readable A1 deployment record is [`contracts/deployments.yaml`](contracts/deployments.yaml).
 
 ## How the system works
 
