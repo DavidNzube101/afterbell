@@ -49,9 +49,22 @@ std::string requiredEnv(const char *name) {
 }
 
 std::string nearRpcUrlForNetwork(const std::string &network) {
-    if (network == "testnet") return requiredEnv("NEAR_TESTNET_RPC_URL");
-    if (network == "mainnet") return requiredEnv("NEAR_RPC_URL");
-    throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
+    if (network != "testnet" && network != "mainnet")
+        throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
+    const auto *providerValue = std::getenv("NEAR_RPC_PROVIDER");
+    const auto *fastNearKey = std::getenv("FASTNEAR_API_KEY");
+    const std::string provider = providerValue ? providerValue : "";
+    const bool useFastNear = provider == "fastnear" ||
+                             (provider.empty() && fastNearKey && *fastNearKey);
+    if (provider != "" && provider != "fastnear" && provider != "configured")
+        throw std::runtime_error("NEAR_RPC_PROVIDER must be fastnear or configured");
+    if (useFastNear) {
+        std::cerr << "NEAR read RPC provider: FastNear (" << network << ")\n";
+        return network == "testnet" ? "https://rpc.testnet.fastnear.com"
+                                     : "https://rpc.mainnet.fastnear.com";
+    }
+    std::cerr << "NEAR read RPC provider: configured endpoint (" << network << ")\n";
+    return requiredEnv(network == "testnet" ? "NEAR_TESTNET_RPC_URL" : "NEAR_RPC_URL");
 }
 
 std::optional<std::uint64_t> optionalUintEnv(const char *name) {

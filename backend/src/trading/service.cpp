@@ -409,6 +409,12 @@ RiskCapacityExceeded::RiskCapacityExceeded(std::string allowedMaxRaw)
 Service::Service(Config config) : config_(std::move(config)) {
     if (config_.network != "testnet" && config_.network != "mainnet") throw std::invalid_argument("NEAR_NETWORK must be testnet or mainnet");
     if (config_.contractId.empty() || config_.readRpcUrl.empty() || config_.transactionRpcUrl.empty() || config_.relayerAccountId.empty()) throw std::invalid_argument("trading RPC, contract, and relayer configuration are required");
+    afterbell::indexer::NearRpc readRpc(config_.readRpcUrl);
+    if (readRpc.chainId() != config_.network)
+        throw std::runtime_error("trade read RPC is on the wrong NEAR network");
+    afterbell::indexer::NearRpc transactionRpc(config_.transactionRpcUrl);
+    if (transactionRpc.chainId() != config_.network)
+        throw std::runtime_error("trade transaction RPC is on the wrong NEAR network");
     (void)nearPublic(nearKey(config_.relayerPrivateKey));
     if (!config_.quoteSignerPrivateKey.empty()) (void)afterbell::oracle::ethereumAddress(config_.quoteSignerPrivateKey);
     if (config_.feeBps > 100) throw std::invalid_argument("PERP_TRADE_FEE_BPS must be between 0 and 100");
@@ -419,7 +425,6 @@ Service::~Service() { stopLimitWorker(); }
 Json::Value Service::ownerStatus(const std::string &accountId) const {
     if (accountId.empty() || accountId.size() > 128) throw std::invalid_argument("invalid account_id");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = accountId;
     const auto owner = viewCall(rpc, config_.contractId, "owner_of", args);
     Json::Value response; response["account_id"] = accountId;
@@ -431,7 +436,6 @@ Json::Value Service::ownerStatus(const std::string &accountId) const {
 Json::Value Service::marketSnapshot(const std::string &marketId) const {
     if (marketId.empty() || marketId.size() > 16) throw std::invalid_argument("invalid market_id");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("market read RPC is on the wrong NEAR network");
     Json::Value args; args["market_id"] = marketId;
     const auto config = viewCall(rpc, config_.contractId, "perp_market", args);
     const auto price = viewCall(rpc, config_.contractId, "market_price", args);
@@ -467,7 +471,6 @@ Json::Value Service::marketSnapshot(const std::string &marketId) const {
 Json::Value Service::accountBalance(const std::string &accountId) const {
     if (accountId.empty() || accountId.size() > 128) throw std::invalid_argument("invalid account_id");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("balance read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = accountId;
     Json::Value result; result["account_id"] = accountId;
     result["balance_usdc"] = viewCall(rpc, config_.contractId, "balance_of", args);
@@ -478,7 +481,6 @@ Json::Value Service::nearWalletBalance(const std::string &address) const {
     if (address.empty() || address.size() > 64 || address.find_first_of(" \t\r\n") != std::string::npos)
         throw std::invalid_argument("invalid NEAR wallet address");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("wallet balance RPC is on the wrong NEAR network");
     Json::Value params; params["request_type"] = "view_account"; params["finality"] = "final"; params["account_id"] = address;
     const auto account = rpc.call("query", params);
     Json::Value result; result["address"] = address; result["network"] = config_.network;
@@ -489,7 +491,6 @@ Json::Value Service::nearWalletBalance(const std::string &address) const {
 Json::Value Service::liquidityOverview(const std::string &accountId) const {
     validateUserAccount(accountId);
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = accountId;
     const auto owner = viewCall(rpc, config_.contractId, "owner_of", args);
     if (owner.isNull()) throw std::invalid_argument("account owner is not registered");
@@ -509,7 +510,6 @@ Json::Value Service::liquidityDepositPayload(const Json::Value &request) const {
     const auto amount = u128(request["amount_usdc"], "amount_usdc");
     if (amount == 0) throw std::invalid_argument("deposit amount must be positive");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = account;
     if (viewCall(rpc, config_.contractId, "owner_of", args).isNull()) throw std::invalid_argument("account owner is not registered");
     const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
@@ -528,7 +528,6 @@ Json::Value Service::submitLiquidityDeposit(const Json::Value &request) {
     const auto nonce = u64(request["nonce"], "nonce");
     const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
     if (nonce != tradingNonce(rpc, config_.contractId, account) + 1 || expiry <= blockTimeMs(rpc) || expiry > blockTimeMs(rpc) + 120'000)
         throw std::runtime_error("liquidity authorization expired or is stale; request a new signature");
     const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
@@ -548,7 +547,6 @@ Json::Value Service::liquidityWithdrawalPayload(const Json::Value &request) cons
     const auto minAmount = u128(request["min_amount_usdc"], "min_amount_usdc");
     if (shares == 0) throw std::invalid_argument("withdrawal shares must be positive");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("liquidity read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = account;
     if (viewCall(rpc, config_.contractId, "owner_of", args).isNull()) throw std::invalid_argument("account owner is not registered");
     const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
@@ -568,7 +566,7 @@ Json::Value Service::submitLiquidityWithdrawal(const Json::Value &request) {
     const auto nonce = u64(request["nonce"], "nonce"); const auto expiry = u64(request["expires_at_ms"], "expires_at_ms");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
     const auto chainNow = blockTimeMs(rpc);
-    if (rpc.chainId() != config_.network || nonce != tradingNonce(rpc, config_.contractId, account) + 1 || expiry <= chainNow || expiry > chainNow + 120'000)
+    if (nonce != tradingNonce(rpc, config_.contractId, account) + 1 || expiry <= chainNow || expiry > chainNow + 120'000)
         throw std::runtime_error("liquidity authorization expired or is stale; request a new signature");
     const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
     if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
@@ -607,7 +605,7 @@ Json::Value Service::submitAccountWithdrawal(const Json::Value &request) {
     const auto chainNow = blockTimeMs(rpc);
     Json::Value nonceArgs; nonceArgs["account_id"] = account;
     const auto previousNonce = viewCall(rpc, config_.contractId, "withdrawal_nonce", nonceArgs).asUInt64();
-    if (rpc.chainId() != config_.network || nonce != previousNonce + 1 || expiry <= chainNow || expiry > chainNow + 120'000)
+    if (nonce != previousNonce + 1 || expiry <= chainNow || expiry > chainNow + 120'000)
         throw std::runtime_error("withdrawal authorization expired or is stale; request a new signature");
     const auto signature = afterbell::oracle::base64Decode(request["signature"].asString());
     if (signature.size() != 64 && signature.size() != 65) throw std::invalid_argument("owner signature has an invalid length");
@@ -626,7 +624,6 @@ Json::Value Service::ownerRegistrationPayload(const Json::Value &request) const 
         throw std::invalid_argument("invalid or reserved account_id");
     validateAccountOwnerBinding(accountId, request["owner"]);
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
     constexpr std::uint64_t ownerRegistrationTtlMs = 4 * 60 * 1000;
     const auto expiry = blockTimeMs(rpc) + ownerRegistrationTtlMs;
     Json::Value args; args["account_id"] = accountId; args["owner"] = request["owner"];
@@ -657,7 +654,6 @@ Json::Value Service::registerOwner(const Json::Value &request) {
     if (storageCreditTarget == 0 || storageCreditTarget > static_cast<unsigned __int128>(1'000'000'000'000'000'000ULL) * 10'000)
         throw std::runtime_error("owner registration storage credit target must be between 0 and 0.01 NEAR");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("account read RPC is on the wrong NEAR network");
     Json::Value storageArgs; storageArgs["account_id"] = accountId;
     const auto currentCredit = u128(
         viewCall(rpc, config_.contractId, "storage_credit_of", storageArgs),
@@ -724,7 +720,6 @@ Json::Value Service::agentSetupPayload(const Json::Value &request) const {
     if (!status["registered"].asBool()) throw std::invalid_argument("register the wallet account before creating an agent");
 
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("agent setup read RPC is on the wrong NEAR network");
     const auto expiresAtMs = blockTimeMs(rpc) + static_cast<std::uint64_t>(durationDays) * 24 * 60 * 60 * 1000;
     auto args = agentSetupArgs(request, expiresAtMs);
     Json::Value nonceArgs; nonceArgs["user_record_id"] = request["account_id"];
@@ -749,7 +744,6 @@ Json::Value Service::createAgentRecord(const Json::Value &request) {
         throw std::invalid_argument("owner signature has an invalid length");
 
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("agent setup read RPC is on the wrong NEAR network");
     Json::Value recordArgs; recordArgs["user_record_id"] = accountId;
     const auto existingRecord = viewCall(rpc, config_.contractId, "agent_record_of", recordArgs);
     if (existingRecord.isString() && existingRecord.asString() == request["agent_record_id"].asString()) {
@@ -788,7 +782,6 @@ Json::Value Service::createAgentRecord(const Json::Value &request) {
 
 Json::Value Service::createOpenQuote(const Json::Value &request) const {
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     return checkedQuote(rpc, config_, request, true);
 }
 
@@ -802,7 +795,6 @@ Json::Value Service::submitOpen(const Json::Value &request) {
     auto quote = request;
     quote.removeMember("owner_signature"); quote.removeMember("quote_signature"); quote.removeMember("message");
     afterbell::indexer::NearRpc readRpc(config_.readRpcUrl);
-    if (readRpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     const auto verified = checkedQuote(readRpc, config_, quote, false);
     if (verified["message"].asString() != request["message"].asString()) throw std::runtime_error("trade message does not match quote fields");
 
@@ -831,7 +823,6 @@ Json::Value Service::submitOpen(const Json::Value &request) {
     const auto pub = nearPublic(key);
     const auto publicKeyText = "ed25519:" + afterbell::oracle::base58Encode(pub.data(), pub.size());
     afterbell::indexer::NearRpc txRpc(config_.transactionRpcUrl);
-    if (txRpc.chainId() != config_.network) throw std::runtime_error("trade transaction RPC is on the wrong NEAR network");
     Json::Value accessArgs; accessArgs["request_type"] = "view_access_key"; accessArgs["finality"] = "final";
     accessArgs["account_id"] = config_.relayerAccountId; accessArgs["public_key"] = publicKeyText;
     const auto access = txRpc.call("query", accessArgs);
@@ -869,7 +860,6 @@ Json::Value Service::submitOpen(const Json::Value &request) {
 Json::Value Service::listPositions(const std::string &accountId) const {
     if (accountId.empty() || accountId.size() > 64) throw std::invalid_argument("invalid account_id");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     static constexpr char prefix[] = "afterbell:a1:perp:position:";
     std::vector<std::uint8_t> key(prefix, prefix + sizeof(prefix) - 1);
     const auto length = static_cast<std::uint32_t>(accountId.size());
@@ -916,7 +906,6 @@ Json::Value Service::createCloseQuote(const Json::Value &request) const {
     if (account.empty() || account.size() > 64 || positionId.empty() || positionId.size() > 64 || slippageRaw > 1'000)
         throw std::invalid_argument("invalid account, position, or slippage");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = account; args["position_id"] = positionId;
     const auto position = viewCall(rpc, config_.contractId, "perp_position", args);
     if (position.isNull()) throw std::invalid_argument("position does not exist");
@@ -973,7 +962,6 @@ Json::Value Service::submitClose(const Json::Value &request) {
     const auto account = request["account_id"].asString();
     const auto positionId = request["position_id"].asString();
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     Json::Value args; args["account_id"] = account; args["position_id"] = positionId;
     const auto position = viewCall(rpc, config_.contractId, "perp_position", args);
     if (position.isNull()) throw std::invalid_argument("position does not exist");
@@ -1009,7 +997,6 @@ Json::Value Service::submitClose(const Json::Value &request) {
     const auto key = nearKey(config_.relayerPrivateKey); const auto pub = nearPublic(key);
     const auto publicKeyText = "ed25519:" + afterbell::oracle::base58Encode(pub.data(), pub.size());
     afterbell::indexer::NearRpc txRpc(config_.transactionRpcUrl);
-    if (txRpc.chainId() != config_.network) throw std::runtime_error("trade transaction RPC is on the wrong NEAR network");
     Json::Value accessArgs; accessArgs["request_type"] = "view_access_key"; accessArgs["finality"] = "final";
     accessArgs["account_id"] = config_.relayerAccountId; accessArgs["public_key"] = publicKeyText;
     const auto nonceTx = u64(txRpc.call("query", accessArgs)["nonce"], "relayer nonce") + 1;
@@ -1036,7 +1023,6 @@ Json::Value Service::submitClose(const Json::Value &request) {
 Json::Value Service::listLimitOrders(const std::string &accountId) const {
     if (accountId.empty() || accountId.size() > 64) throw std::invalid_argument("invalid account_id");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     const auto ids = viewCall(rpc, config_.contractId, "perp_limit_order_ids", Json::Value(Json::objectValue));
     Json::Value output(Json::arrayValue);
     if (!ids.isArray()) throw std::runtime_error("A1 returned invalid limit order ids");
@@ -1065,7 +1051,6 @@ Json::Value Service::createLimitOrderMessage(const Json::Value &request) const {
         leverage > std::numeric_limits<std::uint32_t>::max() || !notional || !limitPrice)
         throw std::invalid_argument("invalid limit order fields");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     const auto capacity = orderCapacity(rpc, config_.contractId, account, market, side == "long");
     const auto allowedNotional = u128(capacity["allowed_max_notional_usdc"], "allowed order capacity");
     if (leverage > u64(capacity["max_leverage_bps"], "market max leverage"))
@@ -1112,7 +1097,6 @@ Json::Value Service::createLimitCancelMessage(const Json::Value &request) const 
     if (account.empty() || account.size() > 64 || orderId.empty() || orderId.size() > 64)
         throw std::invalid_argument("invalid account_id or order_id");
     afterbell::indexer::NearRpc rpc(config_.readRpcUrl);
-    if (rpc.chainId() != config_.network) throw std::runtime_error("trade read RPC is on the wrong NEAR network");
     const auto nonce = tradingNonce(rpc, config_.contractId, account) + 1;
     const auto expiry = blockTimeMs(rpc) + 30'000;
     Json::Value args; args["account_id"] = account; args["order_id"] = orderId;

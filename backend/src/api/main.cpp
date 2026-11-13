@@ -38,9 +38,20 @@ std::string requiredEnv(const char *name) {
 }
 
 std::string nearRpcUrlForNetwork(const std::string &network) {
-    if (network == "testnet") return requiredEnv("NEAR_TESTNET_RPC_URL");
-    if (network == "mainnet") return requiredEnv("NEAR_RPC_URL");
-    throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
+    if (network != "testnet" && network != "mainnet")
+        throw std::runtime_error("NEAR_NETWORK must be testnet or mainnet");
+    const auto provider = env("NEAR_RPC_PROVIDER").value_or("");
+    const bool useFastNear = provider == "fastnear" ||
+                             (provider.empty() && env("FASTNEAR_API_KEY").has_value());
+    if (provider != "" && provider != "fastnear" && provider != "configured")
+        throw std::runtime_error("NEAR_RPC_PROVIDER must be fastnear or configured");
+    if (useFastNear) {
+        std::cerr << "NEAR read RPC provider: FastNear (" << network << ")\n";
+        return network == "testnet" ? "https://rpc.testnet.fastnear.com"
+                                     : "https://rpc.mainnet.fastnear.com";
+    }
+    std::cerr << "NEAR read RPC provider: configured endpoint (" << network << ")\n";
+    return requiredEnv(network == "testnet" ? "NEAR_TESTNET_RPC_URL" : "NEAR_RPC_URL");
 }
 
 std::string nearTransactionRpcUrlForNetwork(const std::string &network,
@@ -279,7 +290,7 @@ int main() {
                 *poolRegistryPath,
             };
             oracleConfig.pollIntervalMs = static_cast<std::uint32_t>(
-                uintEnvOr("ORACLE_POLL_INTERVAL_MS", 15'000));
+                uintEnvOr("ORACLE_POLL_INTERVAL_MS", 5'000));
             oracleConfig.twapWindowSeconds = static_cast<std::uint32_t>(
                 uintEnvOr("ORACLE_TWAP_WINDOW_SECONDS", 300));
             oracleWorker = std::make_shared<afterbell::oracle::Worker>(

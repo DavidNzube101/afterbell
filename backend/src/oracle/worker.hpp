@@ -29,7 +29,7 @@ struct WorkerConfig {
     std::string evmSignerPrivateKey;
     std::string marketRegistryPath;
     std::string poolRegistryPath;
-    std::uint32_t pollIntervalMs{15'000};
+    std::uint32_t pollIntervalMs{5'000};
     std::uint32_t twapWindowSeconds{300};
 };
 
