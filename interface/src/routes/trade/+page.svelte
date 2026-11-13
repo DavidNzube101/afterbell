@@ -137,7 +137,8 @@
 				const signature = await signWalletMessage(walletPayload(String(quote.message), quote.nonce, quoteRecipient(quote.recipient)))
 				await postTrade('/v1/trade/limits', { ...body, owner_signature: signature })
 			} else {
-				const base = { account_id: session.accountId, market_id: selectedMarket, side: order.side, notional_usdc: notionalRaw, leverage_bps: Math.round(order.leverage * 10_000), max_slippage_bps: 100 }
+				const marketSlippageLimit = snapshot?.max_execution_deviation_bps ?? 50
+				const base = { account_id: session.accountId, market_id: selectedMarket, side: order.side, notional_usdc: notionalRaw, leverage_bps: Math.round(order.leverage * 10_000), max_slippage_bps: Math.min(100, marketSlippageLimit) }
 				const quote = await postTrade<Record<string, any>>('/v1/trade/quote', base)
 				estimatedFee = usdc(quote.fee_usdc)
 				const signature = await signWalletMessage(walletPayload(String(quote.message), quote.nonce, quoteRecipient(quote.recipient)))

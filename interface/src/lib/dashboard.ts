@@ -25,7 +25,7 @@ const params = (data: Record<string, string>) => new URLSearchParams(data).toStr
 export type MarketSnapshot = {
   market_id: string; enabled: boolean; close_only: boolean; mark_price_e8?: string; observed_at_ms?: number
   confidence_bps?: number; circuit_broken?: boolean; open_interest_usdc: string
-  funding_rate_bps_8h: number; max_leverage_bps?: number; max_position_usdc?: string
+  funding_rate_bps_8h: number; max_leverage_bps?: number; max_position_usdc?: string; max_execution_deviation_bps?: number
 }
 export type PricePoint = { price_e8: string; timestamp_ms: number }
 export type VolumePoint = { volume_usdg_raw: string; timestamp_ms: number }

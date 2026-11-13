@@ -548,6 +548,7 @@ Json::Value Service::marketSnapshot(const std::string &marketId) const {
     if (!config.isNull()) {
         result["max_leverage_bps"] = config["max_leverage_bps"];
         result["max_position_usdc"] = config["max_position_usdc"];
+        result["max_execution_deviation_bps"] = config["max_execution_deviation_bps"];
     }
     return result;
 }
