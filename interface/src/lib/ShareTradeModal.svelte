@@ -12,6 +12,7 @@
 	let customImage = $state<string | null>(null)
 	let notice = $state('')
 	let tickerIconContainer: HTMLSpanElement
+	const isLoss = () => /[-−]/.test(position.pnl)
 	function chooseImage(event: Event) {
 		const input = event.currentTarget as HTMLInputElement
 		const file = input.files?.[0]
@@ -43,7 +44,7 @@
 		ctx.shadowColor = '#000b'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2; ctx.fillStyle = '#f1f5f9'; ctx.font = '600 38px system-ui, sans-serif'; ctx.fillText('Afterbell', 153, 91)
 		ctx.fillStyle = position.side === 'Long' ? '#72e3b4' : '#ffabb3'; ctx.font = '600 25px system-ui, sans-serif'; ctx.fillText(position.side, 1400, 101)
 		ctx.fillStyle = '#f4f7fb'; ctx.font = '650 76px system-ui, sans-serif'; ctx.fillText(`${position.ticker}-USDC`, 185, 365)
-		ctx.font = '650 78px system-ui, sans-serif'; const pnlWidth = ctx.measureText(position.pnl).width; ctx.fillStyle = '#9de8c7'; ctx.font = '500 34px system-ui, sans-serif'; const changeWidth = ctx.measureText(position.change).width; const pnlX = 1510 - pnlWidth - changeWidth - 18; ctx.fillStyle = '#54dfa4'; ctx.font = '650 78px system-ui, sans-serif'; ctx.fillText(position.pnl, pnlX, 375); ctx.fillStyle = '#9de8c7'; ctx.font = '500 34px system-ui, sans-serif'; ctx.fillText(position.change, pnlX + pnlWidth + 18, 371)
+		ctx.font = '650 78px system-ui, sans-serif'; const pnlWidth = ctx.measureText(position.pnl).width; ctx.font = '500 34px system-ui, sans-serif'; const changeWidth = ctx.measureText(position.change).width; const pnlX = 1510 - pnlWidth - changeWidth - 18; ctx.fillStyle = isLoss() ? '#ff6878' : '#54dfa4'; ctx.font = '650 78px system-ui, sans-serif'; ctx.fillText(position.pnl, pnlX, 375); ctx.fillStyle = isLoss() ? '#ff9aa4' : '#9de8c7'; ctx.font = '500 34px system-ui, sans-serif'; ctx.fillText(position.change, pnlX + pnlWidth + 18, 371)
 		const details = [['Position size', position.size], ['Leverage', position.leverage], ['Entry price', position.entry], ['Mark price', position.mark]]
 		details.forEach(([label, value], index) => { const x = index % 2 === 0 ? 90 : 800, y = index < 2 ? 545 : 695; ctx.fillStyle = '#a2afbe'; ctx.font = '500 25px system-ui, sans-serif'; ctx.fillText(label, x, y); ctx.fillStyle = '#f1f5f9'; ctx.font = '700 34px system-ui, sans-serif'; ctx.fillText(value, x, y + 48) })
 		ctx.fillStyle = '#b5d7fb'; ctx.font = '500 23px system-ui, sans-serif'; ctx.fillText('afterbellfx.xyz', 1290, 835); ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0
@@ -58,7 +59,7 @@
 		<div class="share-modal-content">
 			<article class={`share-trade-card ${background}`} style={background.startsWith('image-') || background === 'custom-image' ? `background-image:linear-gradient(90deg,#0b111ad9,#0b111a9c),url(${background === 'custom-image' ? customImage : backgrounds.find(item => item.id === background)?.image})` : undefined}>
 				<div class="share-card-brand"><img src="/assets/afterbell-logo.png" alt=""/><span>Afterbell</span><span class={`share-card-side ${position.side.toLowerCase()}`}>{position.side}</span></div>
-				<div class="share-card-main"><div class="share-card-market"><span class="stock-avatar"><span bind:this={tickerIconContainer}><TickerIcon ticker={position.ticker} size={20}/></span></span><div><b>{position.ticker}-USDC</b></div></div><div class="share-card-profit"><strong>{position.pnl}</strong><span>{position.change}</span></div></div>
+				<div class="share-card-main"><div class="share-card-market"><span class="stock-avatar"><span bind:this={tickerIconContainer}><TickerIcon ticker={position.ticker} size={20}/></span></span><div><b>{position.ticker}-USDC</b></div></div><div class="share-card-profit" class:loss={isLoss()}><strong>{position.pnl}</strong><span>{position.change}</span></div></div>
 				<div class="share-card-details"><div><span>Position size</span><b>{position.size}</b></div><div><span>Leverage</span><b>{position.leverage}</b></div><div><span>Entry price</span><b>{position.entry}</b></div><div><span>Mark price</span><b>{position.mark}</b></div></div><div class="share-card-footer">afterbellfx.xyz</div>
 			</article>
 			<div class="share-background-picker"><div class="share-background-heading">Background</div><div class="share-background-options">{#each backgrounds as item (item.id)}<button class={`share-background-option ${item.id}`} class:selected={background === item.id} aria-label={item.label} aria-pressed={background === item.id} title={item.label} style={item.image ? `background-image:linear-gradient(#080c1280,#080c1280),url(${item.image})` : undefined} onclick={() => background = item.id}></button>{/each}<label class="share-background-option custom-image" class:selected={background === 'custom-image'} title="Upload custom image" aria-label="Upload custom image" style={customImage ? `background-image:linear-gradient(#080c1280,#080c1280),url(${customImage})` : undefined}><input type="file" accept="image/*" onchange={chooseImage}/><span>+</span></label></div></div>
