@@ -113,7 +113,7 @@ export function clearTradeBootstrapData(accountId: string) {
 export const deleteNotification = (account: string, id: string) => request(`/v1/notifications/${encodeURIComponent(id)}?${params({ account_id: account })}`, { method: 'DELETE' })
 export const clearNotifications = (account: string) => request(`/v1/notifications?${params({ account_id: account })}`, { method: 'DELETE' })
 export const postTrade = <T>(path: string, body: unknown) =>
-  request<T>(path, json(body), path.endsWith('/quote') ? 40_000 : 12_000)
+  request<T>(path, json(body), path.endsWith('/quote') ? 40_000 : 55_000)
 
 export function toNearNonce(value: string | number): string {
   const bytes = new Uint8Array(32)
