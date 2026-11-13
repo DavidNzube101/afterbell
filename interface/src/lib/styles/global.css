@@ -17,31 +17,52 @@ button, input, select, textarea { font: inherit; }
 .otto-home { width: min(100%, 820px); margin-top: -26px; text-align: center; }
 .otto-identity { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 21px; color: #f4f7fb; }
 .otto-identity img { width: 38px; height: 38px; object-fit: contain; }
-.otto-identity span { font-size: clamp(36px, 5vw, 54px); font-weight: 690; letter-spacing: .12em; line-height: 1; }
+.otto-identity span { font-size: clamp(36px, 5vw, 54px); font-weight: 690; letter-spacing: -.04em; line-height: 1; }
 .otto-home h1 { margin: 0; color: #f2f5f9; font-size: clamp(24px, 3vw, 34px); font-weight: 570; letter-spacing: -.05em; }
 .otto-subtitle { margin: 10px 0 28px; color: #8995a3; font-size: 14px; }
-.otto-composer { padding: 16px 17px 13px; border: 1px solid #27313d; border-radius: 19px; background: linear-gradient(155deg, #151c26, #10161e 70%); box-shadow: 0 20px 65px #0004, inset 0 1px #ffffff08; text-align: left; transition: border-color .18s ease, box-shadow .18s ease; }
-.otto-composer:focus-within { border-color: #344b65; box-shadow: 0 20px 65px #0004, 0 0 0 3px #377ac51c; }
+.otto-composer { padding: 16px 17px 13px; border: 1px solid #151c26; border-radius: 19px; background: #151c26; box-shadow: 0 20px 65px #0004; text-align: left; transition: box-shadow .18s ease; }
+.otto-composer:focus-within { box-shadow: 0 20px 65px #0004, 0 0 0 3px #377ac51c; }
 .otto-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 .otto-composer textarea { display: block; width: 100%; min-height: 76px; max-height: 190px; resize: none; padding: 3px 4px 16px; border: 0; outline: 0; background: transparent; color: #e9eef4; font: inherit; font-size: 16px; line-height: 1.55; }
 .otto-composer textarea::placeholder { color: #737f8d; }
 .otto-composer-bottom { min-height: 43px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.otto-pair-picker { position: relative; min-height: 38px; display: inline-flex; align-items: center; gap: 9px; padding: 0 11px; border: 1px solid #26313e; border-radius: 10px; background: #111822; color: #aab5c0; }
-.otto-pair-picker > svg { width: 17px; height: 17px; stroke: #9aabba; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.otto-pair-picker > span { font-size: 11px; }
-.otto-pair-picker select { max-width: 112px; appearance: none; border: 0; outline: 0; background: transparent; color: #e8eef5; font-size: 11px; font-weight: 570; cursor: pointer; }
-.otto-pair-picker select option { background: #111822; color: #e8eef5; }
-.otto-pair-picker .otto-chevron { width: 13px; height: 13px; margin-left: -5px; pointer-events: none; }
+.otto-pair-picker { min-height: 38px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #111821; border-radius: 10px; background: #111821; color: #e8eef5; font: inherit; font-size: 11px; font-weight: 570; cursor: pointer; transition: background .16s ease; }
+.otto-pair-picker:hover { background: #1a2430; }
+.otto-pair-picker .otto-chevron { width: 14px; height: 14px; margin-left: 2px; stroke: #8996a5; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .otto-composer-actions { display: flex; align-items: center; gap: 13px; }
-.otto-composer-hint { color: #647181; font-size: 10px; }
 .otto-send { width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #2468c8; color: #fff; transition: background .16s, opacity .16s, transform .16s; }
 .otto-send:hover:not(:disabled) { background: #347de0; transform: translateY(-1px); }
 .otto-send:disabled { background: #252e39; color: #74808d; cursor: default; }
 .otto-send svg { width: 19px; height: 19px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.otto-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin: 28px auto 0; }
-.otto-starter { min-height: 39px; display: inline-flex; align-items: center; gap: 8px; padding: 0 13px; border: 1px solid #28333f; border-radius: 999px; background: #111821; color: #b3bdc8; font: inherit; font-size: 11px; transition: border-color .16s ease, background .16s ease, color .16s ease; }
-.otto-starter:hover { border-color: #3b536d; background: #172230; color: #eff5fb; }
+.otto-starter-carousel { overflow: hidden; margin: 26px auto 0; }
+.otto-starter-track { display: flex; width: 100%; transition: transform .65s cubic-bezier(.2,.75,.25,1); }
+.otto-starters { min-width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.otto-starter { min-height: 58px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 12px; border: 1px solid #151c26; border-radius: 13px; background: #151c26; color: #b3bdc8; font: inherit; font-size: 11px; line-height: 1.4; transition: color .16s ease, transform .16s ease; }
+.otto-starter:hover { color: #eff5fb; transform: translateY(-2px); }
 .otto-starter > span { color: #84baff; font-size: 14px; }
+.otto-carousel-controls { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 13px; }
+.otto-carousel-controls > button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #748191; }
+.otto-carousel-controls > button:hover { background: #151c26; color: #eaf1f8; }
+.otto-carousel-controls svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.otto-carousel-controls > span { display: inline-flex; align-items: center; gap: 6px; }
+.otto-carousel-controls > span button { width: 5px; height: 5px; padding: 0; border: 0; border-radius: 99px; background: #44505e; transition: width .25s ease, background .25s ease; }
+.otto-carousel-controls > span button.active { width: 17px; background: #3988e9; }
+.otto-market-modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: #03070bc7; backdrop-filter: blur(8px); animation: otto-market-fade .16s ease both; }
+@keyframes otto-market-fade { from { opacity: 0; } to { opacity: 1; } }
+.otto-market-modal { position: relative; width: min(100%, 430px); max-height: min(90dvh, 560px); overflow: auto; margin: 0; padding: 0; border: 1px solid #26313e; border-radius: 16px; background: #111821; color: inherit; box-shadow: 0 28px 90px #0009; animation: otto-market-rise .22s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes otto-market-rise { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.otto-market-modal > header { display: flex; align-items: flex-start; justify-content: space-between; padding: 21px 22px 17px; border-bottom: 1px solid #202a36; }
+.otto-market-modal h2 { margin: 0; color: #eef3f8; font-size: 17px; font-weight: 590; letter-spacing: -.025em; }
+.otto-market-modal header p { margin: 6px 0 0; color: #8491a0; font-size: 11px; }
+.otto-market-close { width: 30px; height: 30px; display: grid; place-items: center; margin: -4px -5px 0 12px; border: 0; border-radius: 8px; background: transparent; color: #9aa6b3; font-size: 23px; line-height: 1; }
+.otto-market-close:hover { background: #1b2530; color: white; }
+.otto-market-options { display: grid; gap: 5px; padding: 10px; }
+.otto-market-options > button { min-height: 54px; display: flex; align-items: center; gap: 11px; padding: 8px 10px; border: 1px solid #111821; border-radius: 10px; background: #111821; color: #e9eef4; text-align: left; cursor: pointer; transition: background .15s ease; }
+.otto-market-options > button:hover, .otto-market-options > button.selected { background: #1a2531; }
+.otto-market-options > button > span { display: grid; gap: 4px; }
+.otto-market-options b { font-size: 12px; font-weight: 570; }
+.otto-market-options small { color: #8290a0; font-size: 10px; }
+.otto-market-check { width: 16px; height: 16px; margin-left: auto; stroke: #69b3ff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .otto-disclaimer { margin: 30px 0 0; color: #596573; font-size: 10px; }
 .otto-footer { flex: 0 0 auto; }
 @media (max-width: 680px) {
@@ -54,12 +75,10 @@ button, input, select, textarea { font: inherit; }
   .otto-subtitle { max-width: 310px; margin: 9px auto 23px; font-size: 12px; line-height: 1.55; }
   .otto-composer { padding: 13px 12px 11px; border-radius: 15px; }
   .otto-composer textarea { min-height: 88px; font-size: 14px; }
-  .otto-pair-picker { gap: 6px; padding: 0 8px; }
-  .otto-pair-picker > span { display: none; }
-  .otto-pair-picker select { max-width: 102px; }
-  .otto-composer-hint { display: none; }
-  .otto-starters { justify-content: flex-start; gap: 8px; margin-top: 20px; }
-  .otto-starter { min-height: 36px; padding: 0 10px; font-size: 10px; }
+  .otto-pair-picker { gap: 6px; padding: 0 8px; font-size: 10px; }
+  .otto-starter-carousel { margin-top: 20px; }
+  .otto-starters { gap: 7px; }
+  .otto-starter { min-height: 68px; flex-direction: column; gap: 4px; padding: 7px 6px; font-size: 9px; }
   .otto-disclaimer { max-width: 320px; margin: 24px auto 0; line-height: 1.5; }
 }
 @media (prefers-reduced-motion: reduce) { .otto-composer, .otto-send, .otto-starter { transition-duration: .01ms; } }
