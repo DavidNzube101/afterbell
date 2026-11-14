@@ -31,6 +31,7 @@ compile_commands.json
 # Frontend dependencies and build output
 node_modules/
 dist/
+/admin/
 /mock_data.json
 /scripts/check_oracle_chart.py
 .output/
